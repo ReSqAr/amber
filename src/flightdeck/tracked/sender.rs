@@ -9,8 +9,8 @@ use tokio::time;
 
 pub trait Tracker: Send + Sync + Clone + 'static {
     fn new(name: &str) -> Self;
-    fn heartbeat(&mut self, count: u64);
-    fn on_drop(&mut self, count: u64);
+    fn heartbeat(&mut self, count: u64, delay_ns: u64);
+    fn on_drop(&mut self, count: u64, delay_ns: u64);
 }
 
 pub struct TrackedSenderInner<T: 'static + Send + Sync, ST: Tracker> {
@@ -18,6 +18,7 @@ pub struct TrackedSenderInner<T: 'static + Send + Sync, ST: Tracker> {
     #[allow(dead_code)]
     name: String,
     counter: Arc<AtomicU64>,
+    delay_ns: Arc<AtomicU64>,
     heartbeat_handle: Option<JoinHandle<()>>,
     tracker: ST,
 }
@@ -25,16 +26,21 @@ pub struct TrackedSenderInner<T: 'static + Send + Sync, ST: Tracker> {
 impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
     pub fn new(s: mpsc::Sender<T>, name: &str, duration: Duration) -> Self {
         let counter = Arc::new(AtomicU64::new(0));
+        let delay_ns = Arc::new(AtomicU64::new(0));
         let tracker = ST::new(name);
 
         let counter_clone = counter.clone();
+        let delay_ns_clone = delay_ns.clone();
         let tracker_clone = tracker.clone();
         let heartbeat_handle = tokio::spawn(async move {
             let mut tracker = tracker_clone.clone();
             let mut interval = time::interval(duration);
             loop {
                 interval.tick().await;
-                tracker.heartbeat(counter_clone.load(Ordering::Relaxed));
+                tracker.heartbeat(
+                    counter_clone.load(Ordering::Relaxed),
+                    delay_ns_clone.load(Ordering::Relaxed),
+                );
             }
         });
 
@@ -42,19 +48,36 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
             inner: s,
             name: name.into(),
             counter,
+            delay_ns,
             tracker,
             heartbeat_handle: Some(heartbeat_handle),
         }
     }
 
     pub async fn send(&self, msg: T) -> Result<(), SendError<T>> {
+        let start_time = time::Instant::now();
+
+        let result = self.inner.send(msg).await;
+
+        let delay = start_time.elapsed();
         self.counter.fetch_add(1, Ordering::Relaxed);
-        self.inner.send(msg).await
+        self.delay_ns
+            .fetch_add(delay.as_nanos() as u64, Ordering::Relaxed);
+
+        result
     }
 
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {
+        let start_time = time::Instant::now();
+
+        let result = self.inner.blocking_send(msg);
+
+        let delay = start_time.elapsed();
         self.counter.fetch_add(1, Ordering::Relaxed);
-        self.inner.blocking_send(msg)
+        self.delay_ns
+            .fetch_add(delay.as_nanos() as u64, Ordering::Relaxed);
+
+        result
     }
 
     pub(crate) fn capacity(&self) -> usize {
@@ -73,7 +96,10 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
 impl<T: 'static + Send + Sync, ST: Tracker> Drop for TrackedSenderInner<T, ST> {
     fn drop(&mut self) {
         if let Some(handle) = self.heartbeat_handle.take() {
-            self.tracker.on_drop(self.counter.load(Ordering::Relaxed));
+            self.tracker.on_drop(
+                self.counter.load(Ordering::Relaxed),
+                self.delay_ns.load(Ordering::Relaxed),
+            );
             handle.abort();
         }
     }
@@ -137,15 +163,16 @@ impl Tracker for Adapter {
         }
     }
 
-    fn heartbeat(&mut self, count: u64) {
-        self.inner.observe_position(log::Level::Debug, count);
+    fn heartbeat(&mut self, count: u64, delay_ns: u64) {
+        self.inner
+            .observe_position_ext(log::Level::Debug, count, [("delay_ns".into(), delay_ns)]);
     }
 
-    fn on_drop(&mut self, count: u64) {
+    fn on_drop(&mut self, count: u64, delay_ns: u64) {
         self.inner.observe_termination_ext(
             log::Level::Debug,
             "completed",
-            [("position".into(), count)],
+            [("position".into(), count), ("delay_ns".into(), delay_ns)],
         );
     }
 }
@@ -160,7 +187,7 @@ mod tests {
     /// A dummy tracker for testing that records heartbeat and drop events.
     #[derive(Clone, Debug)]
     struct DummyTracker {
-        // Records each heartbeat as (count, timestamp) or just count.
+        // Records each heartbeat as count.
         heartbeats: Arc<Mutex<Vec<u64>>>,
         drops: Arc<Mutex<Vec<u64>>>,
     }
@@ -179,11 +206,11 @@ mod tests {
             Self::new_instance()
         }
 
-        fn heartbeat(&mut self, count: u64) {
+        fn heartbeat(&mut self, count: u64, _delay_ns: u64) {
             self.heartbeats.lock().unwrap().push(count);
         }
 
-        fn on_drop(&mut self, count: u64) {
+        fn on_drop(&mut self, count: u64, _delay_ns: u64) {
             self.drops.lock().unwrap().push(count);
         }
     }

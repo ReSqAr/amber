@@ -21,6 +21,10 @@ pub enum BaseObservation {
         data: HashMap<String, Value>,
     },
     Position(u64),
+    PositionWithData {
+        position: u64,
+        data: HashMap<String, Value>,
+    },
     Length(u64),
 }
 
@@ -82,6 +86,14 @@ impl Observable for BaseObservable {
                 key: "position".into(),
                 value: p.into(),
             }],
+            Some(BaseObservation::PositionWithData { position, data }) => {
+                let mut d = vec![Data {
+                    key: "position".into(),
+                    value: position.into(),
+                }];
+                d.extend(data.into_iter().map(Data::from));
+                d
+            }
             Some(BaseObservation::Length(l)) => vec![Data {
                 key: "length".into(),
                 value: l.into(),
@@ -96,6 +108,7 @@ impl Observable for BaseObservable {
                 Some(BaseObservation::TerminalState(_)) => true,
                 Some(BaseObservation::TerminalStateWithData { .. }) => true,
                 Some(BaseObservation::Position(_)) => false,
+                Some(BaseObservation::PositionWithData { .. }) => false,
                 Some(BaseObservation::Length(_)) => false,
             };
         if is_terminal {
@@ -173,6 +186,24 @@ impl Observer<BaseObservable> {
     }
     pub fn observe_position(&mut self, level: log::Level, pos: u64) -> &mut Self {
         self.observe(level, BaseObservation::Position(pos))
+    }
+    pub fn observe_position_ext<T: Into<Value>>(
+        &mut self,
+        level: log::Level,
+        pos: u64,
+        data: impl Into<HashMap<String, T>>,
+    ) -> &mut Self {
+        self.observe(
+            level,
+            BaseObservation::PositionWithData {
+                position: pos,
+                data: data
+                    .into()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
+            },
+        )
     }
 }
 
@@ -605,6 +636,10 @@ mod tests {
         observer.observe_state_ext(log::Level::Info, "in_progress", data);
 
         observer.observe_position(log::Level::Debug, 500);
+
+        let mut data = HashMap::new();
+        data.insert("progress".to_string(), 50u64);
+        observer.observe_position_ext(log::Level::Debug, 500, data);
         observer.observe_length(log::Level::Debug, 1000);
 
         observer.observe_termination(log::Level::Info, "done");
