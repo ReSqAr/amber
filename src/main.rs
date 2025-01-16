@@ -1,7 +1,10 @@
-mod db;
 mod commands;
+mod db;
+
+mod transport;
 
 use clap::{Parser, Subcommand};
+
 #[derive(Parser)]
 #[command(name = "invariant")]
 #[command(author = "Yasin Zähringer <yasin-invariable@yhjz.de>")]
@@ -18,7 +21,16 @@ enum Commands {
     Add {
         path: String,
     },
+    Serve {
+        #[arg(default_value_t = 50001)]
+        port: u16,
+    },
+    Sync {
+        #[arg(default_value_t = 50001)]
+        port: u16,
+    },
 }
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -36,6 +48,15 @@ async fn main() {
                 .await
                 .expect("Failed to add file to invariable");
         }
+        Commands::Serve { port } => {
+            commands::serve::serve(port)
+                .await
+                .expect("Failed to run server");
+        }
+        Commands::Sync { port } => {
+            commands::sync::sync(port)
+                .await
+                .expect("Failed to run server");
+        }
     }
 }
-

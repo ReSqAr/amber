@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package invariable;
+
+message RepositoryIdRequest {
+}
+
+message RepositoryIdResponse {
+  string repo_id = 1;
+}
+
+service Invariable {
+  rpc RepositoryID (RepositoryIdRequest) returns (RepositoryIdResponse);
+}
+
