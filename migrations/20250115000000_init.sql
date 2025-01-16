@@ -26,6 +26,6 @@ CREATE TABLE blobs
     uuid        TEXT UNIQUE NOT NULL,
     repo_id     TEXT        NOT NULL,
     object_id   TEXT        NOT NULL,
-    valid_from  DATETIME    NOT NULL,
-    file_exists INTEGER     NOT NULL
+    file_exists INTEGER     NOT NULL,
+    valid_from  DATETIME    NOT NULL
 );

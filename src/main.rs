@@ -56,7 +56,7 @@ async fn main() {
         Commands::Sync { port } => {
             commands::sync::sync(port)
                 .await
-                .expect("Failed to run server");
+                .expect("Failed to run sync");
         }
     }
 }

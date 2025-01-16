@@ -1,15 +1,71 @@
 syntax = "proto3";
 
+import "google/protobuf/timestamp.proto";
+
 package invariable;
 
-message RepositoryIdRequest {
-}
+
+
+message RepositoryIdRequest {}
 
 message RepositoryIdResponse {
   string repo_id = 1;
 }
 
-service Invariable {
-  rpc RepositoryID (RepositoryIdRequest) returns (RepositoryIdResponse);
+message Repository {
+    string repo_id = 2;
+    int32 last_file_index = 3;
+    int32 last_blob_index = 4;
 }
 
+message File {
+    string uuid = 1;
+    string path = 2;
+    optional string object_id = 3;
+    google.protobuf.Timestamp valid_from = 4;
+}
+
+message Blob {
+    string uuid = 1;
+    string repo_id = 2;
+    string object_id = 3;
+    bool file_exists = 4;
+    google.protobuf.Timestamp valid_from = 5;
+}
+
+message MergeRepositoriesResponse {}
+message MergeFilesResponse {}
+message MergeBlobsResponse {}
+
+message UpdateLastIndicesRequest {}
+message UpdateLastIndicesResponse {
+    Repository current = 1;
+}
+
+message LookupRepositoryRequest {
+    string repo_id = 1;
+}
+message LookupRepositoryResponse {
+    Repository repo = 1;
+}
+
+message SelectRepositoriesRequest {}
+message SelectFilesRequest {
+    int32 last_index = 1;
+}
+message SelectBlobsRequest {
+    int32 last_index = 1;
+}
+
+service Invariable {
+  rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);
+  rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
+  rpc MergeFiles (stream File) returns (MergeFilesResponse);
+  rpc MergeBlobs (stream Blob) returns (MergeBlobsResponse);
+  rpc UpdateLastIndices (UpdateLastIndicesRequest) returns (UpdateLastIndicesResponse);
+
+  rpc LookupRepository (LookupRepositoryRequest) returns (LookupRepositoryResponse);
+  rpc SelectRepositories (SelectRepositoriesRequest) returns (stream Repository);
+  rpc SelectFiles (SelectFilesRequest) returns (stream File);
+  rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);
+}

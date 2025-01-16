@@ -4,7 +4,7 @@ use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
 
-pub async fn init_repository() -> Result<(), Error> {
+pub async fn init_repository() -> Result<(), Box<dyn std::error::Error>> {
     let current_path = fs::canonicalize(".").await?;
     let invariable_path = current_path.join(".inv");
     if fs::metadata(invariable_path.as_path())
@@ -12,7 +12,7 @@ pub async fn init_repository() -> Result<(), Error> {
         .map(|m| m.is_dir())
         .unwrap_or(false)
     {
-        return Err(Error::other("oh no! already exists"));
+        return Err(Error::other("oh no! already exists").into());
     }
 
     fs::create_dir(invariable_path.as_path()).await?;
@@ -26,6 +26,9 @@ pub async fn init_repository() -> Result<(), Error> {
         .expect("failed to run migrations");
 
     let db = DB::new(pool.clone());
+
+    db.setup_db().await?;
+
     let repo = db
         .get_or_create_current_repository()
         .await

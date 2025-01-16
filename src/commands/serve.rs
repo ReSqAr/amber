@@ -1,13 +1,12 @@
-use log::info;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use log::debug;
-use tokio::fs;
-use tonic::transport::Server;
 use crate::commands::errors::InvariableError;
 use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
 use crate::transport::server::{invariable, MyServer};
+use log::info;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::fs;
+use tonic::transport::Server;
 
 pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let current_path = fs::canonicalize(".").await?;
@@ -31,7 +30,7 @@ pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let db = DB::new(pool.clone());
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-    let server = MyServer{db};
+    let server = MyServer { db };
 
     info!("listening on {}", addr);
 
