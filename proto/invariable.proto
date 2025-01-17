@@ -7,7 +7,6 @@ package invariable;
 
 
 message RepositoryIdRequest {}
-
 message RepositoryIdResponse {
   string repo_id = 1;
 }

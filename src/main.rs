@@ -33,6 +33,9 @@ enum Commands {
         #[arg(default_value_t = 50001)]
         port: u16,
     },
+    Export {
+        path: String,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +69,11 @@ async fn main() {
             commands::pull::pull(port)
                 .await
                 .expect("Failed to pull");
+        }
+        Commands::Export { path } => {
+            commands::export::export(path)
+                .await
+                .expect("Failed to export");
         }
     }
 }
