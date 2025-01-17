@@ -207,69 +207,11 @@ impl DB {
     ) -> Result<Vec<FilePathWithObjectId>, sqlx::Error> {
         sqlx::query_as::<_, FilePathWithObjectId>(
             "
-            WITH
-                versioned_files AS (
-                    SELECT
-                        path,
-                        object_id,
-                        valid_from,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY path
-                            ORDER BY valid_from DESC, object_id DESC
-                        ) AS rn
-                    FROM files
-                ),
-                latest_file_version AS (
-                    SELECT
-                        path,
-                        object_id
-                    FROM versioned_files
-                    WHERE
-                        rn = 1
-                ),
-                filesystem AS (
-                    SELECT
-                        path,
-                        object_id
-                    FROM latest_file_version
-                    WHERE
-                        object_id IS NOT NULL
-                ),
-                versioned_blobs AS (
-                    SELECT
-                        repo_id,
-                        object_id,
-                        valid_from,
-                        file_exists,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY repo_id, object_id
-                            ORDER BY valid_from DESC, object_id, file_exists DESC
-                        ) AS rn
-                    FROM blobs
-                ),
-                latest_blob_version AS (
-                    SELECT
-                        repo_id,
-                        object_id,
-                        file_exists
-                    FROM versioned_blobs
-                    WHERE
-                        rn = 1
-                ),
-                available_blobs AS (
-                    SELECT
-                        repo_id,
-                        object_id
-                    FROM latest_blob_version
-                    WHERE
-                        file_exists = 1
-                )
             SELECT
-                filesystem.path,
-                filesystem.object_id
-            FROM filesystem
-            INNER JOIN available_blobs ON filesystem.object_id = available_blobs.object_id
-            WHERE available_blobs.repo_id = ?;
+                path,
+                object_id
+            FROM repository_filesystem_available_files
+            WHERE repo_id = ?;
             ",
         )
         .bind(repo_id)
@@ -284,45 +226,15 @@ impl DB {
     ) -> Result<Vec<BlobObjectId>, sqlx::Error> {
         sqlx::query_as::<_, BlobObjectId>(
             "
-                WITH
-                    versioned_blobs AS (
-                        SELECT
-                            repo_id,
-                            object_id,
-                            valid_from,
-                            file_exists,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY repo_id, object_id
-                                ORDER BY valid_from DESC, object_id, file_exists DESC
-                            ) AS rn
-                        FROM blobs
-                    ),
-                    latest_blob_version AS (
-                        SELECT
-                            repo_id,
-                            object_id,
-                            file_exists
-                        FROM versioned_blobs
-                        WHERE
-                            rn = 1
-                    ),
-                    available_blobs AS (
-                        SELECT
-                            repo_id,
-                            object_id
-                        FROM latest_blob_version
-                        WHERE
-                            file_exists = 1
-                    )
                 SELECT
                     b.object_id
-                FROM available_blobs b
+                FROM latest_available_blobs b
                 WHERE
                       b.repo_id = ?
                   AND b.object_id NOT IN (
                     SELECT
                         object_id
-                    FROM available_blobs
+                    FROM latest_available_blobs
                     WHERE
                         repo_id = ?
                 );

@@ -1,9 +1,11 @@
+-- table: current_repository
 CREATE TABLE current_repository
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_id TEXT NOT NULL
 );
 
+-- table: repositories
 CREATE TABLE repositories
 (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12,6 +14,7 @@ CREATE TABLE repositories
     last_blob_index INTEGER     NOT NULL DEFAULT -1
 );
 
+-- table: files
 CREATE TABLE files
 (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,6 +23,8 @@ CREATE TABLE files
     object_id  TEXT,
     valid_from DATETIME    NOT NULL
 );
+
+-- table: blobs
 CREATE TABLE blobs
 (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
