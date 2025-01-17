@@ -9,11 +9,15 @@ use crate::transport::server::invariable::{
     SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest,
 };
 use anyhow::{Context, Result};
-use futures::TryStreamExt;
+use futures::{TryStreamExt};
 use log::{debug, info};
 use tokio::fs;
 use tokio::sync::mpsc;
 use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
+use tonic::Status;
+use crate::commands::pipe::TryForwardIntoExt;
+
+
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let current_path = fs::canonicalize(".").await?;
@@ -71,17 +75,11 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         remote_last_file_index, remote_last_blob_index
     );
 
-    let files = db.select_files(&remote_last_file_index).await?;
-    let (files_tx, files_rx) = mpsc::channel(1000);
-    let files_producer = tokio::spawn(async move {
-        for file in files {
-            if files_tx.send(file.into()).await.is_err() {
-                break;
-            }
-        }
-    });
-    client.merge_files(ReceiverStream::new(files_rx)).await?;
-    files_producer.await?;
+    db.select_files(remote_last_file_index.clone())
+        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
+        .map_ok(File::from)
+        .try_forward_into(|s| client.merge_files(s))
+        .await?;
     debug!("remote: merged files");
 
     let blobs = db.select_blobs(&remote_last_blob_index).await?;

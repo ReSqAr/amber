@@ -1,3 +1,4 @@
+use futures::{Stream, StreamExt};
 use crate::db;
 use crate::db::db::DB;
 use crate::db::models::CurrentRepository;
@@ -11,12 +12,13 @@ use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::TryStreamExt;
+use futures::{TryStreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
 use prost_types::Timestamp;
 use std::path::PathBuf;
+use std::pin::Pin;
 use anyhow::Context;
 use tokio::fs;
 use tokio::fs::File as TokioFile;
@@ -108,7 +110,7 @@ impl From<Blob> for DbBlob {
 }
 
 pub struct MyServer {
-    pub(crate) db: DB,
+    pub(crate) db: &'static DB,
     pub invariable_path: PathBuf,
 }
 
@@ -220,27 +222,19 @@ impl Invariable for MyServer {
         }
     }
 
-    type SelectFilesStream = ReceiverStream<Result<File, Status>>;
+    type SelectFilesStream = Pin<Box<dyn Stream<Item = Result<File, Status>> + Send + 'static>>;
 
     async fn select_files(
         &self,
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
-        match self.db.select_files(&request.into_inner().last_index).await {
-            Ok(files) => {
-                let (tx, rx) = mpsc::channel(1000);
-                tokio::spawn(async move {
-                    for file in files {
-                        if tx.send(Ok(file.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-
-                Ok(Response::new(ReceiverStream::new(rx)))
-            }
+        let last_index = request.into_inner().last_index;
+        let stream = self.db.select_files(last_index);
+        let mapped_stream = stream.map(|r| match r {
+            Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
-        }
+        });
+        Ok(Response::new(Box::pin(mapped_stream)))
     }
 
     type SelectBlobsStream = ReceiverStream<Result<Blob, Status>>;

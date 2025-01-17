@@ -2,6 +2,7 @@ use crate::db::models::{
     Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, Repository,
 };
 use chrono::{DateTime, Utc};
+use futures::Stream;
 use log::debug;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -89,7 +90,10 @@ impl DB {
         .await
     }
 
-    pub async fn select_files(&self, last_index: &i32) -> Result<Vec<File>, sqlx::Error> {
+    pub fn select_files(
+        & self,
+        last_index: i32,
+    ) -> impl Stream<Item = Result<File, sqlx::Error>> + Send + '_{
         sqlx::query_as::<_, File>(
             "
                 SELECT uuid, path, object_id, valid_from
@@ -97,8 +101,7 @@ impl DB {
                 WHERE id > ?",
         )
         .bind(last_index)
-        .fetch_all(&self.pool)
-        .await
+        .fetch(&self.pool)
     }
 
     pub async fn select_blobs(&self, last_index: &i32) -> Result<Vec<Blob>, sqlx::Error> {
