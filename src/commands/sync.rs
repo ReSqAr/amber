@@ -170,3 +170,4 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+

@@ -1,4 +1,6 @@
-use crate::db::models::{Blob, CurrentRepository, File, Repository};
+use crate::db::models::{
+    Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, Repository,
+};
 use chrono::{DateTime, Utc};
 use log::debug;
 use sqlx::SqlitePool;
@@ -123,12 +125,13 @@ impl DB {
                 ON CONFLICT(repo_id) DO UPDATE SET
                     last_file_index = max(last_file_index, excluded.last_file_index),
                     last_blob_index = max(last_blob_index, excluded.last_blob_index)
-                ")
-                .bind(repo.repo_id)
-                .bind(repo.last_file_index)
-                .bind(repo.last_blob_index)
-                .execute(&self.pool)
-                .await?;
+                ",
+            )
+            .bind(repo.repo_id)
+            .bind(repo.last_file_index)
+            .bind(repo.last_blob_index)
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }
@@ -195,6 +198,139 @@ impl DB {
             ",
         )
         .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn desired_filesystem_state(
+        &self,
+        repo_id: &str,
+    ) -> Result<Vec<FilePathWithObjectId>, sqlx::Error> {
+        sqlx::query_as::<_, FilePathWithObjectId>(
+            "
+            WITH
+                versioned_files AS (
+                    SELECT
+                        path,
+                        object_id,
+                        valid_from,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY path
+                            ORDER BY valid_from DESC, object_id DESC
+                        ) AS rn
+                    FROM files
+                ),
+                latest_file_version AS (
+                    SELECT
+                        path,
+                        object_id
+                    FROM versioned_files
+                    WHERE
+                        rn = 1
+                ),
+                filesystem AS (
+                    SELECT
+                        path,
+                        object_id
+                    FROM latest_file_version
+                    WHERE
+                        object_id IS NOT NULL
+                ),
+                versioned_blobs AS (
+                    SELECT
+                        repo_id,
+                        object_id,
+                        valid_from,
+                        file_exists,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY repo_id, object_id
+                            ORDER BY valid_from DESC, object_id, file_exists DESC
+                        ) AS rn
+                    FROM blobs
+                ),
+                latest_blob_version AS (
+                    SELECT
+                        repo_id,
+                        object_id,
+                        file_exists
+                    FROM versioned_blobs
+                    WHERE
+                        rn = 1
+                ),
+                available_blobs AS (
+                    SELECT
+                        repo_id,
+                        object_id
+                    FROM latest_blob_version
+                    WHERE
+                        file_exists = 1
+                )
+            SELECT
+                filesystem.path,
+                filesystem.object_id
+            FROM filesystem
+            INNER JOIN available_blobs ON filesystem.object_id = available_blobs.object_id
+            WHERE available_blobs.repo_id = ?;
+            ",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn missing_blobs(
+        &self,
+        source_repo_id: &str,
+        target_repo_id: &str,
+    ) -> Result<Vec<BlobObjectId>, sqlx::Error> {
+        sqlx::query_as::<_, BlobObjectId>(
+            "
+                WITH
+                    versioned_blobs AS (
+                        SELECT
+                            repo_id,
+                            object_id,
+                            valid_from,
+                            file_exists,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY repo_id, object_id
+                                ORDER BY valid_from DESC, object_id, file_exists DESC
+                            ) AS rn
+                        FROM blobs
+                    ),
+                    latest_blob_version AS (
+                        SELECT
+                            repo_id,
+                            object_id,
+                            file_exists
+                        FROM versioned_blobs
+                        WHERE
+                            rn = 1
+                    ),
+                    available_blobs AS (
+                        SELECT
+                            repo_id,
+                            object_id
+                        FROM latest_blob_version
+                        WHERE
+                            file_exists = 1
+                    )
+                SELECT
+                    b.object_id
+                FROM available_blobs b
+                WHERE
+                      b.repo_id = ?
+                  AND b.object_id NOT IN (
+                    SELECT
+                        object_id
+                    FROM available_blobs
+                    WHERE
+                        repo_id = ?
+                );
+            ",
+        )
+        .bind(source_repo_id)
+        .bind(target_repo_id)
+        .fetch_all(&self.pool)
         .await
     }
 }

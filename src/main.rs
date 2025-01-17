@@ -29,6 +29,10 @@ enum Commands {
         #[arg(default_value_t = 50001)]
         port: u16,
     },
+    Pull {
+        #[arg(default_value_t = 50001)]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -56,7 +60,12 @@ async fn main() {
         Commands::Sync { port } => {
             commands::sync::sync(port)
                 .await
-                .expect("Failed to run sync");
+                .expect("Failed to sync");
+        }
+        Commands::Pull { port } => {
+            commands::pull::pull(port)
+                .await
+                .expect("Failed to pull");
         }
     }
 }

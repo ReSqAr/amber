@@ -29,3 +29,14 @@ pub struct Blob {
     pub file_exists: bool,
     pub valid_from: DateTime<Utc>,
 }
+
+#[derive(Debug, FromRow)]
+pub struct BlobObjectId {
+    pub object_id: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct FilePathWithObjectId {
+    pub path: String,
+    pub object_id: String,
+}

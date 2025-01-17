@@ -1,7 +1,12 @@
 use crate::db;
 use crate::db::db::DB;
 use crate::db::models::CurrentRepository;
-use crate::transport::server::invariable::{Blob, File, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse, Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest, UpdateLastIndicesResponse, LookupRepositoryRequest, LookupRepositoryResponse};
+use crate::transport::server::invariable::{
+    Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
+    LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+    Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
+};
 use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
@@ -9,7 +14,13 @@ use db::models::Repository as DbRepository;
 use futures::TryStreamExt;
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
+use log::debug;
 use prost_types::Timestamp;
+use std::path::PathBuf;
+use anyhow::Context;
+use tokio::fs;
+use tokio::fs::File as TokioFile;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
@@ -98,6 +109,7 @@ impl From<Blob> for DbBlob {
 
 pub struct MyServer {
     pub(crate) db: DB,
+    pub invariable_path: PathBuf,
 }
 
 #[tonic::async_trait]
@@ -107,7 +119,9 @@ impl Invariable for MyServer {
         _: Request<RepositoryIdRequest>,
     ) -> Result<Response<RepositoryIdResponse>, Status> {
         match self.db.get_or_create_current_repository().await {
-            Ok(CurrentRepository { repo_id }) => Ok(Response::new(RepositoryIdResponse { repo_id })),
+            Ok(CurrentRepository { repo_id }) => {
+                Ok(Response::new(RepositoryIdResponse { repo_id }))
+            }
             Err(err) => Err(Status::from_error(err.into())),
         }
     }
@@ -167,9 +181,18 @@ impl Invariable for MyServer {
         }
     }
 
-    async fn lookup_repository(&self, request: Request<LookupRepositoryRequest>) -> Result<Response<LookupRepositoryResponse>, Status> {
-        match self.db.lookup_repository(request.into_inner().repo_id).await {
-            Ok(repo) => Ok(Response::new(LookupRepositoryResponse { repo: Some(repo.into()) })),
+    async fn lookup_repository(
+        &self,
+        request: Request<LookupRepositoryRequest>,
+    ) -> Result<Response<LookupRepositoryResponse>, Status> {
+        match self
+            .db
+            .lookup_repository(request.into_inner().repo_id)
+            .await
+        {
+            Ok(repo) => Ok(Response::new(LookupRepositoryResponse {
+                repo: Some(repo.into()),
+            })),
             Err(err) => Err(Status::from_error(err.into())),
         }
     }
@@ -241,5 +264,50 @@ impl Invariable for MyServer {
             }
             Err(err) => Err(Status::from_error(err.into())),
         }
+    }
+
+    async fn upload(
+        &self,
+        request: Request<UploadRequest>,
+    ) -> Result<Response<UploadResponse>, Status> {
+        let UploadRequest { object_id, content } = request.into_inner();
+
+        let blob_path = self.invariable_path.join("blobs");
+        fs::create_dir_all(blob_path.as_path()).await?;
+        let object_path = blob_path.join(&object_id);
+
+        let mut file = TokioFile::create(&object_path).await?;
+        file.write_all(&content).await?;
+        file.sync_all().await?;
+
+        let CurrentRepository { repo_id } = self
+            .db
+            .get_or_create_current_repository()
+            .await
+            .or_else(|err| Err(Status::from_error(err.into())))?;
+        self.db
+            .add_blob(&repo_id, &object_id, chrono::Utc::now(), true)
+            .await
+            .or_else(|err| Err(Status::from_error(err.into())))?;
+        debug!("added blob {:?}", object_path);
+
+        Ok(Response::new(UploadResponse {}))
+    }
+
+    async fn download(
+        &self,
+        request: Request<DownloadRequest>,
+    ) -> Result<Response<DownloadResponse>, Status> {
+        let DownloadRequest { object_id } = request.into_inner();
+
+        let blob_path = self.invariable_path.join("blobs");
+        let object_path = blob_path.join(&object_id);
+
+        let mut file = TokioFile::open(&object_path).await.context(format!("unable to access {:?}", object_path)).or_else(|err| Err(Status::from_error(err.into())))?;
+        let mut content = Vec::new();
+        file.read_to_end(&mut content).await.context(format!("unable to read {:?}", object_path)).or_else(|err| Err(Status::from_error(err.into())))?;
+        debug!("read blob {:?}", object_path);
+
+        Ok(Response::new(DownloadResponse { content }))
     }
 }

@@ -57,6 +57,18 @@ message SelectBlobsRequest {
     int32 last_index = 1;
 }
 
+message UploadRequest{
+    string object_id = 1;
+    bytes content = 2;
+}
+message UploadResponse{}
+message DownloadRequest{
+    string object_id = 1;
+}
+message DownloadResponse{
+    bytes content = 1;
+}
+
 service Invariable {
   rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);
   rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
@@ -68,4 +80,7 @@ service Invariable {
   rpc SelectRepositories (SelectRepositoriesRequest) returns (stream Repository);
   rpc SelectFiles (SelectFilesRequest) returns (stream File);
   rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);
+  
+  rpc Upload(UploadRequest) returns (UploadResponse);
+  rpc Download(DownloadRequest) returns (DownloadResponse);
 }
