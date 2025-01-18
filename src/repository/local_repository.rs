@@ -7,8 +7,6 @@ use tokio::fs;
 
 pub(crate) struct LocalRepository {
     pub(crate) root: PathBuf,// TODO: make getter [Local]
-    pub(crate) invariable_path: PathBuf, // TODO: make getter [Local]
-    pub(crate) blob_path: PathBuf,       // TODO: make getter [Local]
     pub(crate) repo_id: String,          // TODO: make getter [Metadata]
     pub(crate) db: DB,                   // TODO: make private again
 }
@@ -34,7 +32,6 @@ impl LocalRepository {
         {
             return Err(anyhow::anyhow!("repository is not initialised").into());
         };
-        let blob_path = invariable_path.join("blobs");
 
         let db_path = invariable_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
@@ -54,9 +51,7 @@ impl LocalRepository {
 
         Ok(LocalRepository {
             root,
-            invariable_path,
             repo_id: repo.repo_id,
-            blob_path,
             db,
         })
     }
@@ -101,4 +96,25 @@ impl LocalRepository {
 
         Self::new(Some(root)).await
     }
+}
+
+pub trait Local {
+    fn root(&self) -> PathBuf;
+    fn invariable_path(&self) -> PathBuf;
+    fn blob_path(&self) -> PathBuf;
+}
+
+impl Local for LocalRepository {
+    fn root(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    fn invariable_path(&self) -> PathBuf {
+        self.root().join(".inv")
+    }
+
+    fn blob_path(&self) -> PathBuf {
+        self.invariable_path().join("blobs")
+    }
+
 }

@@ -9,7 +9,7 @@ use log::{debug, info};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local_repository::{Local, LocalRepository};
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -40,7 +40,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             .into_inner()
             .content;
 
-        let blob_path = local_repository.blob_path.clone();
+        let blob_path = local_repository.blob_path();
         fs::create_dir_all(blob_path.as_path()).await?;
         let object_path = blob_path.join(&object_id);
 

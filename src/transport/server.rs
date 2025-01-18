@@ -1,6 +1,6 @@
 use crate::db;
 use crate::db::models::{CurrentRepository, InputBlob};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local_repository::{Local, LocalRepository};
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
     LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
@@ -245,7 +245,7 @@ impl Invariable for MyServer {
     ) -> Result<Response<UploadResponse>, Status> {
         let UploadRequest { object_id, content } = request.into_inner();
 
-        let blob_path = self.repository.invariable_path.join("blobs");
+        let blob_path = self.repository.blob_path();
         fs::create_dir_all(blob_path.as_path()).await?;
         let object_path = blob_path.join(&object_id);
 
@@ -281,7 +281,7 @@ impl Invariable for MyServer {
     ) -> Result<Response<DownloadResponse>, Status> {
         let DownloadRequest { object_id } = request.into_inner();
 
-        let blob_path = self.repository.blob_path.clone();
+        let blob_path = self.repository.blob_path().clone();
         let object_path = blob_path.join(&object_id);
 
         let mut file = TokioFile::open(&object_path)

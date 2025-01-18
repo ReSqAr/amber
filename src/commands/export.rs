@@ -7,14 +7,14 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local_repository::{Local, LocalRepository};
 
 pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
     debug!("local repo_id={}", local_repository.repo_id);
 
-    let staging_path = local_repository.invariable_path.join("staging");
+    let staging_path = local_repository.invariable_path().join("staging");
     fs::create_dir_all(&staging_path)
         .await
         .context("unable to create staging directory")?;
@@ -30,7 +30,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
             object_id,
         } = next?;
 
-        let object_path = local_repository.blob_path.join(object_id);
+        let object_path = local_repository.blob_path().join(object_id);
 
         let target_path = temp_dir_path.join(relative_path);
         if let Some(parent) = target_path.parent() {
