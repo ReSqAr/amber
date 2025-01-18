@@ -4,6 +4,7 @@ use crate::db::models::{
 };
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
+use log::debug;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
 use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
@@ -12,13 +13,17 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct DB {
     pool: SqlitePool,
+    chunk_size: usize,
 }
 
 type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
 impl DB {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            chunk_size: 100,
+        }
     }
 
     fn stream<'a, T>(&self, q: Query<'a, Sqlite, SqliteArguments<'a>>) -> DBOutputStream<'a, T>
@@ -64,44 +69,92 @@ impl DB {
             .await
     }
 
-    pub async fn add_file<S>(&self, mut s: S) -> Result<(), sqlx::Error>
+    pub async fn add_file<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
         S: Stream<Item = InputFile> + Unpin,
-    { 
-        while let Some(file) = s.next().await {
-            let uuid = Uuid::new_v4().to_string();
-            sqlx::query_as::<_, File>(
-                "INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)
-            RETURNING uuid, path, object_id, valid_from",
-            )
-                .bind(uuid)
-                .bind(file.path)
-                .bind(file.object_id)
-                .bind(file.valid_from)
-                .fetch_one(&self.pool)
-                .await?;
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.chunks(self.chunk_size);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT INTO files (uuid, path, object_id, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for file in &chunk {
+                let uuid = Uuid::new_v4().to_string();
+                query = query
+                    .bind(uuid)
+                    .bind(&file.path)
+                    .bind(&file.object_id)
+                    .bind(&file.valid_from);
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
         }
+
+        debug!("files added: attempted={} inserted={}", total_attempted, total_inserted);
         Ok(())
     }
 
-    pub async fn add_blob<S>(&self, mut s: S) -> Result<(), sqlx::Error>
+    pub async fn add_blob<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
         S: Stream<Item = InputBlob> + Unpin,
     {
-        while let Some(blob) = s.next().await {
-            let uuid = Uuid::new_v4().to_string();
-            sqlx::query_as::<_, Blob>(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)
-            RETURNING uuid, repo_id, object_id, file_exists, valid_from",
-            )
-                .bind(uuid)
-                .bind(blob.repo_id)
-                .bind(blob.object_id)
-                .bind(blob.file_exists)
-                .bind(blob.valid_from)
-                .fetch_one(&self.pool)
-                .await?;
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.chunks(self.chunk_size);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for blob in &chunk {
+                let uuid = Uuid::new_v4().to_string();
+                query = query
+                    .bind(uuid)
+                    .bind(&blob.repo_id)
+                    .bind(&blob.object_id)
+                    .bind(&blob.file_exists)
+                    .bind(&blob.valid_from);
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
         }
+
+        debug!("blobs added: attempted={} inserted={}", total_attempted, total_inserted);
         Ok(())
     }
 
@@ -135,58 +188,146 @@ impl DB {
         )
     }
 
-    pub async fn merge_repositories(
-        &self,
-        mut s: impl Stream<Item = Repository> + Unpin,
-    ) -> Result<(), sqlx::Error> {
-        while let Some(repo) = s.next().await {
-            let _ = sqlx::query(
+    pub async fn merge_repositories<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = Repository> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.chunks(self.chunk_size);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
                 "INSERT INTO repositories (repo_id, last_file_index, last_blob_index)
-                VALUES (?, ?, ?)
-                ON CONFLICT(repo_id) DO UPDATE SET
+                 VALUES {}
+                 ON CONFLICT(repo_id) DO UPDATE SET
                     last_file_index = max(last_file_index, excluded.last_file_index),
                     last_blob_index = max(last_blob_index, excluded.last_blob_index)
                 ",
-            )
-            .bind(repo.repo_id)
-            .bind(repo.last_file_index)
-            .bind(repo.last_blob_index)
-            .execute(&self.pool)
-            .await?;
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for repo in &chunk {
+                query = query
+                    .bind(&repo.repo_id)
+                    .bind(&repo.last_file_index)
+                    .bind(&repo.last_blob_index)
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
         }
+
+        debug!(
+            "repositories merged: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
         Ok(())
     }
 
-    pub async fn merge_files(
-        &self,
-        mut s: impl Stream<Item = File> + Unpin,
-    ) -> Result<(), sqlx::Error> {
-        while let Some(file) = s.next().await {
-            let _ = sqlx::query("INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)")
-                    .bind(file.uuid)
-                    .bind(file.path)
-                    .bind(file.object_id)
-                    .bind(file.valid_from)
-                    .execute(&self.pool)
-                    .await?;
+    pub async fn merge_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = File> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.chunks(self.chunk_size);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for file in &chunk {
+                query = query
+                    .bind(&file.uuid)
+                    .bind(&file.path)
+                    .bind(&file.object_id)
+                    .bind(&file.valid_from)
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
         }
+
+        debug!(
+            "files merged: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
         Ok(())
     }
 
-    pub async fn merge_blobs(
-        &self,
-        mut s: impl Stream<Item = Blob> + Unpin,
-    ) -> Result<(), sqlx::Error> {
-        while let Some(blob) = s.next().await {
-            let _ = sqlx::query("INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)")
-                    .bind(blob.uuid)
-                    .bind(blob.repo_id)
-                    .bind(blob.object_id)
-                    .bind(blob.file_exists)
-                    .bind(blob.valid_from)
-                    .execute(&self.pool)
-                    .await?;
+    pub async fn merge_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = Blob> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.chunks(self.chunk_size);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for file in &chunk {
+                query = query
+                    .bind(&file.uuid)
+                    .bind(&file.repo_id)
+                    .bind(&file.object_id)
+                    .bind(&file.file_exists)
+                    .bind(&file.valid_from)
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
         }
+
+        debug!(
+            "blobs merged: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
         Ok(())
     }
 
