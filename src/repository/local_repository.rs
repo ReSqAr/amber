@@ -1,10 +1,12 @@
-use crate::db::db::DB;
+use crate::db::db::{DBOutputStream, DB};
 use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
 use log::debug;
 use std::path::PathBuf;
-use futures::{Stream, StreamExt};
+use futures::{Stream};
+use sqlx::Error;
 use tokio::fs;
+use crate::db::models::Repository;
 
 pub(crate) struct LocalRepository {
     root: PathBuf,
@@ -157,4 +159,23 @@ impl Adder for LocalRepository {
     }
 }
 
+pub trait Syncer<T> {
+    fn select(&self) -> crate::db::db::DBOutputStream<'static, T>;
 
+    async fn merge<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = T> + Unpin;
+}
+
+impl Syncer<Repository> for LocalRepository {
+    fn select(&self) -> DBOutputStream<'static, Repository> {
+        self.db.select_repositories()
+    }
+
+    async fn merge<S>(&self, s: S) -> Result<(), Error>
+    where
+        S: Stream<Item=Repository> + Unpin,
+    {
+        self.db.merge_repositories(s).await
+    }
+}

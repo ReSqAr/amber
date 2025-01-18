@@ -1,6 +1,6 @@
 use crate::db;
 use crate::db::models::{CurrentRepository, InputBlob};
-use crate::repository::local_repository::{Adder, Local, LocalRepository};
+use crate::repository::local_repository::{Adder, Local, LocalRepository, Syncer};
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
     LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
@@ -133,7 +133,7 @@ impl Invariable for MyServer {
         request
             .into_inner()
             .map_ok(Repository::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_repositories(s))
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -196,7 +196,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = self.repository.db.select_repositories().map(|r| match r {
+        let stream = self.repository.select().map(|r| match r {
             Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
         });

@@ -14,7 +14,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::Result;
 use futures::TryStreamExt;
 use log::{debug, info};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local_repository::{LocalRepository, Syncer};
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -105,7 +105,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     local_repository.db.update_last_indices().await?;
     debug!("local: updated last indices");
 
-    local_repository.db.select_repositories()
+    local_repository.select()
         .map_ok(GRPCRepository::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_repositories(s))
         .await?;
@@ -116,7 +116,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .map_ok(GRPCRepository::into)
-        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.db.merge_repositories(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.merge(s))
         .await?;
     debug!("local: merged repositories");
 

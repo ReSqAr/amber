@@ -16,7 +16,7 @@ pub struct DB {
     chunk_size: usize,
 }
 
-type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
+pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
 impl DB {
     pub fn new(pool: SqlitePool) -> Self {
