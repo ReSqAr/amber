@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use tokio::fs;
 
 pub(crate) struct LocalRepository {
-    pub(crate) root: PathBuf,// TODO: make getter [Local]
-    pub(crate) repo_id: String,          // TODO: make getter [Metadata]
+    root: PathBuf,
+    repo_id: String,
     pub(crate) db: DB,                   // TODO: make private again
 }
+
 
 async fn resolve_maybe_path(
     maybe_path: Option<PathBuf>,
@@ -116,5 +117,16 @@ impl Local for LocalRepository {
     fn blob_path(&self) -> PathBuf {
         self.invariable_path().join("blobs")
     }
-
 }
+
+pub trait Metadata {
+    fn repo_id(&self) -> String;
+}
+
+impl Metadata for LocalRepository {
+    fn repo_id(&self) -> String {
+        self.repo_id.clone()
+    }
+}
+
+

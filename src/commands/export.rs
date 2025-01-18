@@ -7,12 +7,12 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use crate::repository::local_repository::{Local, LocalRepository};
+use crate::repository::local_repository::{Local, LocalRepository, Metadata};
 
 pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
-    debug!("local repo_id={}", local_repository.repo_id);
+    debug!("local repo_id={}", local_repository.repo_id());
 
     let staging_path = local_repository.invariable_path().join("staging");
     fs::create_dir_all(&staging_path)
@@ -23,7 +23,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
         .context("unable to create temp directory")?;
     let temp_dir_path = temp_dir.dir_path();
 
-    let mut desired_state = local_repository.db.desired_filesystem_state(local_repository.repo_id.clone());
+    let mut desired_state = local_repository.db.desired_filesystem_state(local_repository.repo_id().clone());
     while let Some(next) = desired_state.next().await {
         let FilePathWithObjectId {
             path: relative_path,

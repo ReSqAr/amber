@@ -9,11 +9,11 @@ use log::{debug, info};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use crate::repository::local_repository::{Local, LocalRepository};
+use crate::repository::local_repository::{Local, LocalRepository, Metadata};
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
-    let local_repo_id = &local_repository.repo_id;
+    let local_repo_id = &local_repository.repo_id();
 
     debug!("local repo_id={}", local_repo_id);
 
@@ -75,11 +75,11 @@ async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), 
             path: relative_path,
             object_id,
         } = next?;
-        let invariable_path = local_repository.root.join(".inv");
+        let invariable_path = local_repository.root().join(".inv");
         let blob_path = invariable_path.join("blobs");
         let object_path = blob_path.join(object_id);
 
-        let target_path = local_repository.root.join(relative_path);
+        let target_path = local_repository.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);
 
         if let Some(parent) = target_path.parent() {

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tokio::{fs, io};
 
 use crate::db::models::{InputBlob, InputFile};
-use crate::repository::local_repository::{Local, LocalRepository};
+use crate::repository::local_repository::{Local, LocalRepository, Metadata};
 use sha2::{Digest, Sha256};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -52,7 +52,7 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let sf = stream::iter(vec![f]);
     local_repository.db.add_file(sf).await?;
     let b = InputBlob {
-        repo_id: local_repository.repo_id,
+        repo_id: local_repository.repo_id(),
         object_id,
         has_blob: true,
         valid_from,
