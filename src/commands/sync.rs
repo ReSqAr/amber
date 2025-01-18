@@ -1,5 +1,5 @@
 use crate::commands::errors::InvariableError;
-use crate::commands::pipe::TryForwardIntoExt;
+use crate::utils::pipe::TryForwardIntoExt;
 use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::models::Repository as DbRepository;

@@ -1,4 +1,4 @@
-use crate::commands::pipe::TryForwardIntoExt;
+use crate::utils::pipe::TryForwardIntoExt;
 use crate::db;
 use crate::db::db::DB;
 use crate::db::models::{CurrentRepository, InputBlob};

@@ -5,4 +5,3 @@ pub(crate) mod serve;
 pub(crate) mod sync;
 pub(crate) mod pull;
 pub(crate) mod export;
-pub(crate) mod pipe;
