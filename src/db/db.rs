@@ -2,18 +2,43 @@ use crate::db::models::{
     Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, Repository,
 };
 use chrono::{DateTime, Utc};
-use futures::Stream;
+use futures::stream::BoxStream;
+use futures::{StreamExt, TryStreamExt};
 use log::debug;
-use sqlx::SqlitePool;
+use sqlx::query::Query;
+use sqlx::sqlite::SqliteArguments;
+use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct DB {
     pool: SqlitePool,
 }
 
+
+type DBStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
+
 impl DB {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    fn stream<'a, T>(&self, q: Query<'a, Sqlite, SqliteArguments<'a>>) -> DBStream<'a, T>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'a,
+    {
+        // inlined from:
+        //   sqlx-core-0.8.3/src/query_as.rs
+        // due to lifetime issues with .fetch
+        self.pool.clone()
+            .fetch_many(q)
+            .map(|v| match v {
+                Ok(Either::Right(row)) => T::from_row(&row).map(Either::Right),
+                Ok(Either::Left(v)) => Ok(Either::Left(v)),
+                Err(e) => Err(e),
+            })
+            .try_filter_map(|step| async move { Ok(step.right()) })
+            .boxed()
     }
 
     pub async fn setup_db(&self) -> Result<(), sqlx::Error> {
@@ -41,6 +66,7 @@ impl DB {
     }
 
     pub async fn add_file(
+        // TODO: stream
         &self,
         path: &str,
         object_id: Option<&str>,
@@ -60,6 +86,7 @@ impl DB {
     }
 
     pub async fn add_blob(
+        // TODO: stream
         &self,
         repo_id: &str,
         object_id: &str,
@@ -80,43 +107,38 @@ impl DB {
         .await
     }
 
-    pub async fn select_repositories(&self) -> Result<Vec<Repository>, sqlx::Error> {
-        sqlx::query_as::<_, Repository>(
-            "
-                SELECT repo_id, last_file_index, last_blob_index
-                FROM repositories",
-        )
-        .fetch_all(&self.pool)
-        .await
+    pub fn select_repositories(&self) -> DBStream<'static, Repository> {
+        self.stream(query(
+            "SELECT repo_id, last_file_index, last_blob_index FROM repositories",
+        ))
     }
 
-    pub fn select_files(
-        & self,
-        last_index: i32,
-    ) -> impl Stream<Item = Result<File, sqlx::Error>> + Send + '_{
-        sqlx::query_as::<_, File>(
-            "
-                SELECT uuid, path, object_id, valid_from
-                FROM files
-                WHERE id > ?",
+    pub fn select_files(&self, last_index: i32) -> DBStream<'static, File> {
+        self.stream(
+            query(
+                "
+            SELECT uuid, path, object_id, valid_from
+            FROM files
+            WHERE id > ?",
+            )
+            .bind(last_index),
         )
-        .bind(last_index)
-        .fetch(&self.pool)
     }
 
-    pub async fn select_blobs(&self, last_index: &i32) -> Result<Vec<Blob>, sqlx::Error> {
-        sqlx::query_as::<_, Blob>(
-            "
+    pub fn select_blobs(&self, last_index: i32) -> DBStream<'static, Blob> {
+        self.stream(
+            query(
+                "
                 SELECT uuid, repo_id, object_id, file_exists, valid_from
                 FROM blobs
                 WHERE id > ?",
+            )
+            .bind(last_index),
         )
-        .bind(last_index)
-        .fetch_all(&self.pool)
-        .await
     }
 
     pub async fn merge_repositories(
+        // TODO: stream
         &self,
         repositories: Vec<Repository>,
     ) -> Result<(), sqlx::Error> {
@@ -140,6 +162,7 @@ impl DB {
     }
 
     pub async fn merge_files(&self, files: Vec<File>) -> Result<(), sqlx::Error> {
+        // TODO: stream
         debug!("merging {} files", files.len());
         for file in files {
             let _ = sqlx::query("INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)")
@@ -154,6 +177,7 @@ impl DB {
     }
 
     pub async fn merge_blobs(&self, blobs: Vec<Blob>) -> Result<(), sqlx::Error> {
+        // TODO: stream
         debug!("merging {} blobs", blobs.len());
         for blob in blobs {
             let _ = sqlx::query("INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)")
@@ -204,31 +228,31 @@ impl DB {
         .await
     }
 
-    pub async fn desired_filesystem_state(
+    pub fn desired_filesystem_state(
         &self,
-        repo_id: &str,
-    ) -> Result<Vec<FilePathWithObjectId>, sqlx::Error> {
-        sqlx::query_as::<_, FilePathWithObjectId>(
-            "
-            SELECT
-                path,
-                object_id
-            FROM repository_filesystem_available_files
-            WHERE repo_id = ?;
-            ",
+        repo_id: String,
+    ) -> DBStream<FilePathWithObjectId> {
+        self.stream(
+            query(
+                "
+                SELECT
+                    path,
+                    object_id
+                FROM repository_filesystem_available_files
+                WHERE repo_id = ?;",
+            )
+            .bind(repo_id),
         )
-        .bind(repo_id)
-        .fetch_all(&self.pool)
-        .await
     }
 
-    pub async fn missing_blobs(
+    pub fn missing_blobs(
         &self,
-        source_repo_id: &str,
-        target_repo_id: &str,
-    ) -> Result<Vec<BlobObjectId>, sqlx::Error> {
-        sqlx::query_as::<_, BlobObjectId>(
-            "
+        source_repo_id: String,
+        target_repo_id: String,
+    ) -> DBStream<BlobObjectId> {
+        self.stream(
+            query(
+                "
                 SELECT
                     b.object_id
                 FROM latest_available_blobs b
@@ -240,12 +264,10 @@ impl DB {
                     FROM latest_available_blobs
                     WHERE
                         repo_id = ?
-                );
-            ",
+                );",
+            )
+            .bind(source_repo_id)
+            .bind(target_repo_id),
         )
-        .bind(source_repo_id)
-        .bind(target_repo_id)
-        .fetch_all(&self.pool)
-        .await
     }
 }

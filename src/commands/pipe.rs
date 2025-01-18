@@ -6,9 +6,9 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A stream adapter that yields only the 'ok' items (I) from an upstream
+/// A stream adapter that yields only the 'Ok' items (I) from an upstream
 /// `Stream<Item = Result<I, E>>`, stopping after the first encountered error.
-struct ErrorTrackingStream<S, E> {
+pub(crate) struct ErrorTrackingStream<S, E> {
     upstream: S,
     shared_error: Arc<Mutex<Option<E>>>,
 }
@@ -38,7 +38,7 @@ where
 }
 
 /// Extension trait that adds `try_forward_into` to any `Stream<Item = Result<I, E>>`.
-pub trait TryForwardIntoExt<'a, I, E>: Stream<Item = Result<I, E>> + Sized {
+pub(crate) trait TryForwardIntoExt<I, E>: Stream<Item = Result<I, E>> + Sized {
     /// Pipes all `Ok(I)` items into a function `f` that consumes a plain `Stream<Item = I>`,
     /// stopping at the first error from this stream. Afterwards:
     /// - If the stream encountered an error first, return it;
@@ -46,25 +46,25 @@ pub trait TryForwardIntoExt<'a, I, E>: Stream<Item = Result<I, E>> + Sized {
     async fn try_forward_into<Fut, O, F>(self, f: F) -> Result<O, E>
     where
         // `f` is a function taking a `Stream<Item = I>` and producing a `Future<Output = Result<O, E>>`
-        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send + 'a,
-        Fut: Future<Output = Result<O, E>> + Send + 'a,
-        I: Send + 'a,
-        E: Send + 'a,
-        Self: Unpin + Send + 'a,
-        O: Send + 'a;
+        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send,
+        Fut: Future<Output = Result<O, E>> + Send,
+        I: Send,
+        E: Send,
+        Self: Unpin + Send,
+        O: Send;
 }
 
-impl<'a, S, I, E> TryForwardIntoExt<'a, I, E> for S
+impl<S, I, E> TryForwardIntoExt<I, E> for S
 where
-    S: Stream<Item = Result<I, E>> + Unpin + Send + 'a,
-    I: Send + 'a,
-    E: Send + 'a,
+    S: Stream<Item = Result<I, E>> + Unpin + Send,
+    I: Send,
+    E: Send,
 {
     async fn try_forward_into<Fut, O, F>(self, f: F) -> Result<O, E>
     where
-        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send + 'a,
-        Fut: Future<Output = Result<O, E>> + Send + 'a,
-        O: Send + 'a,
+        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send,
+        Fut: Future<Output = Result<O, E>> + Send,
+        O: Send,
     {
         let shared_error = Arc::new(Mutex::new(None));
         let adapter = ErrorTrackingStream {
@@ -72,7 +72,6 @@ where
             shared_error: shared_error.clone(),
         };
 
-        // Run `f`, which sees a clean stream of I, with no embedded errors
         let result = f(adapter).await;
 
         // If the upstream encountered an error, return that first
@@ -80,7 +79,6 @@ where
             return Err(err);
         }
 
-        // Otherwise return what `f` produced (which may be an error or success)
         result
     }
 }

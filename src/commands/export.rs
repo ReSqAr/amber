@@ -5,6 +5,7 @@ use crate::db::models::{CurrentRepository, FilePathWithObjectId};
 use crate::db::schema::run_migrations;
 use anyhow::{Context, Result};
 use async_tempfile::TempDir;
+use futures::StreamExt;
 use log::{debug, info};
 use std::path::Path;
 use tokio::fs;
@@ -47,14 +48,13 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
 
     let root = current_path;
 
-    for FilePathWithObjectId {
-        path: relative_path,
-        object_id,
-    } in db
-        .desired_filesystem_state(&repo_id)
-        .await
-        .context("unable to determine desired fs")?
-    {
+    let mut desired_state = db.desired_filesystem_state(repo_id.clone());
+    while let Some(next) = desired_state.next().await {
+        let FilePathWithObjectId {
+            path: relative_path,
+            object_id,
+        } = next?;
+
         let invariable_path = root.join(".inv");
         let blob_path = invariable_path.join("blobs");
         let object_path = blob_path.join(object_id);

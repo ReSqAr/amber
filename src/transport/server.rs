@@ -1,4 +1,3 @@
-use futures::{Stream, StreamExt};
 use crate::db;
 use crate::db::db::DB;
 use crate::db::models::CurrentRepository;
@@ -8,23 +7,22 @@ use crate::transport::server::invariable::{
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
 };
+use anyhow::Context;
 use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::{TryStreamExt};
+use futures::TryStreamExt;
+use futures::{Stream, StreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
 use prost_types::Timestamp;
 use std::path::PathBuf;
 use std::pin::Pin;
-use anyhow::Context;
 use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
-use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
 pub mod invariable {
@@ -199,27 +197,18 @@ impl Invariable for MyServer {
         }
     }
 
-    type SelectRepositoriesStream = ReceiverStream<Result<Repository, Status>>;
+    type SelectRepositoriesStream =
+        Pin<Box<dyn Stream<Item = Result<Repository, Status>> + Send + 'static>>;
 
     async fn select_repositories(
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        match self.db.select_repositories().await {
-            Ok(repos) => {
-                let (tx, rx) = mpsc::channel(1000);
-                tokio::spawn(async move {
-                    for repo in repos {
-                        if tx.send(Ok(repo.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-
-                Ok(Response::new(ReceiverStream::new(rx)))
-            }
+        let stream = self.db.select_repositories().map(|r| match r {
+            Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
-        }
+        });
+        Ok(Response::new(Box::pin(stream)))
     }
 
     type SelectFilesStream = Pin<Box<dyn Stream<Item = Result<File, Status>> + Send + 'static>>;
@@ -229,35 +218,25 @@ impl Invariable for MyServer {
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = self.db.select_files(last_index);
-        let mapped_stream = stream.map(|r| match r {
+        let stream = self.db.select_files(last_index).map(|r| match r {
             Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
         });
-        Ok(Response::new(Box::pin(mapped_stream)))
+        Ok(Response::new(Box::pin(stream)))
     }
 
-    type SelectBlobsStream = ReceiverStream<Result<Blob, Status>>;
+    type SelectBlobsStream = Pin<Box<dyn Stream<Item = Result<Blob, Status>> + Send + 'static>>;
 
     async fn select_blobs(
         &self,
         request: Request<SelectBlobsRequest>,
     ) -> Result<Response<Self::SelectBlobsStream>, Status> {
-        match self.db.select_blobs(&request.into_inner().last_index).await {
-            Ok(blobs) => {
-                let (tx, rx) = mpsc::channel(1000);
-                tokio::spawn(async move {
-                    for blob in blobs {
-                        if tx.send(Ok(blob.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-
-                Ok(Response::new(ReceiverStream::new(rx)))
-            }
+        let last_index = request.into_inner().last_index;
+        let stream = self.db.select_blobs(last_index).map(|r| match r {
+            Ok(blob) => Ok(blob.into()),
             Err(err) => Err(Status::from_error(err.into())),
-        }
+        });
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn upload(
@@ -297,9 +276,15 @@ impl Invariable for MyServer {
         let blob_path = self.invariable_path.join("blobs");
         let object_path = blob_path.join(&object_id);
 
-        let mut file = TokioFile::open(&object_path).await.context(format!("unable to access {:?}", object_path)).or_else(|err| Err(Status::from_error(err.into())))?;
+        let mut file = TokioFile::open(&object_path)
+            .await
+            .context(format!("unable to access {:?}", object_path))
+            .or_else(|err| Err(Status::from_error(err.into())))?;
         let mut content = Vec::new();
-        file.read_to_end(&mut content).await.context(format!("unable to read {:?}", object_path)).or_else(|err| Err(Status::from_error(err.into())))?;
+        file.read_to_end(&mut content)
+            .await
+            .context(format!("unable to read {:?}", object_path))
+            .or_else(|err| Err(Status::from_error(err.into())))?;
         debug!("read blob {:?}", object_path);
 
         Ok(Response::new(DownloadResponse { content }))

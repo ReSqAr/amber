@@ -1,4 +1,5 @@
 use crate::commands::errors::InvariableError;
+use crate::commands::pipe::TryForwardIntoExt;
 use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::models::Repository as DbRepository;
@@ -9,15 +10,10 @@ use crate::transport::server::invariable::{
     SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest,
 };
 use anyhow::{Context, Result};
-use futures::{TryStreamExt};
+use futures::TryStreamExt;
 use log::{debug, info};
 use tokio::fs;
-use tokio::sync::mpsc;
-use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
 use tonic::Status;
-use crate::commands::pipe::TryForwardIntoExt;
-
-
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let current_path = fs::canonicalize(".").await?;
@@ -82,17 +78,11 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     debug!("remote: merged files");
 
-    let blobs = db.select_blobs(&remote_last_blob_index).await?;
-    let (blobs_tx, blobs_rx) = mpsc::channel(1000);
-    let blobs_producer = tokio::spawn(async move {
-        for blob in blobs {
-            if blobs_tx.send(blob.into()).await.is_err() {
-                break;
-            }
-        }
-    });
-    client.merge_blobs(ReceiverStream::new(blobs_rx)).await?;
-    blobs_producer.await?;
+    db.select_blobs(remote_last_blob_index.clone())
+        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
+        .map_ok(Blob::from)
+        .try_forward_into(|s| client.merge_blobs(s))
+        .await?;
     debug!("remote: merged blobs");
 
     let DbRepository {
@@ -139,20 +129,11 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     db.update_last_indices().await?;
     debug!("local: updated last indices");
 
-    let repos = db.select_repositories().await?;
-    let (repos_tx, repos_rx) = mpsc::channel(1000);
-    let repositories_producer = tokio::spawn(async move {
-        for repo in repos {
-            if repos_tx.send(repo.into()).await.is_err() {
-                break;
-            }
-        }
-    });
-    client
-        .merge_repositories(ReceiverStream::new(repos_rx))
-        .await
-        .context("client failed to merge repositories")?;
-    repositories_producer.await?;
+    db.select_repositories()
+        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
+        .map_ok(Repository::from)
+        .try_forward_into(|s| client.merge_repositories(s))
+        .await?;
     debug!("remote: merged repositories");
 
     let repositories_response = client
@@ -168,4 +149,3 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
