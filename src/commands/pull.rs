@@ -1,14 +1,14 @@
 use crate::commands::errors::InvariableError;
 use crate::db::db::DB;
 use crate::db::establish_connection;
-use crate::db::models::{BlobObjectId, CurrentRepository, FilePathWithObjectId};
+use crate::db::models::{BlobObjectId, CurrentRepository, FilePathWithObjectId, InputBlob};
 use crate::db::schema::run_migrations;
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::{
     DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
 };
 use anyhow::{Context, Result};
-use futures::StreamExt;
+use futures::{stream, StreamExt};
 use log::{debug, info};
 use std::path::PathBuf;
 use tokio::fs;
@@ -73,8 +73,15 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         file.write_all(&content).await?;
         file.sync_all().await?;
 
-        db.add_blob(&local_repo_id, &object_id, chrono::Utc::now(), true)
-            .await?;
+        let b = InputBlob {
+            repo_id: local_repo_id.clone(),
+            object_id,
+            file_exists: true,
+            valid_from: chrono::Utc::now(),
+        };
+        let sb = stream::iter(vec![b]);
+        db.add_blob(sb).await?;
+
         debug!("added blob {:?}", object_path);
     }
     debug!("downloaded all blobs");
@@ -89,7 +96,10 @@ async fn reconcile_filesystem(db: DB, root: PathBuf) -> Result<(), Box<dyn std::
 
     let mut desired_state = db.desired_filesystem_state(repo_id.clone());
     while let Some(next) = desired_state.next().await {
-        let FilePathWithObjectId { path: relative_path, object_id } = next?;
+        let FilePathWithObjectId {
+            path: relative_path,
+            object_id,
+        } = next?;
         let invariable_path = root.join(".inv");
         let blob_path = invariable_path.join("blobs");
         let object_path = blob_path.join(object_id);
@@ -106,7 +116,9 @@ async fn reconcile_filesystem(db: DB, root: PathBuf) -> Result<(), Box<dyn std::
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            fs::hard_link(&object_path, &target_path).await.context("unable to hardlink files")?;
+            fs::hard_link(&object_path, &target_path)
+                .await
+                .context("unable to hardlink files")?;
             debug!("hardlinked {:?} -> {:?}", object_path, target_path);
         } else {
             debug!("skipped hardlinked {:?} -> {:?}", object_path, target_path);

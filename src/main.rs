@@ -2,6 +2,7 @@ mod commands;
 mod db;
 
 mod transport;
+mod utils;
 
 use clap::{Parser, Subcommand};
 

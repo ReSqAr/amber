@@ -5,15 +5,20 @@ use crate::db::establish_connection;
 use crate::db::models::Repository as DbRepository;
 use crate::db::schema::run_migrations;
 use crate::transport::server::invariable::invariable_client::InvariableClient;
-use crate::transport::server::invariable::{
-    Blob, File, LookupRepositoryRequest, Repository, RepositoryIdRequest, SelectBlobsRequest,
-    SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest,
-};
+use crate::transport::server::invariable::Blob as GRPCBlob;
+use crate::transport::server::invariable::File as GRPCFile;
+use crate::transport::server::invariable::LookupRepositoryRequest;
+use crate::transport::server::invariable::Repository as GRPCRepository;
+use crate::transport::server::invariable::RepositoryIdRequest;
+use crate::transport::server::invariable::SelectBlobsRequest;
+use crate::transport::server::invariable::SelectFilesRequest;
+use crate::transport::server::invariable::SelectRepositoriesRequest;
+use crate::transport::server::invariable::UpdateLastIndicesRequest;
+use crate::utils::app_error::AppError;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use log::{debug, info};
 use tokio::fs;
-use tonic::Status;
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let current_path = fs::canonicalize(".").await?;
@@ -52,7 +57,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let lookup_repo_request = tonic::Request::new(LookupRepositoryRequest {
         repo_id: local_repo.repo_id.clone(),
     });
-    let Repository {
+    let GRPCRepository {
         last_file_index: remote_last_file_index,
         last_blob_index: remote_last_blob_index,
         ..
@@ -61,7 +66,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .repo
-        .unwrap_or(Repository {
+        .unwrap_or(GRPCRepository {
             repo_id: local_repo.repo_id.clone(),
             last_file_index: -1,
             last_blob_index: -1,
@@ -72,16 +77,14 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     db.select_files(remote_last_file_index.clone())
-        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
-        .map_ok(File::from)
-        .try_forward_into(|s| client.merge_files(s))
+        .map_ok(GRPCFile::from)
+        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_files(s))
         .await?;
     debug!("remote: merged files");
 
     db.select_blobs(remote_last_blob_index.clone())
-        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
-        .map_ok(Blob::from)
-        .try_forward_into(|s| client.merge_blobs(s))
+        .map_ok(GRPCBlob::from)
+        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_blobs(s))
         .await?;
     debug!("remote: merged blobs");
 
@@ -95,30 +98,26 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         local_last_file_index, local_last_blob_index
     );
 
-    let files_response = client
+    client
         .select_files(SelectFilesRequest {
             last_index: local_last_file_index,
         })
-        .await?;
-    let files = files_response
+        .await?
         .into_inner()
-        .map_ok(File::into)
-        .try_collect()
+        .map_ok(GRPCFile::into)
+        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_files(s))
         .await?;
-    db.merge_files(files).await?;
     debug!("local: merged files");
 
-    let blobs_response = client
+    client
         .select_blobs(SelectBlobsRequest {
             last_index: local_last_blob_index,
         })
-        .await?;
-    let blobs = blobs_response
+        .await?
         .into_inner()
-        .map_ok(Blob::into)
-        .try_collect()
+        .map_ok(GRPCBlob::into)
+        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_blobs(s))
         .await?;
-    db.merge_blobs(blobs).await?;
     debug!("local: merged blobs");
 
     client
@@ -130,22 +129,20 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     debug!("local: updated last indices");
 
     db.select_repositories()
-        .map_err(|db_err| Status::internal(format!("Database error: {db_err}"))) // TODO
-        .map_ok(Repository::from)
-        .try_forward_into(|s| client.merge_repositories(s))
+        .map_ok(GRPCRepository::from)
+        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_repositories(s))
         .await?;
     debug!("remote: merged repositories");
 
-    let repositories_response = client
+    client
         .select_repositories(SelectRepositoriesRequest {})
-        .await?;
-    let repos = repositories_response
+        .await?
         .into_inner()
-        .map_ok(Repository::into)
-        .try_collect()
+        .map_ok(GRPCRepository::into)
+        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_repositories(s))
         .await?;
-    db.merge_repositories(repos).await?;
     debug!("local: merged repositories");
 
     Ok(())
 }
+

@@ -21,9 +21,24 @@ pub struct File {
     pub valid_from: DateTime<Utc>,
 }
 
+#[derive(Debug)]
+pub struct InputFile {
+    pub path: String,
+    pub object_id: Option<String>,
+    pub valid_from: DateTime<Utc>,
+}
+
 #[derive(Debug, FromRow)]
 pub struct Blob {
     pub uuid: String,
+    pub repo_id: String,
+    pub object_id: String,
+    pub file_exists: bool,
+    pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct InputBlob {
     pub repo_id: String,
     pub object_id: String,
     pub file_exists: bool,

@@ -1,10 +1,9 @@
 use crate::db::models::{
-    Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, Repository,
+    Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, InputBlob, InputFile,
+    Repository,
 };
-use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
-use futures::{StreamExt, TryStreamExt};
-use log::debug;
+use futures::{Stream, StreamExt, TryStreamExt};
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
 use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
@@ -15,22 +14,22 @@ pub struct DB {
     pool: SqlitePool,
 }
 
-
-type DBStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
+type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
 impl DB {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
-    fn stream<'a, T>(&self, q: Query<'a, Sqlite, SqliteArguments<'a>>) -> DBStream<'a, T>
+    fn stream<'a, T>(&self, q: Query<'a, Sqlite, SqliteArguments<'a>>) -> DBOutputStream<'a, T>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'a,
     {
         // inlined from:
         //   sqlx-core-0.8.3/src/query_as.rs
         // due to lifetime issues with .fetch
-        self.pool.clone()
+        self.pool
+            .clone()
             .fetch_many(q)
             .map(|v| match v {
                 Ok(Either::Right(row)) => T::from_row(&row).map(Either::Right),
@@ -65,55 +64,54 @@ impl DB {
             .await
     }
 
-    pub async fn add_file(
-        // TODO: stream
-        &self,
-        path: &str,
-        object_id: Option<&str>,
-        valid_from: DateTime<Utc>,
-    ) -> Result<File, sqlx::Error> {
-        let uuid = Uuid::new_v4().to_string();
-        sqlx::query_as::<_, File>(
-            "INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)
+    pub async fn add_file<S>(&self, mut s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = InputFile> + Unpin,
+    { 
+        while let Some(file) = s.next().await {
+            let uuid = Uuid::new_v4().to_string();
+            sqlx::query_as::<_, File>(
+                "INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)
             RETURNING uuid, path, object_id, valid_from",
-        )
-        .bind(uuid)
-        .bind(path)
-        .bind(object_id)
-        .bind(valid_from)
-        .fetch_one(&self.pool)
-        .await
+            )
+                .bind(uuid)
+                .bind(file.path)
+                .bind(file.object_id)
+                .bind(file.valid_from)
+                .fetch_one(&self.pool)
+                .await?;
+        }
+        Ok(())
     }
 
-    pub async fn add_blob(
-        // TODO: stream
-        &self,
-        repo_id: &str,
-        object_id: &str,
-        valid_from: DateTime<Utc>,
-        file_exists: bool,
-    ) -> Result<Blob, sqlx::Error> {
-        let uuid = Uuid::new_v4().to_string();
-        sqlx::query_as::<_, Blob>(
-            "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)
+    pub async fn add_blob<S>(&self, mut s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = InputBlob> + Unpin,
+    {
+        while let Some(blob) = s.next().await {
+            let uuid = Uuid::new_v4().to_string();
+            sqlx::query_as::<_, Blob>(
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)
             RETURNING uuid, repo_id, object_id, file_exists, valid_from",
-        )
-        .bind(uuid)
-        .bind(repo_id)
-        .bind(object_id)
-        .bind(file_exists)
-        .bind(valid_from)
-        .fetch_one(&self.pool)
-        .await
+            )
+                .bind(uuid)
+                .bind(blob.repo_id)
+                .bind(blob.object_id)
+                .bind(blob.file_exists)
+                .bind(blob.valid_from)
+                .fetch_one(&self.pool)
+                .await?;
+        }
+        Ok(())
     }
 
-    pub fn select_repositories(&self) -> DBStream<'static, Repository> {
+    pub fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
         self.stream(query(
             "SELECT repo_id, last_file_index, last_blob_index FROM repositories",
         ))
     }
 
-    pub fn select_files(&self, last_index: i32) -> DBStream<'static, File> {
+    pub fn select_files(&self, last_index: i32) -> DBOutputStream<'static, File> {
         self.stream(
             query(
                 "
@@ -125,7 +123,7 @@ impl DB {
         )
     }
 
-    pub fn select_blobs(&self, last_index: i32) -> DBStream<'static, Blob> {
+    pub fn select_blobs(&self, last_index: i32) -> DBOutputStream<'static, Blob> {
         self.stream(
             query(
                 "
@@ -138,12 +136,10 @@ impl DB {
     }
 
     pub async fn merge_repositories(
-        // TODO: stream
         &self,
-        repositories: Vec<Repository>,
+        mut s: impl Stream<Item = Repository> + Unpin,
     ) -> Result<(), sqlx::Error> {
-        debug!("merging {} repositories", repositories.len());
-        for repo in repositories {
+        while let Some(repo) = s.next().await {
             let _ = sqlx::query(
                 "INSERT INTO repositories (repo_id, last_file_index, last_blob_index)
                 VALUES (?, ?, ?)
@@ -161,33 +157,35 @@ impl DB {
         Ok(())
     }
 
-    pub async fn merge_files(&self, files: Vec<File>) -> Result<(), sqlx::Error> {
-        // TODO: stream
-        debug!("merging {} files", files.len());
-        for file in files {
+    pub async fn merge_files(
+        &self,
+        mut s: impl Stream<Item = File> + Unpin,
+    ) -> Result<(), sqlx::Error> {
+        while let Some(file) = s.next().await {
             let _ = sqlx::query("INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES (?, ?, ?, ?)")
-                .bind(file.uuid)
-                .bind(file.path)
-                .bind(file.object_id)
-                .bind(file.valid_from)
-                .execute(&self.pool)
-                .await?;
+                    .bind(file.uuid)
+                    .bind(file.path)
+                    .bind(file.object_id)
+                    .bind(file.valid_from)
+                    .execute(&self.pool)
+                    .await?;
         }
         Ok(())
     }
 
-    pub async fn merge_blobs(&self, blobs: Vec<Blob>) -> Result<(), sqlx::Error> {
-        // TODO: stream
-        debug!("merging {} blobs", blobs.len());
-        for blob in blobs {
+    pub async fn merge_blobs(
+        &self,
+        mut s: impl Stream<Item = Blob> + Unpin,
+    ) -> Result<(), sqlx::Error> {
+        while let Some(blob) = s.next().await {
             let _ = sqlx::query("INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES (?, ?, ?, ?, ?)")
-                .bind(blob.uuid)
-                .bind(blob.repo_id)
-                .bind(blob.object_id)
-                .bind(blob.file_exists)
-                .bind(blob.valid_from)
-                .execute(&self.pool)
-                .await?;
+                    .bind(blob.uuid)
+                    .bind(blob.repo_id)
+                    .bind(blob.object_id)
+                    .bind(blob.file_exists)
+                    .bind(blob.valid_from)
+                    .execute(&self.pool)
+                    .await?;
         }
         Ok(())
     }
@@ -231,7 +229,7 @@ impl DB {
     pub fn desired_filesystem_state(
         &self,
         repo_id: String,
-    ) -> DBStream<FilePathWithObjectId> {
+    ) -> DBOutputStream<FilePathWithObjectId> {
         self.stream(
             query(
                 "
@@ -249,7 +247,7 @@ impl DB {
         &self,
         source_repo_id: String,
         target_repo_id: String,
-    ) -> DBStream<BlobObjectId> {
+    ) -> DBOutputStream<BlobObjectId> {
         self.stream(
             query(
                 "

@@ -1,11 +1,12 @@
+use futures::stream;
 use std::path::PathBuf;
-use log::debug;
 use tokio::{fs, io};
 
+use crate::commands::errors::InvariableError;
 use crate::db::db::DB;
 use crate::db::establish_connection;
+use crate::db::models::{InputBlob, InputFile};
 use crate::db::schema::run_migrations;
-use crate::commands::errors::InvariableError;
 use sha2::{Digest, Sha256};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -75,13 +76,22 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("failed to create repo id");
 
-    let file = db.add_file(&path, Some(&object_id), chrono::Utc::now())
-        .await?;
-    let blob = db.add_blob(&repo.repo_id, &object_id, chrono::Utc::now(), true)
-        .await?;
-
-    debug!("file: {:?}", file);
-    debug!("blob: {:?}", blob);
+    let valid_from = chrono::Utc::now();
+    let f = InputFile {
+        path,
+        object_id: Some(object_id.clone()),
+        valid_from,
+    };
+    let sf = stream::iter(vec![f]);
+    db.add_file(sf).await?;
+    let b = InputBlob {
+        repo_id: repo.repo_id,
+        object_id,
+        file_exists: true,
+        valid_from,
+    };
+    let sb = stream::iter(vec![b]);
+    db.add_blob(sb).await?;
 
     Ok(())
 }

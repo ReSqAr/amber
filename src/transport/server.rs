@@ -1,6 +1,7 @@
+use crate::commands::pipe::TryForwardIntoExt;
 use crate::db;
 use crate::db::db::DB;
-use crate::db::models::CurrentRepository;
+use crate::db::models::{CurrentRepository, InputBlob};
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
     LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
@@ -12,7 +13,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::TryStreamExt;
+use futures::{stream, TryStreamExt};
 use futures::{Stream, StreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
@@ -24,6 +25,7 @@ use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
+use crate::utils::app_error::AppError;
 
 pub mod invariable {
     tonic::include_proto!("invariable");
@@ -130,43 +132,34 @@ impl Invariable for MyServer {
         &self,
         request: Request<Streaming<Repository>>,
     ) -> Result<Response<MergeRepositoriesResponse>, Status> {
-        let repos = request
+        request
             .into_inner()
             .map_ok(Repository::into)
-            .try_collect()
+            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_repositories(s))
             .await?;
-        match self.db.merge_repositories(repos).await {
-            Ok(_) => Ok(Response::new(MergeRepositoriesResponse {})),
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+        Ok(Response::new(MergeRepositoriesResponse {}))
     }
     async fn merge_files(
         &self,
         request: Request<Streaming<File>>,
     ) -> Result<Response<MergeFilesResponse>, Status> {
-        let files = request
+        request
             .into_inner()
             .map_ok(File::into)
-            .try_collect()
+            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_files(s))
             .await?;
-        match self.db.merge_files(files).await {
-            Ok(_) => Ok(Response::new(MergeFilesResponse {})),
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+        Ok(Response::new(MergeFilesResponse {}))
     }
     async fn merge_blobs(
         &self,
         request: Request<Streaming<Blob>>,
     ) -> Result<Response<MergeBlobsResponse>, Status> {
-        let blobs = request
+        request
             .into_inner()
             .map_ok(Blob::into)
-            .try_collect()
+            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_blobs(s))
             .await?;
-        match self.db.merge_blobs(blobs).await {
-            Ok(_) => Ok(Response::new(MergeBlobsResponse {})),
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+        Ok(Response::new(MergeBlobsResponse {}))
     }
 
     async fn update_last_indices(
@@ -258,8 +251,16 @@ impl Invariable for MyServer {
             .get_or_create_current_repository()
             .await
             .or_else(|err| Err(Status::from_error(err.into())))?;
+
+        let b = InputBlob {
+            repo_id,
+            object_id,
+            file_exists: true,
+            valid_from: Utc::now(),
+        };
+        let sb = stream::iter(vec![b]);
         self.db
-            .add_blob(&repo_id, &object_id, chrono::Utc::now(), true)
+            .add_blob(sb)
             .await
             .or_else(|err| Err(Status::from_error(err.into())))?;
         debug!("added blob {:?}", object_path);

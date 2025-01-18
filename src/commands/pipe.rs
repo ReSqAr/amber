@@ -7,78 +7,91 @@ use std::{
 };
 
 /// A stream adapter that yields only the 'Ok' items (I) from an upstream
-/// `Stream<Item = Result<I, E>>`, stopping after the first encountered error.
-pub(crate) struct ErrorTrackingStream<S, E> {
+/// `Stream<Item = Result<I, EStream>>`, stopping after the first encountered error.
+pub(crate) struct ErrorTrackingStream<S, I, EStream> {
     upstream: S,
-    shared_error: Arc<Mutex<Option<E>>>,
+    shared_error: Arc<Mutex<Option<EStream>>>,
+    _marker: std::marker::PhantomData<I>,
 }
 
-impl<S, I, E> Stream for ErrorTrackingStream<S, E>
+impl<S, I, EStream> ErrorTrackingStream<S, I, EStream> {
+    pub(crate) fn new(upstream: S, shared_error: Arc<Mutex<Option<EStream>>>) -> Self {
+        Self {
+            upstream,
+            shared_error,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<S, I, EStream> Unpin for ErrorTrackingStream<S, I, EStream>
 where
-    S: Stream<Item = Result<I, E>> + Unpin,
+    S: Unpin,
+{
+}
+
+impl<S, I, EStream> Stream for ErrorTrackingStream<S, I, EStream>
+where
+    S: Stream<Item = Result<I, EStream>> + Unpin,
 {
     type Item = I;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // If we've already recorded an error, produce no more items.
         if self.shared_error.lock().unwrap().is_some() {
             return Poll::Ready(None);
         }
 
-        match Pin::new(&mut self.upstream).poll_next(cx) {
+        // Safely get a mutable reference to `self`.
+        let this = self.get_mut();
+
+        match Pin::new(&mut this.upstream).poll_next(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Ok(item))) => Poll::Ready(Some(item)),
             Poll::Ready(Some(Err(e))) => {
-                *self.shared_error.lock().unwrap() = Some(e);
+                *this.shared_error.lock().unwrap() = Some(e);
                 Poll::Ready(None)
             }
         }
     }
 }
 
-/// Extension trait that adds `try_forward_into` to any `Stream<Item = Result<I, E>>`.
-pub(crate) trait TryForwardIntoExt<I, E>: Stream<Item = Result<I, E>> + Sized {
+/// Extension trait that adds `try_forward_into` to any `Stream<Item = Result<I, EStream>>`.
+pub(crate) trait TryForwardIntoExt<I, EStream>: Stream<Item = Result<I, EStream>> + Sized {
     /// Pipes all `Ok(I)` items into a function `f` that consumes a plain `Stream<Item = I>`,
     /// stopping at the first error from this stream. Afterwards:
-    /// - If the stream encountered an error first, return it;
-    /// - Otherwise, return the result of `f` (which could be success or error).
-    async fn try_forward_into<Fut, O, F>(self, f: F) -> Result<O, E>
+    /// - If the stream encountered an error first, return it converted into `EFinal`;
+    /// - Otherwise, return the result of `f` converted into `EFinal`.
+    async fn try_forward_into<Fut, O, F, EConsumer, EFinal>(self, f: F) -> Result<O, EFinal>
     where
-        // `f` is a function taking a `Stream<Item = I>` and producing a `Future<Output = Result<O, E>>`
-        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send,
-        Fut: Future<Output = Result<O, E>> + Send,
+    // `f` is a function taking an `ErrorTrackingStream<Self, I, EStream>` and producing a `Future<Output = Result<O, EConsumer>>`
+        F: FnOnce(ErrorTrackingStream<Self, I, EStream>) -> Fut + Send,
+        Fut: Future<Output = Result<O, EConsumer>> + Send,
+        EStream: Into<EFinal>,
+        EConsumer: Into<EFinal>,
         I: Send,
-        E: Send,
         Self: Unpin + Send,
-        O: Send;
-}
-
-impl<S, I, E> TryForwardIntoExt<I, E> for S
-where
-    S: Stream<Item = Result<I, E>> + Unpin + Send,
-    I: Send,
-    E: Send,
-{
-    async fn try_forward_into<Fut, O, F>(self, f: F) -> Result<O, E>
-    where
-        F: FnOnce(ErrorTrackingStream<Self, E>) -> Fut + Send,
-        Fut: Future<Output = Result<O, E>> + Send,
         O: Send,
+        EFinal: Send,
     {
         let shared_error = Arc::new(Mutex::new(None));
-        let adapter = ErrorTrackingStream {
-            upstream: self,
-            shared_error: shared_error.clone(),
-        };
+        let adapter = ErrorTrackingStream::new(self, shared_error.clone());
 
         let result = f(adapter).await;
 
-        // If the upstream encountered an error, return that first
+        // If the upstream encountered an error, return that first converted into EFinal
         if let Some(err) = shared_error.lock().unwrap().take() {
-            return Err(err);
+            return Err(err.into());
         }
 
-        result
+        // Otherwise, convert the consumer's result into EFinal
+        result.map_err(|e| e.into())
     }
+}
+
+impl<S, I, EStream> TryForwardIntoExt<I, EStream> for S
+where
+    S: Stream<Item = Result<I, EStream>> + Unpin + Send,
+{
 }
