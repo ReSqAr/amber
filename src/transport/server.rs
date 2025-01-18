@@ -1,6 +1,6 @@
 use crate::db;
 use crate::db::models::{CurrentRepository, InputBlob};
-use crate::repository::local_repository::{Local, LocalRepository};
+use crate::repository::local_repository::{Adder, Local, LocalRepository};
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
     LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
@@ -267,8 +267,7 @@ impl Invariable for MyServer {
         };
         let sb = stream::iter(vec![b]);
         self.repository
-            .db
-            .add_blob(sb)
+            .add_blobs(sb)
             .await.map_err(|err| Status::from_error(err.into()))?;
         debug!("added blob {:?}", object_path);
 

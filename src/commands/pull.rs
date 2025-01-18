@@ -55,7 +55,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             valid_from: chrono::Utc::now(),
         };
         let sb = stream::iter(vec![b]);
-        local_repository.db.add_blob(sb).await?;
+        local_repository.db.add_blobs(sb).await?;
 
         debug!("added blob {:?}", object_path);
     }

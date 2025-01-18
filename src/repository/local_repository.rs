@@ -3,6 +3,7 @@ use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
 use log::debug;
 use std::path::PathBuf;
+use futures::{Stream, StreamExt};
 use tokio::fs;
 
 pub(crate) struct LocalRepository {
@@ -126,6 +127,33 @@ pub trait Metadata {
 impl Metadata for LocalRepository {
     fn repo_id(&self) -> String {
         self.repo_id.clone()
+    }
+}
+
+
+pub trait Adder {
+    async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item =crate::db::models::InputFile> + Unpin;
+
+    async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item =crate::db::models::InputBlob> + Unpin;
+}
+
+impl Adder for LocalRepository {
+    async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item =crate::db::models::InputFile> + Unpin,
+    {
+        self.db.add_files(s).await
+    }
+
+    async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item =crate::db::models::InputBlob> + Unpin,
+    {
+        self.db.add_blobs(s).await
     }
 }
 

@@ -69,7 +69,7 @@ impl DB {
             .await
     }
 
-    pub async fn add_file<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
         S: Stream<Item = InputFile> + Unpin,
     {
@@ -116,7 +116,7 @@ impl DB {
         Ok(())
     }
 
-    pub async fn add_blob<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
         S: Stream<Item = InputBlob> + Unpin,
     {
