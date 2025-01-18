@@ -1,5 +1,4 @@
 use crate::db;
-use crate::db::db::DB;
 use crate::db::models::{CurrentRepository, InputBlob};
 use crate::repository::local_repository::LocalRepository;
 use crate::transport::server::invariable::{
@@ -21,7 +20,6 @@ use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
 use prost_types::Timestamp;
-use std::path::PathBuf;
 use std::pin::Pin;
 use tokio::fs;
 use tokio::fs::File as TokioFile;
@@ -259,8 +257,7 @@ impl Invariable for MyServer {
             .repository
             .db
             .get_or_create_current_repository()
-            .await
-            .or_else(|err| Err(Status::from_error(err.into())))?;
+            .await.map_err(|err| Status::from_error(err.into()))?;
 
         let b = InputBlob {
             repo_id,
@@ -272,8 +269,7 @@ impl Invariable for MyServer {
         self.repository
             .db
             .add_blob(sb)
-            .await
-            .or_else(|err| Err(Status::from_error(err.into())))?;
+            .await.map_err(|err| Status::from_error(err.into()))?;
         debug!("added blob {:?}", object_path);
 
         Ok(Response::new(UploadResponse {}))
@@ -290,13 +286,11 @@ impl Invariable for MyServer {
 
         let mut file = TokioFile::open(&object_path)
             .await
-            .context(format!("unable to access {:?}", object_path))
-            .or_else(|err| Err(Status::from_error(err.into())))?;
+            .context(format!("unable to access {:?}", object_path)).map_err(|err| Status::from_error(err.into()))?;
         let mut content = Vec::new();
         file.read_to_end(&mut content)
             .await
-            .context(format!("unable to read {:?}", object_path))
-            .or_else(|err| Err(Status::from_error(err.into())))?;
+            .context(format!("unable to read {:?}", object_path)).map_err(|err| Status::from_error(err.into()))?;
         debug!("read blob {:?}", object_path);
 
         Ok(Response::new(DownloadResponse { content }))

@@ -1,7 +1,6 @@
 use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
-use anyhow;
 use log::debug;
 use std::path::PathBuf;
 use tokio::fs;

@@ -101,7 +101,7 @@ impl DB {
                     .bind(uuid)
                     .bind(&file.path)
                     .bind(&file.object_id)
-                    .bind(&file.valid_from);
+                    .bind(file.valid_from);
             }
 
             let result = query.execute(&self.pool).await?;
@@ -148,8 +148,8 @@ impl DB {
                     .bind(uuid)
                     .bind(&blob.repo_id)
                     .bind(&blob.object_id)
-                    .bind(&blob.has_blob)
-                    .bind(&blob.valid_from);
+                    .bind(blob.has_blob)
+                    .bind(blob.valid_from);
             }
 
             let result = query.execute(&self.pool).await?;
@@ -228,8 +228,8 @@ impl DB {
             for repo in &chunk {
                 query = query
                     .bind(&repo.repo_id)
-                    .bind(&repo.last_file_index)
-                    .bind(&repo.last_blob_index)
+                    .bind(repo.last_file_index)
+                    .bind(repo.last_blob_index)
             }
 
             let result = query.execute(&self.pool).await?;
@@ -275,7 +275,7 @@ impl DB {
                     .bind(&file.uuid)
                     .bind(&file.path)
                     .bind(&file.object_id)
-                    .bind(&file.valid_from)
+                    .bind(file.valid_from)
             }
 
             let result = query.execute(&self.pool).await?;
@@ -321,8 +321,8 @@ impl DB {
                     .bind(&file.uuid)
                     .bind(&file.repo_id)
                     .bind(&file.object_id)
-                    .bind(&file.has_blob)
-                    .bind(&file.valid_from)
+                    .bind(file.has_blob)
+                    .bind(file.valid_from)
             }
 
             let result = query.execute(&self.pool).await?;

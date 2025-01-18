@@ -1,8 +1,4 @@
-use crate::commands::errors::InvariableError;
-use crate::db::db::DB;
-use crate::db::establish_connection;
-use crate::db::models::{CurrentRepository, FilePathWithObjectId};
-use crate::db::schema::run_migrations;
+use crate::db::models::FilePathWithObjectId;
 use anyhow::{Context, Result};
 use async_tempfile::TempDir;
 use futures::StreamExt;
@@ -26,8 +22,6 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
         .await
         .context("unable to create temp directory")?;
     let temp_dir_path = temp_dir.dir_path();
-
-    let root = local_repository.root;
 
     let mut desired_state = local_repository.db.desired_filesystem_state(local_repository.repo_id.clone());
     while let Some(next) = desired_state.next().await {

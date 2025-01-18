@@ -1,8 +1,4 @@
-use crate::commands::errors::InvariableError;
-use crate::db::db::DB;
-use crate::db::establish_connection;
 use crate::db::models::{BlobObjectId, CurrentRepository, FilePathWithObjectId, InputBlob};
-use crate::db::schema::run_migrations;
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::{
     DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
@@ -10,7 +6,6 @@ use crate::transport::server::invariable::{
 use anyhow::{Context, Result};
 use futures::{stream, StreamExt};
 use log::{debug, info};
-use std::path::PathBuf;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;

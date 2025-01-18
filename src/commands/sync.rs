@@ -1,8 +1,4 @@
-use crate::commands::errors::InvariableError;
-use crate::db::db::DB;
-use crate::db::establish_connection;
 use crate::db::models::Repository as DbRepository;
-use crate::db::schema::run_migrations;
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::Blob as GRPCBlob;
 use crate::transport::server::invariable::File as GRPCFile;
@@ -15,10 +11,9 @@ use crate::transport::server::invariable::SelectRepositoriesRequest;
 use crate::transport::server::invariable::UpdateLastIndicesRequest;
 use crate::utils::app_error::AppError;
 use crate::utils::pipe::TryForwardIntoExt;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::TryStreamExt;
 use log::{debug, info};
-use tokio::fs;
 use crate::repository::local_repository::LocalRepository;
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
@@ -58,13 +53,13 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         remote_last_file_index, remote_last_blob_index
     );
 
-    local_repository.db.select_files(remote_last_file_index.clone())
+    local_repository.db.select_files(remote_last_file_index)
         .map_ok(GRPCFile::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_files(s))
         .await?;
     debug!("remote: merged files");
 
-    local_repository.db.select_blobs(remote_last_blob_index.clone())
+    local_repository.db.select_blobs(remote_last_blob_index)
         .map_ok(GRPCBlob::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_blobs(s))
         .await?;
