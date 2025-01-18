@@ -41,6 +41,8 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
+
+
 // Implement conversion from AppError to Status
 impl From<AppError> for Status {
     fn from(error: AppError) -> Self {

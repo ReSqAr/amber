@@ -164,13 +164,13 @@ impl DB {
         Ok(())
     }
 
-    pub fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
+    pub async fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
         self.stream(query(
             "SELECT repo_id, last_file_index, last_blob_index FROM repositories",
         ))
     }
 
-    pub fn select_files(&self, last_index: i32) -> DBOutputStream<'static, File> {
+    pub async fn select_files(&self, last_index: i32) -> DBOutputStream<'static, File> {
         self.stream(
             query(
                 "
@@ -182,7 +182,7 @@ impl DB {
         )
     }
 
-    pub fn select_blobs(&self, last_index: i32) -> DBOutputStream<'static, Blob> {
+    pub async fn select_blobs(&self, last_index: i32) -> DBOutputStream<'static, Blob> {
         self.stream(
             query(
                 "

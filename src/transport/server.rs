@@ -14,7 +14,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::{stream, TryStreamExt};
+use futures::{stream, FutureExt, TryStreamExt};
 use futures::{Stream, StreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
@@ -109,7 +109,13 @@ impl From<Blob> for DbBlob {
 }
 
 pub struct MyServer {
-    pub(crate) repository: LocalRepository,
+    repository: LocalRepository,
+}
+
+impl MyServer {
+    pub fn new(repository: LocalRepository) -> Self {
+        Self { repository }
+    }
 }
 
 #[tonic::async_trait]
@@ -133,9 +139,7 @@ impl Invariable for MyServer {
         request
             .into_inner()
             .map_ok::<DbRepository, _>(Repository::into)
-            .try_forward_into::<_, _, _, _, AppError>(
-                |s| self.repository.merge(s)
-            )
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -198,10 +202,12 @@ impl Invariable for MyServer {
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = self.repository.select(()).map(|r: Result<DbRepository, _>| match r {
-            Ok(file) => Ok(file.into()),
-            Err(err) => Err(Status::from_error(err.into())),
-        });
+        let stream = <LocalRepository as Syncer<DbRepository>>::select(&self.repository, ())
+            .await
+            .map(|r: Result<DbRepository, _>| match r {
+                Ok(file) => Ok(file.into()),
+                Err(err) => Err(Status::from_error(err.into())),
+            });
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -216,6 +222,7 @@ impl Invariable for MyServer {
             .repository
             .db
             .select_files(last_index)
+            .await
             .map(|r| match r {
                 Ok(file) => Ok(file.into()),
                 Err(err) => Err(Status::from_error(err.into())),
@@ -234,6 +241,7 @@ impl Invariable for MyServer {
             .repository
             .db
             .select_blobs(last_index)
+            .await
             .map(|r| match r {
                 Ok(blob) => Ok(blob.into()),
                 Err(err) => Err(Status::from_error(err.into())),
@@ -259,7 +267,8 @@ impl Invariable for MyServer {
             .repository
             .db
             .get_or_create_current_repository()
-            .await.map_err(|err| Status::from_error(err.into()))?;
+            .await
+            .map_err(|err| Status::from_error(err.into()))?;
 
         let b = InputBlob {
             repo_id,
@@ -270,7 +279,8 @@ impl Invariable for MyServer {
         let sb = stream::iter(vec![b]);
         self.repository
             .add_blobs(sb)
-            .await.map_err(|err| Status::from_error(err.into()))?;
+            .await
+            .map_err(|err| Status::from_error(err.into()))?;
         debug!("added blob {:?}", object_path);
 
         Ok(Response::new(UploadResponse {}))
@@ -287,11 +297,13 @@ impl Invariable for MyServer {
 
         let mut file = TokioFile::open(&object_path)
             .await
-            .context(format!("unable to access {:?}", object_path)).map_err(|err| Status::from_error(err.into()))?;
+            .context(format!("unable to access {:?}", object_path))
+            .map_err(|err| Status::from_error(err.into()))?;
         let mut content = Vec::new();
         file.read_to_end(&mut content)
             .await
-            .context(format!("unable to read {:?}", object_path)).map_err(|err| Status::from_error(err.into()))?;
+            .context(format!("unable to read {:?}", object_path))
+            .map_err(|err| Status::from_error(err.into()))?;
         debug!("read blob {:?}", object_path);
 
         Ok(Response::new(DownloadResponse { content }))

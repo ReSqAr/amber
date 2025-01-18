@@ -54,14 +54,14 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         remote_last_file_index, remote_last_blob_index
     );
 
-    local_repository.db.select_files(remote_last_file_index)
+    local_repository.db.select_files(remote_last_file_index).await
         .map_ok(GRPCFile::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_files(s))
         .await?;
     debug!("remote: merged files");
 
     local_repository.db.select_blobs(remote_last_blob_index)
-        .map_ok(GRPCBlob::from)
+        .await.map_ok(GRPCBlob::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_blobs(s))
         .await?;
     debug!("remote: merged blobs");
@@ -119,6 +119,7 @@ where
     GRPCRepository: From<LI>,
 {
     local.select(local_param)
+        .await
         .map_ok(GRPCRepository::from)
         .try_forward_into::<_, _, _, _, AppError>(|s| remote.merge_repositories(s))
         .await?;
