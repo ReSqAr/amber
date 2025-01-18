@@ -87,7 +87,7 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let b = InputBlob {
         repo_id: repo.repo_id,
         object_id,
-        file_exists: true,
+        has_blob: true,
         valid_from,
     };
     let sb = stream::iter(vec![b]);

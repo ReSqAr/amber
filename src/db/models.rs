@@ -33,7 +33,7 @@ pub struct Blob {
     pub uuid: String,
     pub repo_id: String,
     pub object_id: String,
-    pub file_exists: bool,
+    pub has_blob: bool,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -41,7 +41,7 @@ pub struct Blob {
 pub struct InputBlob {
     pub repo_id: String,
     pub object_id: String,
-    pub file_exists: bool,
+    pub has_blob: bool,
     pub valid_from: DateTime<Utc>,
 }
 

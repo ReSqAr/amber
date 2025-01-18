@@ -133,7 +133,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES {}",
+                "INSERT INTO blobs (uuid, repo_id, object_id, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -145,7 +145,7 @@ impl DB {
                     .bind(uuid)
                     .bind(&blob.repo_id)
                     .bind(&blob.object_id)
-                    .bind(&blob.file_exists)
+                    .bind(&blob.has_blob)
                     .bind(&blob.valid_from);
             }
 
@@ -180,7 +180,7 @@ impl DB {
         self.stream(
             query(
                 "
-                SELECT uuid, repo_id, object_id, file_exists, valid_from
+                SELECT uuid, repo_id, object_id, has_blob, valid_from
                 FROM blobs
                 WHERE id > ?",
             )
@@ -304,7 +304,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, file_exists, valid_from) VALUES {}",
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -315,7 +315,7 @@ impl DB {
                     .bind(&file.uuid)
                     .bind(&file.repo_id)
                     .bind(&file.object_id)
-                    .bind(&file.file_exists)
+                    .bind(&file.has_blob)
                     .bind(&file.valid_from)
             }
 

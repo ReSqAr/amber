@@ -28,7 +28,7 @@ message Blob {
     string uuid = 1;
     string repo_id = 2;
     string object_id = 3;
-    bool file_exists = 4;
+    bool has_blob = 4;
     google.protobuf.Timestamp valid_from = 5;
 }
 
