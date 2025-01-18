@@ -109,7 +109,10 @@ impl DB {
             total_attempted += chunk.len() as u64;
         }
 
-        debug!("files added: attempted={} inserted={}", total_attempted, total_inserted);
+        debug!(
+            "files added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
         Ok(())
     }
 
@@ -154,7 +157,10 @@ impl DB {
             total_attempted += chunk.len() as u64;
         }
 
-        debug!("blobs added: attempted={} inserted={}", total_attempted, total_inserted);
+        debug!(
+            "blobs added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
         Ok(())
     }
 

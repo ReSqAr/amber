@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 
+mod repository;
 mod transport;
 mod utils;
 
@@ -62,14 +63,10 @@ async fn main() {
                 .expect("Failed to run server");
         }
         Commands::Sync { port } => {
-            commands::sync::sync(port)
-                .await
-                .expect("Failed to sync");
+            commands::sync::sync(port).await.expect("Failed to sync");
         }
         Commands::Pull { port } => {
-            commands::pull::pull(port)
-                .await
-                .expect("Failed to pull");
+            commands::pull::pull(port).await.expect("Failed to pull");
         }
         Commands::Export { path } => {
             commands::export::export(path)

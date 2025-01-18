@@ -11,33 +11,14 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use crate::repository::local_repository::LocalRepository;
 
 pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error>> {
-    let current_path = fs::canonicalize(".").await?;
-    let invariable_path = current_path.join(".inv");
-    if !fs::metadata(&invariable_path)
-        .await
-        .map(|m| m.is_dir())
-        .unwrap_or(false)
-    {
-        return Err(InvariableError::NotInitialised().into());
-    };
+    let local_repository = LocalRepository::new(None).await?;
 
-    let db_path = invariable_path.join("db.sqlite");
-    let pool = establish_connection(db_path.to_str().unwrap())
-        .await
-        .context("failed to establish connection")?;
-    run_migrations(&pool)
-        .await
-        .context("failed to run migrations")?;
+    debug!("local repo_id={}", local_repository.repo_id);
 
-    let db = DB::new(pool.clone());
-    debug!("db connected");
-
-    let CurrentRepository { repo_id } = db.get_or_create_current_repository().await?;
-    debug!("local repo_id={}", repo_id);
-
-    let staging_path = invariable_path.join("staging");
+    let staging_path = local_repository.invariable_path.join("staging");
     fs::create_dir_all(&staging_path)
         .await
         .context("unable to create staging directory")?;
@@ -46,18 +27,16 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
         .context("unable to create temp directory")?;
     let temp_dir_path = temp_dir.dir_path();
 
-    let root = current_path;
+    let root = local_repository.root;
 
-    let mut desired_state = db.desired_filesystem_state(repo_id.clone());
+    let mut desired_state = local_repository.db.desired_filesystem_state(local_repository.repo_id.clone());
     while let Some(next) = desired_state.next().await {
         let FilePathWithObjectId {
             path: relative_path,
             object_id,
         } = next?;
 
-        let invariable_path = root.join(".inv");
-        let blob_path = invariable_path.join("blobs");
-        let object_path = blob_path.join(object_id);
+        let object_path = local_repository.blob_path.join(object_id);
 
         let target_path = temp_dir_path.join(relative_path);
         if let Some(parent) = target_path.parent() {

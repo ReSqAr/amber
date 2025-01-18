@@ -1,5 +1,5 @@
-use sqlx::FromRow;
 use chrono::prelude::{DateTime, Utc};
+use sqlx::FromRow;
 
 #[derive(Debug, FromRow)]
 pub struct CurrentRepository {

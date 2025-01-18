@@ -14,32 +14,12 @@ use std::path::PathBuf;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
+use crate::repository::local_repository::LocalRepository;
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let current_path = fs::canonicalize(".").await?;
-    let invariable_path = current_path.join(".inv");
-    if !fs::metadata(&invariable_path)
-        .await
-        .map(|m| m.is_dir())
-        .unwrap_or(false)
-    {
-        return Err(InvariableError::NotInitialised().into());
-    };
+    let local_repository = LocalRepository::new(None).await?;
+    let local_repo_id = &local_repository.repo_id;
 
-    let db_path = invariable_path.join("db.sqlite");
-    let pool = establish_connection(db_path.to_str().unwrap())
-        .await
-        .context("failed to establish connection")?;
-    run_migrations(&pool)
-        .await
-        .context("failed to run migrations")?;
-
-    let db = DB::new(pool.clone());
-    debug!("db connected");
-
-    let CurrentRepository {
-        repo_id: local_repo_id,
-    } = db.get_or_create_current_repository().await?;
     debug!("local repo_id={}", local_repo_id);
 
     let addr = format!("http://127.0.0.1:{}", port);
@@ -53,7 +33,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     } = client.repository_id(repo_id_request).await?.into_inner();
     info!("remote repo_id={}", remote_repo_id);
 
-    let db_clone = db.clone();
+    let db_clone = local_repository.db.clone();
     let mut missing_blobs = db_clone.missing_blobs(remote_repo_id.clone(), local_repo_id.clone());
     while let Some(next) = missing_blobs.next().await {
         let BlobObjectId { object_id } = next?;
@@ -65,7 +45,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             .into_inner()
             .content;
 
-        let blob_path = invariable_path.join("blobs");
+        let blob_path = local_repository.blob_path.clone();
         fs::create_dir_all(blob_path.as_path()).await?;
         let object_path = blob_path.join(&object_id);
 
@@ -80,31 +60,31 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             valid_from: chrono::Utc::now(),
         };
         let sb = stream::iter(vec![b]);
-        db.add_blob(sb).await?;
+        local_repository.db.add_blob(sb).await?;
 
         debug!("added blob {:?}", object_path);
     }
     debug!("downloaded all blobs");
 
-    reconcile_filesystem(db, current_path).await?;
+    reconcile_filesystem(&local_repository).await?;
 
     Ok(())
 }
 
-async fn reconcile_filesystem(db: DB, root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let CurrentRepository { repo_id } = db.get_or_create_current_repository().await?;
+async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), Box<dyn std::error::Error>> {
+    let CurrentRepository { repo_id } = local_repository.db.get_or_create_current_repository().await?;
 
-    let mut desired_state = db.desired_filesystem_state(repo_id.clone());
+    let mut desired_state = local_repository.db.desired_filesystem_state(repo_id.clone());
     while let Some(next) = desired_state.next().await {
         let FilePathWithObjectId {
             path: relative_path,
             object_id,
         } = next?;
-        let invariable_path = root.join(".inv");
+        let invariable_path = local_repository.root.join(".inv");
         let blob_path = invariable_path.join("blobs");
         let object_path = blob_path.join(object_id);
 
-        let target_path = root.join(relative_path);
+        let target_path = local_repository.root.join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);
 
         if let Some(parent) = target_path.parent() {

@@ -1,13 +1,15 @@
-use crate::utils::pipe::TryForwardIntoExt;
 use crate::db;
 use crate::db::db::DB;
 use crate::db::models::{CurrentRepository, InputBlob};
+use crate::repository::local_repository::LocalRepository;
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
     LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
 };
+use crate::utils::app_error::AppError;
+use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::Context;
 use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
@@ -25,7 +27,6 @@ use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
-use crate::utils::app_error::AppError;
 
 pub mod invariable {
     tonic::include_proto!("invariable");
@@ -110,8 +111,7 @@ impl From<Blob> for DbBlob {
 }
 
 pub struct MyServer {
-    pub(crate) db: &'static DB,
-    pub invariable_path: PathBuf,
+    pub(crate) repository: LocalRepository,
 }
 
 #[tonic::async_trait]
@@ -120,7 +120,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<RepositoryIdRequest>,
     ) -> Result<Response<RepositoryIdResponse>, Status> {
-        match self.db.get_or_create_current_repository().await {
+        match self.repository.db.get_or_create_current_repository().await {
             Ok(CurrentRepository { repo_id }) => {
                 Ok(Response::new(RepositoryIdResponse { repo_id }))
             }
@@ -135,7 +135,7 @@ impl Invariable for MyServer {
         request
             .into_inner()
             .map_ok(Repository::into)
-            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_repositories(s))
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_repositories(s))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -146,7 +146,7 @@ impl Invariable for MyServer {
         request
             .into_inner()
             .map_ok(File::into)
-            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_files(s))
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_files(s))
             .await?;
         Ok(Response::new(MergeFilesResponse {}))
     }
@@ -157,7 +157,7 @@ impl Invariable for MyServer {
         request
             .into_inner()
             .map_ok(Blob::into)
-            .try_forward_into::<_,_,_,_,AppError>(|s| self.db.merge_blobs(s))
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_blobs(s))
             .await?;
         Ok(Response::new(MergeBlobsResponse {}))
     }
@@ -166,7 +166,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<UpdateLastIndicesRequest>,
     ) -> Result<Response<UpdateLastIndicesResponse>, Status> {
-        match self.db.update_last_indices().await {
+        match self.repository.db.update_last_indices().await {
             Ok(repo) => Ok(Response::new(UpdateLastIndicesResponse {
                 current: Some(repo.into()),
             })),
@@ -179,6 +179,7 @@ impl Invariable for MyServer {
         request: Request<LookupRepositoryRequest>,
     ) -> Result<Response<LookupRepositoryResponse>, Status> {
         match self
+            .repository
             .db
             .lookup_repository(request.into_inner().repo_id)
             .await
@@ -197,7 +198,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = self.db.select_repositories().map(|r| match r {
+        let stream = self.repository.db.select_repositories().map(|r| match r {
             Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
         });
@@ -211,10 +212,14 @@ impl Invariable for MyServer {
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = self.db.select_files(last_index).map(|r| match r {
-            Ok(file) => Ok(file.into()),
-            Err(err) => Err(Status::from_error(err.into())),
-        });
+        let stream = self
+            .repository
+            .db
+            .select_files(last_index)
+            .map(|r| match r {
+                Ok(file) => Ok(file.into()),
+                Err(err) => Err(Status::from_error(err.into())),
+            });
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -225,10 +230,14 @@ impl Invariable for MyServer {
         request: Request<SelectBlobsRequest>,
     ) -> Result<Response<Self::SelectBlobsStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = self.db.select_blobs(last_index).map(|r| match r {
-            Ok(blob) => Ok(blob.into()),
-            Err(err) => Err(Status::from_error(err.into())),
-        });
+        let stream = self
+            .repository
+            .db
+            .select_blobs(last_index)
+            .map(|r| match r {
+                Ok(blob) => Ok(blob.into()),
+                Err(err) => Err(Status::from_error(err.into())),
+            });
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -238,7 +247,7 @@ impl Invariable for MyServer {
     ) -> Result<Response<UploadResponse>, Status> {
         let UploadRequest { object_id, content } = request.into_inner();
 
-        let blob_path = self.invariable_path.join("blobs");
+        let blob_path = self.repository.invariable_path.join("blobs");
         fs::create_dir_all(blob_path.as_path()).await?;
         let object_path = blob_path.join(&object_id);
 
@@ -247,6 +256,7 @@ impl Invariable for MyServer {
         file.sync_all().await?;
 
         let CurrentRepository { repo_id } = self
+            .repository
             .db
             .get_or_create_current_repository()
             .await
@@ -259,7 +269,8 @@ impl Invariable for MyServer {
             valid_from: Utc::now(),
         };
         let sb = stream::iter(vec![b]);
-        self.db
+        self.repository
+            .db
             .add_blob(sb)
             .await
             .or_else(|err| Err(Status::from_error(err.into())))?;
@@ -274,7 +285,7 @@ impl Invariable for MyServer {
     ) -> Result<Response<DownloadResponse>, Status> {
         let DownloadRequest { object_id } = request.into_inner();
 
-        let blob_path = self.invariable_path.join("blobs");
+        let blob_path = self.repository.blob_path.clone();
         let object_path = blob_path.join(&object_id);
 
         let mut file = TokioFile::open(&object_path)

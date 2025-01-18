@@ -1,2 +1,2 @@
-pub(crate) mod server;
 mod client;
+pub(crate) mod server;

@@ -24,11 +24,7 @@ impl<S, I, EStream> ErrorTrackingStream<S, I, EStream> {
     }
 }
 
-impl<S, I, EStream> Unpin for ErrorTrackingStream<S, I, EStream>
-where
-    S: Unpin,
-{
-}
+impl<S, I, EStream> Unpin for ErrorTrackingStream<S, I, EStream> where S: Unpin {}
 
 impl<S, I, EStream> Stream for ErrorTrackingStream<S, I, EStream>
 where
@@ -58,14 +54,16 @@ where
 }
 
 /// Extension trait that adds `try_forward_into` to any `Stream<Item = Result<I, EStream>>`.
-pub(crate) trait TryForwardIntoExt<I, EStream>: Stream<Item = Result<I, EStream>> + Sized {
+pub(crate) trait TryForwardIntoExt<I, EStream>:
+    Stream<Item = Result<I, EStream>> + Sized
+{
     /// Pipes all `Ok(I)` items into a function `f` that consumes a plain `Stream<Item = I>`,
     /// stopping at the first error from this stream. Afterwards:
     /// - If the stream encountered an error first, return it converted into `EFinal`;
     /// - Otherwise, return the result of `f` converted into `EFinal`.
     async fn try_forward_into<Fut, O, F, EConsumer, EFinal>(self, f: F) -> Result<O, EFinal>
     where
-    // `f` is a function taking an `ErrorTrackingStream<Self, I, EStream>` and producing a `Future<Output = Result<O, EConsumer>>`
+        // `f` is a function taking an `ErrorTrackingStream<Self, I, EStream>` and producing a `Future<Output = Result<O, EConsumer>>`
         F: FnOnce(ErrorTrackingStream<Self, I, EStream>) -> Fut + Send,
         Fut: Future<Output = Result<O, EConsumer>> + Send,
         EStream: Into<EFinal>,
@@ -90,8 +88,7 @@ pub(crate) trait TryForwardIntoExt<I, EStream>: Stream<Item = Result<I, EStream>
     }
 }
 
-impl<S, I, EStream> TryForwardIntoExt<I, EStream> for S
-where
-    S: Stream<Item = Result<I, EStream>> + Unpin + Send,
+impl<S, I, EStream> TryForwardIntoExt<I, EStream> for S where
+    S: Stream<Item = Result<I, EStream>> + Unpin + Send
 {
 }

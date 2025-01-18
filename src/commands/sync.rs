@@ -1,5 +1,4 @@
 use crate::commands::errors::InvariableError;
-use crate::utils::pipe::TryForwardIntoExt;
 use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::models::Repository as DbRepository;
@@ -15,34 +14,17 @@ use crate::transport::server::invariable::SelectFilesRequest;
 use crate::transport::server::invariable::SelectRepositoriesRequest;
 use crate::transport::server::invariable::UpdateLastIndicesRequest;
 use crate::utils::app_error::AppError;
+use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use log::{debug, info};
 use tokio::fs;
+use crate::repository::local_repository::LocalRepository;
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let current_path = fs::canonicalize(".").await?;
-    let invariable_path = current_path.join(".inv");
-    if !fs::metadata(&invariable_path)
-        .await
-        .map(|m| m.is_dir())
-        .unwrap_or(false)
-    {
-        return Err(InvariableError::NotInitialised().into());
-    };
+    let local_repository = LocalRepository::new(None).await?;
 
-    let db_path = invariable_path.join("db.sqlite");
-    let pool = establish_connection(db_path.to_str().unwrap())
-        .await
-        .context("failed to establish connection")?;
-    run_migrations(&pool)
-        .await
-        .context("failed to run migrations")?;
-
-    let db = DB::new(pool.clone());
-    debug!("db connected");
-
-    let local_repo = db.get_or_create_current_repository().await?;
+    let local_repo = local_repository.db.get_or_create_current_repository().await?;
     debug!("local repo_id={}", local_repo.repo_id);
 
     let addr = format!("http://127.0.0.1:{}", port);
@@ -76,15 +58,15 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         remote_last_file_index, remote_last_blob_index
     );
 
-    db.select_files(remote_last_file_index.clone())
+    local_repository.db.select_files(remote_last_file_index.clone())
         .map_ok(GRPCFile::from)
-        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_files(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_files(s))
         .await?;
     debug!("remote: merged files");
 
-    db.select_blobs(remote_last_blob_index.clone())
+    local_repository.db.select_blobs(remote_last_blob_index.clone())
         .map_ok(GRPCBlob::from)
-        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_blobs(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_blobs(s))
         .await?;
     debug!("remote: merged blobs");
 
@@ -92,7 +74,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         last_file_index: local_last_file_index,
         last_blob_index: local_last_blob_index,
         ..
-    } = db.lookup_repository(remote_repo.repo_id).await?;
+    } = local_repository.db.lookup_repository(remote_repo.repo_id).await?;
     debug!(
         "local local_last_file_index={} local_last_blob_index={}",
         local_last_file_index, local_last_blob_index
@@ -105,7 +87,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .map_ok(GRPCFile::into)
-        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_files(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.db.merge_files(s))
         .await?;
     debug!("local: merged files");
 
@@ -116,7 +98,7 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .map_ok(GRPCBlob::into)
-        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_blobs(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.db.merge_blobs(s))
         .await?;
     debug!("local: merged blobs");
 
@@ -125,12 +107,12 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     debug!("remote: updated last indices");
 
-    db.update_last_indices().await?;
+    local_repository.db.update_last_indices().await?;
     debug!("local: updated last indices");
 
-    db.select_repositories()
+    local_repository.db.select_repositories()
         .map_ok(GRPCRepository::from)
-        .try_forward_into::<_,_,_,_,AppError>(|s| client.merge_repositories(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_repositories(s))
         .await?;
     debug!("remote: merged repositories");
 
@@ -139,10 +121,9 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .map_ok(GRPCRepository::into)
-        .try_forward_into::<_,_,_,_,AppError>(|s| db.merge_repositories(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.db.merge_repositories(s))
         .await?;
     debug!("local: merged repositories");
 
     Ok(())
 }
-
