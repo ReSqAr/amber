@@ -132,8 +132,10 @@ impl Invariable for MyServer {
     ) -> Result<Response<MergeRepositoriesResponse>, Status> {
         request
             .into_inner()
-            .map_ok(Repository::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
+            .map_ok::<DbRepository, _>(Repository::into)
+            .try_forward_into::<_, _, _, _, AppError>(
+                |s| self.repository.merge(s)
+            )
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -196,7 +198,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = self.repository.select().map(|r| match r {
+        let stream = self.repository.select(()).map(|r: Result<DbRepository, _>| match r {
             Ok(file) => Ok(file.into()),
             Err(err) => Err(Status::from_error(err.into())),
         });

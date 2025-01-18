@@ -1,4 +1,4 @@
-use crate::db::models::Repository as DbRepository;
+use crate::db::models::{Repository as DbRepository, Repository};
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::Blob as GRPCBlob;
 use crate::transport::server::invariable::File as GRPCFile;
@@ -14,7 +14,8 @@ use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::Result;
 use futures::TryStreamExt;
 use log::{debug, info};
-use crate::repository::local_repository::{LocalRepository, Syncer};
+use tonic::transport::Channel;
+use crate::repository::local_repository::{LocalRepository, Syncer, SyncerParams};
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -105,18 +106,30 @@ pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     local_repository.db.update_last_indices().await?;
     debug!("local: updated last indices");
 
-    local_repository.select()
+
+    sync_table::<Repository, _>(local_repository, (), client).await?;
+
+    Ok(())
+}
+
+async fn sync_table<LI, L>(local: L, local_param: LI::Params, mut remote: InvariableClient<Channel>) -> Result<(), Box<dyn std::error::Error>>
+where
+    LI: From<GRPCRepository> + Send + Sync + 'static + SyncerParams,
+    L: Syncer<LI> + Send + Sync,
+    GRPCRepository: From<LI>,
+{
+    local.select(local_param)
         .map_ok(GRPCRepository::from)
-        .try_forward_into::<_, _, _, _, AppError>(|s| client.merge_repositories(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| remote.merge_repositories(s))
         .await?;
     debug!("remote: merged repositories");
 
-    client
+    remote
         .select_repositories(SelectRepositoriesRequest {})
         .await?
         .into_inner()
         .map_ok(GRPCRepository::into)
-        .try_forward_into::<_, _, _, _, AppError>(|s| local_repository.merge(s))
+        .try_forward_into::<_, _, _, _, AppError>(|s| local.merge(s))
         .await?;
     debug!("local: merged repositories");
 

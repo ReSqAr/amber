@@ -196,7 +196,7 @@ impl DB {
 
     pub async fn merge_repositories<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = Repository> + Unpin,
+        S: Stream<Item = Repository> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -246,7 +246,7 @@ impl DB {
 
     pub async fn merge_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = File> + Unpin,
+        S: Stream<Item = File> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -292,7 +292,7 @@ impl DB {
 
     pub async fn merge_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = Blob> + Unpin,
+        S: Stream<Item = Blob> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;

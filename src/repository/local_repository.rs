@@ -1,12 +1,12 @@
+use std::future::Future;
 use crate::db::db::{DBOutputStream, DB};
 use crate::db::establish_connection;
 use crate::db::schema::run_migrations;
 use log::debug;
 use std::path::PathBuf;
 use futures::{Stream};
-use sqlx::Error;
 use tokio::fs;
-use crate::db::models::Repository;
+use crate::db::models::{Blob, File, Repository};
 
 pub(crate) struct LocalRepository {
     root: PathBuf,
@@ -159,23 +159,65 @@ impl Adder for LocalRepository {
     }
 }
 
-pub trait Syncer<T> {
-    fn select(&self) -> crate::db::db::DBOutputStream<'static, T>;
+pub trait SyncerParams {
+    type Params;
+}
 
-    async fn merge<S>(&self, s: S) -> Result<(), sqlx::Error>
+pub trait Syncer<T: SyncerParams> {
+    fn select(&self, params: <T as SyncerParams>::Params) -> crate::db::db::DBOutputStream<'static, T>;
+
+    fn merge<S>(&self, s: S) -> impl Future<Output=Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item = T> + Unpin;
+        S: Stream<Item = T> + Unpin + Send;
+}
+
+impl SyncerParams for Repository {
+    type Params = ();
 }
 
 impl Syncer<Repository> for LocalRepository {
-    fn select(&self) -> DBOutputStream<'static, Repository> {
+    fn select(&self,  _params: ()) -> DBOutputStream<'static, Repository> {
         self.db.select_repositories()
     }
 
-    async fn merge<S>(&self, s: S) -> Result<(), Error>
+    fn merge<S>(&self, s: S) -> impl Future<Output=Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item=Repository> + Unpin,
+        S: Stream<Item=Repository> + Unpin + Send,
     {
-        self.db.merge_repositories(s).await
+        self.db.merge_repositories(s)
+    }
+}
+
+impl SyncerParams for File {
+    type Params = i32;
+}
+
+impl Syncer<File> for LocalRepository {
+    fn select(&self,  last_index: i32) -> DBOutputStream<'static, File> {
+        self.db.select_files(last_index)
+    }
+
+    fn merge<S>(&self, s: S) -> impl Future<Output=Result<(), sqlx::Error>> + Send
+    where
+        S: Stream<Item=File> + Unpin + Send,
+    {
+        self.db.merge_files(s)
+    }
+}
+
+impl SyncerParams for Blob {
+    type Params = i32;
+}
+
+impl Syncer<Blob> for LocalRepository {
+    fn select(&self,  last_index: i32) -> DBOutputStream<'static, Blob> {
+        self.db.select_blobs(last_index)
+    }
+
+    fn merge<S>(&self, s: S) -> impl Future<Output=Result<(), sqlx::Error>> + Send
+    where
+        S: Stream<Item=Blob> + Unpin + Send,
+    {
+        self.db.merge_blobs(s)
     }
 }
