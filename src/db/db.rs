@@ -1,5 +1,5 @@
 use crate::db::models::{
-    Blob, BlobObjectId, CurrentRepository, File, FilePathWithObjectId, InputBlob, InputFile,
+    Blob, BlobId, CurrentRepository, File, FilePathWithBlobId, InputBlob, InputFile,
     Repository,
 };
 use futures::stream::BoxStream;
@@ -89,7 +89,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO files (uuid, path, object_id, valid_from) VALUES {}",
+                "INSERT INTO files (uuid, path, blob_id, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -100,7 +100,7 @@ impl DB {
                 query = query
                     .bind(uuid)
                     .bind(&file.path)
-                    .bind(&file.object_id)
+                    .bind(&file.blob_id)
                     .bind(file.valid_from);
             }
 
@@ -136,7 +136,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, object_id, has_blob, valid_from) VALUES {}",
+                "INSERT INTO blobs (uuid, repo_id, blob_id, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -147,7 +147,7 @@ impl DB {
                 query = query
                     .bind(uuid)
                     .bind(&blob.repo_id)
-                    .bind(&blob.object_id)
+                    .bind(&blob.blob_id)
                     .bind(blob.has_blob)
                     .bind(blob.valid_from);
             }
@@ -174,7 +174,7 @@ impl DB {
         self.stream(
             query(
                 "
-            SELECT uuid, path, object_id, valid_from
+            SELECT uuid, path, blob_id, valid_from
             FROM files
             WHERE id > ?",
             )
@@ -186,7 +186,7 @@ impl DB {
         self.stream(
             query(
                 "
-                SELECT uuid, repo_id, object_id, has_blob, valid_from
+                SELECT uuid, repo_id, blob_id, has_blob, valid_from
                 FROM blobs
                 WHERE id > ?",
             )
@@ -264,7 +264,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO files (uuid, path, object_id, valid_from) VALUES {}",
+                "INSERT OR IGNORE INTO files (uuid, path, blob_id, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -274,7 +274,7 @@ impl DB {
                 query = query
                     .bind(&file.uuid)
                     .bind(&file.path)
-                    .bind(&file.object_id)
+                    .bind(&file.blob_id)
                     .bind(file.valid_from)
             }
 
@@ -310,7 +310,7 @@ impl DB {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, object_id, has_blob, valid_from) VALUES {}",
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -320,7 +320,7 @@ impl DB {
                 query = query
                     .bind(&file.uuid)
                     .bind(&file.repo_id)
-                    .bind(&file.object_id)
+                    .bind(&file.blob_id)
                     .bind(file.has_blob)
                     .bind(file.valid_from)
             }
@@ -376,13 +376,13 @@ impl DB {
     pub fn target_filesystem_state(
         &self,
         repo_id: String,
-    ) -> DBOutputStream<FilePathWithObjectId> {
+    ) -> DBOutputStream<FilePathWithBlobId> {
         self.stream(
             query(
                 "
                 SELECT
                     path,
-                    object_id
+                    blob_id
                 FROM repository_filesystem_available_files
                 WHERE repo_id = ?;",
             )
@@ -394,18 +394,18 @@ impl DB {
         &self,
         source_repo_id: String,
         target_repo_id: String,
-    ) -> DBOutputStream<BlobObjectId> {
+    ) -> DBOutputStream<BlobId> {
         self.stream(
             query(
                 "
                 SELECT
-                    b.object_id
+                    b.blob_id
                 FROM latest_available_blobs b
                 WHERE
                       b.repo_id = ?
-                  AND b.object_id NOT IN (
+                  AND b.blob_id NOT IN (
                     SELECT
-                        object_id
+                        blob_id
                     FROM latest_available_blobs
                     WHERE
                         repo_id = ?

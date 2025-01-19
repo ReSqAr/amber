@@ -1,4 +1,4 @@
-use crate::db::models::FilePathWithObjectId;
+use crate::db::models::FilePathWithBlobId;
 use crate::repository::local_repository::LocalRepository;
 use anyhow::{Context, Result};
 use async_tempfile::TempDir;
@@ -26,12 +26,12 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
 
     let mut desired_state = local_repository.target_filesystem_state();
     while let Some(next) = desired_state.next().await {
-        let FilePathWithObjectId {
+        let FilePathWithBlobId {
             path: relative_path,
-            object_id,
+            blob_id,
         } = next?;
 
-        let object_path = local_repository.blob_path().join(object_id);
+        let object_path = local_repository.blob_path().join(blob_id);
 
         let target_path = temp_dir_path.join(relative_path);
         if let Some(parent) = target_path.parent() {

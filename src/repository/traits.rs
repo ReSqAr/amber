@@ -1,7 +1,7 @@
 use futures::Stream;
 use std::path::PathBuf;
 use std::future::Future;
-use crate::db::models::{BlobObjectId, FilePathWithObjectId};
+use crate::db::models::{BlobId, FilePathWithBlobId};
 use crate::utils::app_error::AppError;
 
 pub trait Local {
@@ -53,7 +53,7 @@ pub trait Syncer<T: SyncerParams> {
 pub trait Reconciler {
     fn target_filesystem_state(
         &self
-    ) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send;
+    ) -> impl Stream<Item=Result<FilePathWithBlobId, AppError>> + Unpin + Send;
 
 }
 
@@ -64,5 +64,5 @@ pub trait Deprecated {
         &self,
         source_repo_id: String,
         target_repo_id: String,
-    ) -> impl Stream<Item=Result<BlobObjectId, AppError>> + Unpin + Send;
+    ) -> impl Stream<Item=Result<BlobId, AppError>> + Unpin + Send;
 }

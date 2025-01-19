@@ -17,14 +17,14 @@ pub struct Repository {
 pub struct File {
     pub uuid: String,
     pub path: String,
-    pub object_id: Option<String>,
+    pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug)]
 pub struct InputFile {
     pub path: String,
-    pub object_id: Option<String>,
+    pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -32,7 +32,7 @@ pub struct InputFile {
 pub struct Blob {
     pub uuid: String,
     pub repo_id: String,
-    pub object_id: String,
+    pub blob_id: String,
     pub has_blob: bool,
     pub valid_from: DateTime<Utc>,
 }
@@ -40,18 +40,18 @@ pub struct Blob {
 #[derive(Debug)]
 pub struct InputBlob {
     pub repo_id: String,
-    pub object_id: String,
+    pub blob_id: String,
     pub has_blob: bool,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow)]
-pub struct BlobObjectId {
-    pub object_id: String,
+pub struct BlobId {
+    pub blob_id: String,
 }
 
 #[derive(Debug, FromRow)]
-pub struct FilePathWithObjectId {
+pub struct FilePathWithBlobId {
     pub path: String,
-    pub object_id: String,
+    pub blob_id: String,
 }

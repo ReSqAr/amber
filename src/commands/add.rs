@@ -33,8 +33,8 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let blob_path = local_repository.blob_path();
 
     let file_path = current_path.join(&path);
-    let object_id = compute_sha256(&file_path).await?;
-    let object_path = blob_path.join(&object_id);
+    let blob_id = compute_sha256(&file_path).await?;
+    let object_path = blob_path.join(&blob_id);
 
     if !fs::metadata(&object_path)
         .await
@@ -47,14 +47,14 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let valid_from = chrono::Utc::now();
     let f = InputFile {
         path,
-        object_id: Some(object_id.clone()),
+        blob_id: Some(blob_id.clone()),
         valid_from,
     };
     let sf = stream::iter(vec![f]);
     local_repository.add_files(sf).await?;
     let b = InputBlob {
         repo_id: local_repository.repo_id().await?,
-        object_id,
+        blob_id,
         has_blob: true,
         valid_from,
     };

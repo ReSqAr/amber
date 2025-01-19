@@ -58,7 +58,7 @@ impl From<DbFile> for File {
         File {
             uuid: file.uuid,
             path: file.path,
-            object_id: file.object_id,
+            blob_id: file.blob_id,
             valid_from: datetime_to_timestamp(&file.valid_from),
         }
     }
@@ -69,7 +69,7 @@ impl From<DbBlob> for Blob {
         Blob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
-            object_id: blob.object_id,
+            blob_id: blob.blob_id,
             has_blob: blob.has_blob,
             valid_from: datetime_to_timestamp(&blob.valid_from),
         }
@@ -90,7 +90,7 @@ impl From<File> for DbFile {
         DbFile {
             uuid: file.uuid,
             path: file.path,
-            object_id: file.object_id,
+            blob_id: file.blob_id,
             valid_from: timestamp_to_datetime(&file.valid_from),
         }
     }
@@ -102,7 +102,7 @@ impl From<Blob> for DbBlob {
         DbBlob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
-            object_id: blob.object_id,
+            blob_id: blob.blob_id,
             has_blob: blob.has_blob,
             valid_from: timestamp_to_datetime(&blob.valid_from),
         }
@@ -228,11 +228,11 @@ impl Invariable for MyServer {
         &self,
         request: Request<UploadRequest>,
     ) -> Result<Response<UploadResponse>, Status> {
-        let UploadRequest { object_id, content } = request.into_inner();
+        let UploadRequest { blob_id, content } = request.into_inner();
 
         let blob_path = self.repository.blob_path();
         fs::create_dir_all(blob_path.as_path()).await?;
-        let object_path = blob_path.join(&object_id);
+        let object_path = blob_path.join(&blob_id);
 
         let mut file = TokioFile::create(&object_path).await?;
         file.write_all(&content).await?;
@@ -245,7 +245,7 @@ impl Invariable for MyServer {
 
         let b = InputBlob {
             repo_id,
-            object_id,
+            blob_id,
             has_blob: true,
             valid_from: Utc::now(),
         };
@@ -263,10 +263,10 @@ impl Invariable for MyServer {
         &self,
         request: Request<DownloadRequest>,
     ) -> Result<Response<DownloadResponse>, Status> {
-        let DownloadRequest { object_id } = request.into_inner();
+        let DownloadRequest { blob_id } = request.into_inner();
 
         let blob_path = self.repository.blob_path().clone();
-        let object_path = blob_path.join(&object_id);
+        let object_path = blob_path.join(&blob_id);
 
         let mut file = TokioFile::open(&object_path)
             .await

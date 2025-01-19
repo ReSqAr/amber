@@ -20,14 +20,14 @@ message Repository {
 message File {
     string uuid = 1;
     string path = 2;
-    optional string object_id = 3;
+    optional string blob_id = 3;
     google.protobuf.Timestamp valid_from = 4;
 }
 
 message Blob {
     string uuid = 1;
     string repo_id = 2;
-    string object_id = 3;
+    string blob_id = 3;
     bool has_blob = 4;
     google.protobuf.Timestamp valid_from = 5;
 }
@@ -56,12 +56,12 @@ message SelectBlobsRequest {
 }
 
 message UploadRequest{
-    string object_id = 1;
+    string blob_id = 1;
     bytes content = 2;
 }
 message UploadResponse{}
 message DownloadRequest{
-    string object_id = 1;
+    string blob_id = 1;
 }
 message DownloadResponse{
     bytes content = 1;

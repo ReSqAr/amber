@@ -20,7 +20,7 @@ CREATE TABLE files
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid       TEXT UNIQUE NOT NULL,
     path       TEXT        NOT NULL,
-    object_id  TEXT,
+    blob_id    TEXT,
     valid_from DATETIME    NOT NULL
 );
 
@@ -30,7 +30,7 @@ CREATE TABLE blobs
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid        TEXT UNIQUE NOT NULL,
     repo_id     TEXT        NOT NULL,
-    object_id   TEXT        NOT NULL,
+    blob_id     TEXT        NOT NULL,
     has_blob    INTEGER     NOT NULL,
     valid_from  DATETIME    NOT NULL
 );

@@ -1,6 +1,6 @@
 use crate::db::db::DB;
 use crate::db::establish_connection;
-use crate::db::models::{Blob, BlobObjectId, File, FilePathWithObjectId, Repository};
+use crate::db::models::{Blob, BlobId, File, FilePathWithBlobId, Repository};
 use crate::db::schema::run_migrations;
 use crate::repository::traits::{
     Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer,
@@ -254,7 +254,7 @@ impl Syncer<Blob> for LocalRepository {
 impl Reconciler for LocalRepository {
     fn target_filesystem_state(
         &self,
-    ) -> impl Stream<Item = Result<FilePathWithObjectId, AppError>> + Unpin + Send {
+    ) -> impl Stream<Item = Result<FilePathWithBlobId, AppError>> + Unpin + Send {
         self.db
             .target_filesystem_state(self.repo_id.clone())
             .err_into()
@@ -266,7 +266,7 @@ impl Deprecated for LocalRepository {
         &self,
         source_repo_id: String,
         target_repo_id: String,
-    ) -> impl Stream<Item = Result<BlobObjectId, AppError>> + Unpin + Send {
+    ) -> impl Stream<Item = Result<BlobId, AppError>> + Unpin + Send {
         self.db
             .missing_blobs(source_repo_id, target_repo_id)
             .err_into()

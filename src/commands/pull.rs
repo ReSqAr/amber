@@ -1,4 +1,4 @@
-use crate::db::models::{BlobObjectId, FilePathWithObjectId, InputBlob};
+use crate::db::models::{BlobId, FilePathWithBlobId, InputBlob};
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::{
     DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
@@ -30,10 +30,10 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut missing_blobs = local_repository.missing_blobs(remote_repo_id.clone(), local_repo_id.clone());
     while let Some(next) = missing_blobs.next().await {
-        let BlobObjectId { object_id } = next?;
+        let BlobId { blob_id } = next?;
         let content = client
             .download(DownloadRequest {
-                object_id: object_id.clone(),
+                blob_id: blob_id.clone(),
             })
             .await?
             .into_inner()
@@ -41,7 +41,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
         let blob_path = local_repository.blob_path();
         fs::create_dir_all(blob_path.as_path()).await?;
-        let object_path = blob_path.join(&object_id);
+        let object_path = blob_path.join(&blob_id);
 
         let mut file = File::create(&object_path).await?;
         file.write_all(&content).await?;
@@ -49,7 +49,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
         let b = InputBlob {
             repo_id: local_repo_id.clone(),
-            object_id,
+            blob_id,
             has_blob: true,
             valid_from: chrono::Utc::now(),
         };
@@ -68,13 +68,13 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), Box<dyn std::error::Error>> {
     let mut desired_state = local_repository.target_filesystem_state();
     while let Some(next) = desired_state.next().await {
-        let FilePathWithObjectId {
+        let FilePathWithBlobId {
             path: relative_path,
-            object_id,
+            blob_id,
         } = next?;
         let invariable_path = local_repository.root().join(".inv");
         let blob_path = invariable_path.join("blobs");
-        let object_path = blob_path.join(object_id);
+        let object_path = blob_path.join(blob_id);
 
         let target_path = local_repository.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);
