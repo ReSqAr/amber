@@ -23,6 +23,7 @@ enum Commands {
     Add {
         path: String,
     },
+    Status {},
     Serve {
         #[arg(default_value_t = 50001)]
         port: u16,
@@ -56,6 +57,11 @@ async fn main() {
             commands::add::add_file(path)
                 .await
                 .expect("Failed to add file to invariable");
+        }
+        Commands::Status { } => {
+            commands::status::status()
+                .await
+                .expect("Failed to get status of invariable");
         }
         Commands::Serve { port } => {
             commands::serve::serve(port)

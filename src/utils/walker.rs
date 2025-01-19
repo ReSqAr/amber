@@ -1,21 +1,24 @@
 use serde::{Deserialize, Serialize};
 use std::io::Error;
 
+use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
 pub struct WalkerConfig {
-    pub max_concurrency: usize,
+    pub threads: usize,
     pub max_buffer_size: usize,
+    pub patterns: Vec<String>,
 }
 
 impl Default for WalkerConfig {
     fn default() -> Self {
         Self {
-            max_concurrency: 10,
+            threads: 0,
             max_buffer_size: 1000,
+            patterns: vec!["!.inv/".into()],
         }
     }
 }
@@ -96,15 +99,23 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
 pub async fn walk<'a>(
     root_path: &'a Path,
     config: WalkerConfig,
-) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Error> {
+) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>> {
     let root = root_path.to_path_buf();
+
+    let mut override_builder = OverrideBuilder::new(&root);
+    for pattern in config.patterns {
+        override_builder.add(pattern.as_str())?;
+    }
 
     let mut walk_builder = WalkBuilder::new(&root);
     let walk_builder = walk_builder
         .standard_filters(true)
         .hidden(false)
+        .follow_links(false)
+        .same_file_system(true)
         .max_depth(None)
-        .threads(config.max_concurrency);
+        .threads(config.threads)
+        .overrides(override_builder.build()?);
 
     let walker = walk_builder.build_parallel();
     let (tx, rx): (
