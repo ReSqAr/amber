@@ -32,11 +32,11 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
     let current_path = fs::canonicalize(".").await?;
-    let blob_path = local_repository.blob_path();
+    let blobs_path = local_repository.blobs_path();
 
     let file_path = current_path.join(&path);
     let (blob_id, blob_size) = compute_sha256_and_size(&file_path).await?;
-    let object_path = blob_path.join(&blob_id);
+    let object_path = blobs_path.join(&blob_id);
 
     if !fs::metadata(&object_path)
         .await

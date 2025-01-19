@@ -232,9 +232,9 @@ impl Invariable for MyServer {
     ) -> Result<Response<UploadResponse>, Status> {
         let UploadRequest { blob_id, content } = request.into_inner();
 
-        let blob_path = self.repository.blob_path();
-        fs::create_dir_all(blob_path.as_path()).await?;
-        let object_path = blob_path.join(&blob_id);
+        let blobs_path = self.repository.blobs_path();
+        fs::create_dir_all(blobs_path.as_path()).await?;
+        let object_path = blobs_path.join(&blob_id);
 
         let mut file = TokioFile::create(&object_path).await?;
         file.write_all(&content).await?;
@@ -268,8 +268,8 @@ impl Invariable for MyServer {
     ) -> Result<Response<DownloadResponse>, Status> {
         let DownloadRequest { blob_id } = request.into_inner();
 
-        let blob_path = self.repository.blob_path().clone();
-        let object_path = blob_path.join(&blob_id);
+        let blobs_path = self.repository.blobs_path().clone();
+        let object_path = blobs_path.join(&blob_id);
 
         let mut file = TokioFile::open(&object_path)
             .await

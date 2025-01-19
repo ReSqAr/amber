@@ -109,8 +109,8 @@ impl LocalRepository {
 
         fs::create_dir(invariable_path.as_path()).await?;
 
-        let blob_path = invariable_path.join("blobs");
-        fs::create_dir_all(blob_path.as_path()).await?;
+        let blobs_path = invariable_path.join("blobs");
+        fs::create_dir_all(blobs_path.as_path()).await?;
 
         let db_path = invariable_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
@@ -147,8 +147,12 @@ impl Local for LocalRepository {
         self.root().join(".inv")
     }
 
-    fn blob_path(&self) -> PathBuf {
+    fn blobs_path(&self) -> PathBuf {
         self.invariable_path().join("blobs")
+    }
+
+    fn blob_path(&self, blob_id: String) -> PathBuf {
+        self.blobs_path().join(blob_id)
     }
 }
 

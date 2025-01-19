@@ -9,7 +9,8 @@ use crate::utils::control_flow::Message;
 pub trait Local {
     fn root(&self) -> PathBuf;
     fn invariable_path(&self) -> PathBuf;
-    fn blob_path(&self) -> PathBuf;
+    fn blobs_path(&self) -> PathBuf;
+    fn blob_path(&self, blob_id: String) -> PathBuf;
 }
 
 pub trait Metadata {

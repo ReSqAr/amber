@@ -39,9 +39,9 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             .into_inner()
             .content;
 
-        let blob_path = local_repository.blob_path();
-        fs::create_dir_all(blob_path.as_path()).await?;
-        let object_path = blob_path.join(&blob_id);
+        let blobs_path = local_repository.blobs_path();
+        fs::create_dir_all(blobs_path.as_path()).await?;
+        let object_path = blobs_path.join(&blob_id);
 
         let mut file = File::create(&object_path).await?;
         file.write_all(&content).await?;
@@ -74,8 +74,8 @@ async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), 
             blob_id,
         } = next?;
         let invariable_path = local_repository.root().join(".inv");
-        let blob_path = invariable_path.join("blobs");
-        let object_path = blob_path.join(blob_id);
+        let blobs_path = invariable_path.join("blobs");
+        let object_path = blobs_path.join(blob_id);
 
         let target_path = local_repository.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);

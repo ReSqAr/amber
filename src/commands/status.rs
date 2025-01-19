@@ -8,7 +8,7 @@ use crate::utils::control_flow::Message;
 use crate::utils::walker;
 use futures::{Stream, StreamExt};
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -18,12 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 pub async fn status() -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
-    let (handle, mut stream) = state(
-        local_repository.root(),
-        local_repository,
-        StateConfig::default(),
-    )
-    .await?;
+    let (handle, mut stream) = state(local_repository, StateConfig::default()).await?;
     let output_handle = tokio::spawn(async move {
         while let Some(file_result) = stream.next().await {
             match file_result {
@@ -85,9 +80,33 @@ impl<T> From<SendError<T>> for Error {
     }
 }
 
+use tokio::fs;
+
+async fn are_hardlinked(path1: &std::path::Path, path2: &std::path::Path) -> std::io::Result<bool> {
+    let metadata1 = fs::metadata(path1).await?;
+    let metadata2 = fs::metadata(path2).await?;
+
+    Ok(metadata1.dev() == metadata2.dev() && metadata1.ino() == metadata2.ino())
+}
+
+async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> {
+    let last_result = match vf.blob_id {
+        None => false,
+        Some(blob_id) => {
+            are_hardlinked(&vfs.root().join(vf.path.clone()), &vfs.blob_path(blob_id)).await?
+        }
+    };
+
+    
+    Ok(Observation::FileEqBlobCheck(FileEqBlobCheck {
+        path: vf.path.clone(),
+        last_check_dttm: current_timestamp(),
+        last_result,
+    }))
+}
+
 pub async fn state(
-    root: PathBuf,
-    db: impl VirtualFilesystem,
+    vfs: impl VirtualFilesystem + Local + Send + Sync + 'static,
     config: StateConfig,
 ) -> Result<
     (
@@ -96,9 +115,10 @@ pub async fn state(
     ),
     Box<dyn std::error::Error>,
 > {
+    let root = vfs.root();
     let last_seen_id = current_timestamp();
 
-    db.refresh().await?;
+    vfs.refresh().await?;
     info!("Virtual filesystem refreshed.");
 
     /* Three channels:
@@ -107,8 +127,10 @@ pub async fn state(
        - output channel
     */
     let (obs_tx, obs_rx) = mpsc::channel::<Message<Observation>>(config.buffer_size);
-    let (needs_check_tx, mut needs_check_rx): (Sender<Message<VirtualFile>>, Receiver<Message<VirtualFile>>) =
-        mpsc::channel(config.buffer_size);
+    let (needs_check_tx, mut needs_check_rx): (
+        Sender<Message<VirtualFile>>,
+        Receiver<Message<VirtualFile>>,
+    ) = mpsc::channel(config.buffer_size);
     let (tx, rx): (
         Sender<Result<VirtualFile, Error>>,
         Receiver<Result<VirtualFile, Error>>,
@@ -118,7 +140,7 @@ pub async fn state(
     let (walker_handle, mut walker_rx) = walk(root, config.walker).await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
-    let db_output_stream = db.add_observations(ReceiverStream::new(obs_rx)).await;
+    let db_output_stream = vfs.add_observations(ReceiverStream::new(obs_rx)).await;
 
     // transforms the files seen by the filesystem walker into observations suitable for the DB
     let tx_clone = tx.clone();
@@ -209,19 +231,20 @@ pub async fn state(
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
         while let Some(vf_msg) = needs_check_rx.recv().await {
             match vf_msg {
-                Message::Data(vf) => {
-                    // TODO: checker
-                    let observation = Observation::FileEqBlobCheck(FileEqBlobCheck {
-                        path: vf.path.clone(),
-                        last_check_dttm: current_timestamp(),
-                        last_result: true,
-                    });
-                    if let Err(e) = obs_tx_clone.send(observation.into()).await {
-                        if let Err(e_send) = tx_clone.send(Err(e.into())).await {
+                Message::Data(vf) => match check(&vfs, vf).await {
+                    Ok(observation) => {
+                        if let Err(e) = obs_tx_clone.send(observation.into()).await {
+                            if let Err(e_send) = tx_clone.send(Err(e.into())).await {
+                                panic!("failed to send error to output stream: {}", e_send);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let Err(e_send) = tx_clone.send(Err(e)).await {
                             panic!("failed to send error to output stream: {}", e_send);
                         }
                     }
-                }
+                },
                 Message::Shutdown => {
                     drop(needs_check_tx_clone);
                     break;

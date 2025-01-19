@@ -31,7 +31,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
             blob_id,
         } = next?;
 
-        let object_path = local_repository.blob_path().join(blob_id);
+        let object_path = local_repository.blobs_path().join(blob_id);
 
         let target_path = temp_dir_path.join(relative_path);
         if let Some(parent) = target_path.parent() {
