@@ -1,4 +1,4 @@
-PROJECT MANAGEMENT
+# PROJECT MANAGEMENT
 - sync (done)
 - add/status/missing
 - QOL: config/.inv ignored
@@ -9,7 +9,7 @@ PROJECT MANAGEMENT
 - fsck
 
 
-TODO:
+# TODO
 - refactoring
   - trait: see below
   - Configuration
@@ -22,7 +22,7 @@ TODO:
 - consistent naming
 
 
-COMMANDS:
+# COMMANDS
 - add: adds all [Local + Metadata + Adder]
 - status [Local + Metadata]
 - missing [Metadata]
@@ -35,7 +35,7 @@ COMMANDS:
 - fsck  [Local + Metadata]
 
 
-TRAITS:
+# TRAITS
 - Metadata: repo id
 - Local: has path, remotes, look up of effective files(?) / blobs
 - Adder: add files + add blobs
@@ -44,7 +44,7 @@ TRAITS:
 - BlobReceiver: Reconciler [inlined] + receive (open and close transaction) [uses: DB missing_blobs]
 - BlobSender: prep + send
 
-TYPES
+# TYPES
 - LocalRepository: *
 - SSHRepository: Metadata + Syncer + BlobReceiver + BlobSender 
 - BlobRepository: Metadata + BlobReceiver + BlobSender
@@ -60,7 +60,9 @@ connections: returns enum of Repository + trait based dispatch
 
 ---
 
-sync patterns: push: local -> remote
+# SYNC PATTERNS: PUSH: LOCAL -> REMOTE
+
+-----
 
 if remote = LocalRepository or SSHRepository:
 1. local: create staging folder 
@@ -113,4 +115,92 @@ rclone:
 
 ---
 
-push and pull are not symmetric - the remote does choose the blob filenames in both cases 
+push and pull are not symmetric - the remote does choose the blob filenames in both cases
+
+
+
+-----
+
+# ADD / STATUS
+
+Filesystem state - business logic:
+- input:
+  - DB (one can lookup current repo_id via current_repository table)
+  - path
+- output:
+  - stream of enum:
+    - Ok: path, blob_id
+    - Dirty: path, Option(blob_id)
+    - New: path
+    - Deleted: path, blob_id
+
+1. Have table local with (virtual_filesystem): (use sqlite integer dttm representation for truncation; all are optional)
+   - path (UNIQUE)
+   - file last seen id 
+   - file last seen
+   - file last modified
+   - file size
+   - local_has_blob
+   - blob id
+   - blob size
+   - last blob check
+   - last blob check result is ok: TRUE, FALSE (= three cases: same/different file & hardlinked to some blob)
+   - state:
+     - new         = blob id = null
+     - dirty       = last blob check result is ok = FALSE AND file last modified < last blob check
+     - ok          = blob id = null OR (last blob check result is ok = TRUE AND file last modified < last blob check)
+     - needs_check = everything else
+2. Pipe target filesystem to update desired blob id & blob file size (SQL UPDATE)
+   1. zero blob * if not blob has been deleted
+   2. have:
+      1. latest_filesystem_files view with columns: path & blob_id (this table doesn't take into account what is locally available) - this is the desired state 
+      2. latest_available_blobs view with columns: repo_id & blob_id - filter on current repo_id to get locally available blobs
+3. Pipe current filesystem using walkers to batch update (SLQ INSERT INTO) last seen & last modified ts & file size & last seen id
+   1. Update state via ON CONFLICT handling (path); use coalesce to update only things that have changed
+   2. Use RETURNING to return path & state and everything else
+4. Handle state:
+   1. new -> emit
+   2. dirty -> emit
+   3. ok -> emit
+   4. needs_check -> handle internally:
+      1. check file: check if inode of blob id is the same as the inode of the file
+5. clean up current_fs: delete all rows: last seen in walk != current walk AND blob id != null
+6. detect deleted files which should have been there: last seen in walk != current walk AND local_has_blob
+   1. emit delete
+
+DB provides:
+- refresh_virtual_filesystem():
+  - does step 2 to update the virtual_filesystem table: SQL UPDATE statement using views
+  - no input/no output
+- add_virtual_filesystem_observations():
+  - does step 3
+  - input stream - enum type with two cases:
+    - FileSeen: path, last seen id, last seen (datetime), last modified, size
+    - BlobCheck: path, last blob check (datetime), check result is ok (boolean)
+  - output stream: just * one the row; convert state into an enum
+  - simple version: adds this row by row; uses
+    - INSERT INTO ... ON CONFLICT .. RETURNING
+    - CASE statement to compute the state
+    - just one INSERT INTO - do not distinguish between FileSeen and BlobCheck; use coalesce to merge existing and new data
+
+Helper function 'Walker' - walks a directory and observes files:
+- input: root, maybe some config, .gitignore like, not as file atm but as function parameter
+- output: async tokio stream of: path (relative to root), size, last modified
+
+Helper function checker:
+- input:
+  - needs_check stream
+  - DB.add_virtual_filesystem_observations::input stream
+- checks the state of a file
+- check if the inode of blob id is the same as the inode of the file (ie: if they are hardlinked)
+  - if blob and path are hardlinked: return check result is ok = true
+  - else return: check result is ok = false
+
+Main logic:
+- use DB.refresh_virtual_filesystem()
+- piping:
+  - walker() -[transform]-> DB.add_virtual_filesystem_observations::input
+  - DB.add_virtual_filesystem_observations::output -[filter: state = new/dirty/ok] -> output stream
+  - DB.add_virtual_filesystem_observations::output -[filter: state = needs_check] -> needs_check stream 
+  - needs_check stream -[checker]-> DB.add_virtual_filesystem_observations::input
+
