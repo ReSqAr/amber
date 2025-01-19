@@ -1,15 +1,18 @@
-use crate::db::database::Database;
+use crate::db::database::{DBOutputStream, Database};
 use crate::db::establish_connection;
-use crate::db::models::{Blob, BlobId, File, FilePathWithBlobId, Repository};
+use crate::db::models::{
+    Blob, BlobId, File, FilePathWithBlobId, Observation, Repository, VirtualFile,
+};
 use crate::db::schema::run_migrations;
 use crate::repository::traits::{
     Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer,
-    SyncerParams,
+    SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
 use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
+use sqlx::Error;
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::fs;
@@ -42,7 +45,9 @@ async fn find_repository_root(start_path: &PathBuf) -> Result<PathBuf, anyhow::E
         }
     }
 
-    Err(anyhow::anyhow!("no `.inv` directory found in any parent directories"))
+    Err(anyhow::anyhow!(
+        "no `.inv` directory found in any parent directories"
+    ))
 }
 
 impl LocalRepository {
@@ -258,6 +263,30 @@ impl Reconciler for LocalRepository {
         self.db
             .target_filesystem_state(self.repo_id.clone())
             .err_into()
+    }
+}
+
+impl VirtualFilesystem for LocalRepository {
+    async fn refresh(&self) -> Result<(), Error> {
+        self.db.refresh_virtual_filesystem().await
+    }
+
+    async fn cleanup(&self, last_seen_id: i64) -> Result<(), Error> {
+        self.db.cleanup_virtual_filesystem(last_seen_id).await
+    }
+
+    async fn select_deleted_files(
+        &self,
+        last_seen_id: i64,
+    ) -> DBOutputStream<'static, VirtualFile> {
+        self.db.select_deleted_files_on_virtual_filesystem(last_seen_id).await
+    }
+
+    async fn add_observations(
+        &self,
+        input_stream: impl Stream<Item = Observation> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = Result<VirtualFile, Error>> + Unpin + Send + 'static {
+        self.db.add_virtual_filesystem_observations(input_stream).await
     }
 }
 

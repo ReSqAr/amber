@@ -1,8 +1,9 @@
-use futures::Stream;
-use std::path::PathBuf;
-use std::future::Future;
-use crate::db::models::{BlobId, FilePathWithBlobId};
+use crate::db::database::DBOutputStream;
+use crate::db::models::{BlobId, FilePathWithBlobId, Observation, VirtualFile};
 use crate::utils::app_error::AppError;
+use futures::Stream;
+use std::future::Future;
+use std::path::PathBuf;
 
 pub trait Local {
     fn root(&self) -> PathBuf;
@@ -65,4 +66,20 @@ pub trait Deprecated {
         source_repo_id: String,
         target_repo_id: String,
     ) -> impl Stream<Item=Result<BlobId, AppError>> + Unpin + Send;
+}
+
+
+pub trait VirtualFilesystem {
+    async fn refresh(&self) -> Result<(), sqlx::Error>;
+    async fn cleanup(&self, last_seen_id: i64) -> Result<(), sqlx::Error>;
+
+    async fn select_deleted_files(
+        &self,
+        last_seen_id: i64,
+    ) -> DBOutputStream<'static, VirtualFile>;
+
+    async fn add_observations(
+        &self,
+        input_stream: impl Stream<Item = Observation> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = Result<VirtualFile, sqlx::Error>> + Unpin + Send + 'static;
 }

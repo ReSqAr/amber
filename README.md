@@ -199,8 +199,8 @@ Helper function checker:
 Main logic:
 - use DB.refresh_virtual_filesystem()
 - piping:
-  - walker() -[transform]-> DB.add_virtual_filesystem_observations::input
-  - DB.add_virtual_filesystem_observations::output -[filter: state = new/dirty/ok] -> output stream
-  - DB.add_virtual_filesystem_observations::output -[filter: state = needs_check] -> needs_check stream 
-  - needs_check stream -[checker]-> DB.add_virtual_filesystem_observations::input
+  - walker() -[transform]-> DB.add_virtual_filesystem_observations::input                                                transformer = walker_transformer_handle
+  - DB.add_virtual_filesystem_observations::output -[filter: state = new/dirty/ok] -> output stream                      transformer = splitter_handle
+  - DB.add_virtual_filesystem_observations::output -[filter: state = needs_check] -> needs_check stream                  transformer = splitter_handle
+  - needs_check stream -[checker]-> DB.add_virtual_filesystem_observations::input                                        transformer = checker_handle
 

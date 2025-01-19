@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::io::Error;
+use std::fmt::Debug;
 
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
+use thiserror::Error;
 
 pub struct WalkerConfig {
     pub threads: usize,
@@ -23,10 +24,21 @@ impl Default for WalkerConfig {
     }
 }
 
+#[derive(Error, Debug)]
+pub(crate) enum Error {
+    #[error("I/O error")]
+    IOError(#[from] std::io::Error),
+    #[error("walker error")]
+    IgnoreError(#[from] ignore::Error),
+    #[error("observer error")]
+    ObserverError(String),
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileObservation {
     pub rel_path: PathBuf,
-    pub size: u64,
+    pub size: i64,
     pub last_modified: i64,
 }
 
@@ -38,14 +50,10 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     let rel_path = match entry.path().strip_prefix(root) {
         Ok(rel_path) => rel_path,
         Err(_) => {
-            let err = Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Cannot transform to relative path: {}",
-                    entry.path().display()
-                ),
-            );
-            return Some(Err(err));
+            return Some(Err(Error::ObserverError(format!(
+                "Cannot transform to relative path: {}",
+                entry.path().display()
+            ))));
         }
     }
     .to_path_buf();
@@ -53,11 +61,11 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     let metadata = match entry.metadata() {
         Ok(meta) => meta,
         Err(e) => {
-            let err = Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to get metadata for {}: {}", rel_path.display(), e),
-            );
-            return Some(Err(err));
+            return Some(Err(Error::ObserverError(format!(
+                "Failed to get metadata for {}: {}",
+                rel_path.display(),
+                e
+            ))));
         }
     };
 
@@ -66,40 +74,34 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
         Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
             Ok(dur) => dur.as_secs() as i64,
             Err(e) => {
-                let err = Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "SystemTime before UNIX_EPOCH for {}: {}",
-                        rel_path.display(),
-                        e
-                    ),
-                );
-                return Some(Err(err));
+                return Some(Err(Error::ObserverError(format!(
+                    "SystemTime before UNIX_EPOCH for {}: {}",
+                    rel_path.display(),
+                    e
+                ))));
             }
         },
         Err(e) => {
-            let err = Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to get modified time for {}: {}",
-                    rel_path.display(),
-                    e
-                ),
-            );
+            let err = Error::ObserverError(format!(
+                "Failed to get modified time for {}: {}",
+                rel_path.display(),
+                e
+            ));
             return Some(Err(err));
         }
     };
     Some(Ok(FileObservation {
         rel_path,
-        size,
+        size: size as i64,
         last_modified,
     }))
 }
 
 pub async fn walk<'a>(
-    root_path: &'a Path,
+    root_path: PathBuf,
     config: WalkerConfig,
-) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>> {
+) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>>
+{
     let root = root_path.to_path_buf();
 
     let mut override_builder = OverrideBuilder::new(&root);
@@ -129,9 +131,7 @@ pub async fn walk<'a>(
             Box::new(move |result| {
                 let obs = match result {
                     Ok(entry) => observe_dir_entry(&root, entry),
-                    Err(e) => Some(Err(Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Walk error: {}", e),
+                    Err(e) => Some(Err(Error::ObserverError(format!("Walk error: {}", e),
                     ))),
                 };
                 if let Some(observation) = obs {
