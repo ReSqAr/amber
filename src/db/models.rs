@@ -60,7 +60,7 @@ pub struct FilePathWithBlobId {
 }
 
 #[derive(Debug, PartialEq, Eq, Type)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum FileState {
     New,
     Dirty,

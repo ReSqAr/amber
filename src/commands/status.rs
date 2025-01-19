@@ -1,7 +1,7 @@
 use crate::repository::local_repository::LocalRepository;
 use crate::repository::traits::{Local, VirtualFilesystem};
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
-use log::{error, info};
+use log::{debug, error, info};
 
 use crate::db::models::{FileEqBlobCheck, FileSeen, FileState, Observation, VirtualFile};
 use crate::utils::control_flow::Message;
@@ -86,7 +86,12 @@ async fn are_hardlinked(path1: &std::path::Path, path2: &std::path::Path) -> std
     let metadata1 = fs::metadata(path1).await?;
     let metadata2 = fs::metadata(path2).await?;
 
-    Ok(metadata1.dev() == metadata2.dev() && metadata1.ino() == metadata2.ino())
+    let result = metadata1.dev() == metadata2.dev() && metadata1.ino() == metadata2.ino();
+    debug!(
+        "are_hardlinked: path1: {:?}, path2: {:?} result {:}",
+        path1, path2, result,
+    );
+    Ok(result)
 }
 
 async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> {
@@ -97,7 +102,6 @@ async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> 
         }
     };
 
-    
     Ok(Observation::FileEqBlobCheck(FileEqBlobCheck {
         path: vf.path.clone(),
         last_check_dttm: current_timestamp(),
@@ -196,11 +200,13 @@ pub async fn state(
                 }
                 Message::Data(Ok(vf)) => match vf.state {
                     Some(FileState::New) | Some(FileState::Dirty) | Some(FileState::Ok) => {
+                        debug!("state -> splitter: {:?} ready for output", vf.path);
                         if let Err(e) = tx_clone.send(Ok(vf)).await {
                             panic!("failed to send error to output stream: {}", e);
                         }
                     }
                     Some(FileState::NeedsCheck) | None => {
+                        debug!("state -> splitter: {:?} needs check", vf.path);
                         if needs_check_tx_clone.is_closed() {
                             panic!("programming error: data with needs check was received after shutdown");
                         }
