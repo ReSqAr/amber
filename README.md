@@ -1,3 +1,14 @@
+PROJECT MANAGEMENT
+- sync (done)
+- add/status/missing
+- QOL: config/.inv ignored
+- remote add
+- pull/push
+    - SSHRepository: ssh + call + GRPC
+    - BlobRepository: rclone
+- fsck
+
+
 TODO:
 - refactoring
   - trait: see below
@@ -22,6 +33,7 @@ COMMANDS:
 
 - remote add [Local]
 - fsck  [Local + Metadata]
+
 
 TRAITS:
 - Metadata: repo id

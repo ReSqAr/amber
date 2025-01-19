@@ -2,13 +2,17 @@ use crate::db::db::DB;
 use crate::db::establish_connection;
 use crate::db::models::{Blob, BlobObjectId, File, FilePathWithObjectId, Repository};
 use crate::db::schema::run_migrations;
+use crate::repository::traits::{
+    Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer,
+    SyncerParams,
+};
 use crate::utils::app_error::AppError;
+use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::fs;
-use crate::repository::traits::{Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer, SyncerParams};
 
 #[derive(Clone)]
 pub(crate) struct LocalRepository {
@@ -17,19 +21,40 @@ pub(crate) struct LocalRepository {
     db: DB,
 }
 
-async fn resolve_maybe_path(
-    maybe_path: Option<PathBuf>,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = maybe_path {
-        Ok(path)
-    } else {
-        Ok(fs::canonicalize(".").await?)
+/// Recursively searches parent directories for the `.inv` folder to determine the repository root.
+async fn find_repository_root(start_path: &PathBuf) -> Result<PathBuf, anyhow::Error> {
+    let mut current = start_path.canonicalize()?;
+
+    loop {
+        let inv_path = current.join(".inv");
+        if fs::metadata(&inv_path)
+            .await
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+        {
+            return Ok(current);
+        }
+
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
     }
+
+    Err(anyhow::anyhow!("no `.inv` directory found in any parent directories"))
 }
 
 impl LocalRepository {
     pub async fn new(maybe_root: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
-        let root = resolve_maybe_path(maybe_root).await?;
+        let root = if let Some(root) = maybe_root {
+            root
+        } else {
+            find_repository_root(&std::env::current_dir()?)
+                .await
+                .context("could not find an invariant folder")?
+        };
+
         let invariable_path = root.join(".inv");
         if !fs::metadata(&invariable_path)
             .await
@@ -63,7 +88,11 @@ impl LocalRepository {
     }
 
     pub async fn create(maybe_root: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
-        let root = resolve_maybe_path(maybe_root).await?;
+        let root = if let Some(path) = maybe_root {
+            path
+        } else {
+            fs::canonicalize(".").await?
+        };
         let invariable_path = root.join(".inv");
         if fs::metadata(&invariable_path)
             .await
@@ -81,10 +110,10 @@ impl LocalRepository {
         let db_path = invariable_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
             .await
-            .expect("failed to establish connection");
+            .context("failed to establish connection")?;
         run_migrations(&pool)
             .await
-            .expect("failed to run migrations");
+            .context("failed to run migrations")?;
 
         let db = DB::new(pool.clone());
 
@@ -140,7 +169,6 @@ impl Adder for LocalRepository {
     }
 }
 
-
 impl LastIndicesSyncer for LocalRepository {
     async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
         let Repository {
@@ -148,23 +176,28 @@ impl LastIndicesSyncer for LocalRepository {
             last_blob_index,
             ..
         } = self.db.lookup_repository(repo_id).await?;
-        Ok(LastIndices{ file: last_file_index, blob: last_blob_index })
+        Ok(LastIndices {
+            file: last_file_index,
+            blob: last_blob_index,
+        })
     }
 
-    async fn refresh(&self)  -> Result<(), AppError>{
+    async fn refresh(&self) -> Result<(), AppError> {
         self.db.update_last_indices().await?;
         Ok(())
     }
 }
 
-
 impl SyncerParams for Repository {
     type Params = ();
 }
 
-
 impl Syncer<Repository> for LocalRepository {
-    fn select(&self, _params: ()) -> impl Future<Output=impl Stream<Item=Result<Repository, AppError>> + Unpin + Send + 'static>{
+    fn select(
+        &self,
+        _params: (),
+    ) -> impl Future<Output = impl Stream<Item = Result<Repository, AppError>> + Unpin + Send + 'static>
+    {
         self.db.select_repositories().map(|s| s.err_into())
     }
 
@@ -176,14 +209,16 @@ impl Syncer<Repository> for LocalRepository {
     }
 }
 
-
 impl SyncerParams for File {
     type Params = i32;
 }
 
-
 impl Syncer<File> for LocalRepository {
-    fn select(&self, last_index: i32) -> impl Future<Output=impl Stream<Item=Result<File, AppError>> + Unpin + Send + 'static>{
+    fn select(
+        &self,
+        last_index: i32,
+    ) -> impl Future<Output = impl Stream<Item = Result<File, AppError>> + Unpin + Send + 'static>
+    {
         self.db.select_files(last_index).map(|s| s.err_into())
     }
 
@@ -195,13 +230,16 @@ impl Syncer<File> for LocalRepository {
     }
 }
 
-
 impl SyncerParams for Blob {
     type Params = i32;
 }
 
 impl Syncer<Blob> for LocalRepository {
-    fn select(&self, last_index: i32) -> impl Future<Output=impl Stream<Item=Result<Blob, AppError>> + Unpin + Send + 'static>{
+    fn select(
+        &self,
+        last_index: i32,
+    ) -> impl Future<Output = impl Stream<Item = Result<Blob, AppError>> + Unpin + Send + 'static>
+    {
         self.db.select_blobs(last_index).map(|s| s.err_into())
     }
 
@@ -214,14 +252,23 @@ impl Syncer<Blob> for LocalRepository {
 }
 
 impl Reconciler for LocalRepository {
-    fn target_filesystem_state(&self) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send {
-        self.db.target_filesystem_state(self.repo_id.clone()).err_into()
+    fn target_filesystem_state(
+        &self,
+    ) -> impl Stream<Item = Result<FilePathWithObjectId, AppError>> + Unpin + Send {
+        self.db
+            .target_filesystem_state(self.repo_id.clone())
+            .err_into()
     }
 }
 
-
 impl Deprecated for LocalRepository {
-    fn missing_blobs(&self, source_repo_id: String, target_repo_id: String) -> impl Stream<Item=Result<BlobObjectId, AppError>> + Unpin + Send {
-        self.db.missing_blobs(source_repo_id, target_repo_id).err_into()
+    fn missing_blobs(
+        &self,
+        source_repo_id: String,
+        target_repo_id: String,
+    ) -> impl Stream<Item = Result<BlobObjectId, AppError>> + Unpin + Send {
+        self.db
+            .missing_blobs(source_repo_id, target_repo_id)
+            .err_into()
     }
 }
