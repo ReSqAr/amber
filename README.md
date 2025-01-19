@@ -23,12 +23,12 @@ COMMANDS:
 - remote add [Local]
 - fsck  [Local + Metadata]
 
-TRAINTS:
+TRAITS:
 - Metadata: repo id + look up of effective files(?) / blobs
 - Local: has path, remotes
 - Adder: add files + add blobs
 - Syncer: sync DB files + sync DB blobs + sync DB repositories
-- Reconciler: bundles: DB desired_filesystem_state + checkout new blobs files [overwrites existing and creates new]
+- Reconciler: bundles: DB target_filesystem_state + checkout new blobs files [overwrites existing and creates new]
 - BlobReceiver: Reconciler [inlined] + receive (open and close transaction) [uses: DB missing_blobs]
 - BlobSender: prep + send
 

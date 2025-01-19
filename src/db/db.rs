@@ -373,7 +373,7 @@ impl DB {
         .await
     }
 
-    pub fn desired_filesystem_state(
+    pub fn target_filesystem_state(
         &self,
         repo_id: String,
     ) -> DBOutputStream<FilePathWithObjectId> {

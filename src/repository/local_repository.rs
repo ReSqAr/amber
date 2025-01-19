@@ -1,6 +1,6 @@
 use crate::db::db::DB;
 use crate::db::establish_connection;
-use crate::db::models::{Blob, File, Repository};
+use crate::db::models::{Blob, BlobObjectId, File, FilePathWithObjectId, Repository};
 use crate::db::schema::run_migrations;
 use crate::utils::app_error::AppError;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
@@ -13,7 +13,7 @@ use tokio::fs;
 pub(crate) struct LocalRepository {
     root: PathBuf,
     repo_id: String,
-    pub(crate) db: DB, // TODO: make private again
+    db: DB,
 }
 
 async fn resolve_maybe_path(
@@ -253,5 +253,36 @@ impl Syncer<Blob> for LocalRepository {
         S: Stream<Item = Blob> + Unpin + Send + 'static,
     {
         self.db.merge_blobs(s).err_into()
+    }
+}
+
+pub trait Reconciler {
+    fn target_filesystem_state(
+        &self
+    ) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send;
+
+}
+
+impl Reconciler for LocalRepository {
+    fn target_filesystem_state(&self) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send {
+        self.db.target_filesystem_state(self.repo_id.clone()).err_into()
+    }
+}
+
+
+#[deprecated]
+pub trait Deprecated {
+    #[deprecated]
+    fn missing_blobs(
+        &self,
+        source_repo_id: String,
+        target_repo_id: String,
+    ) -> impl Stream<Item=Result<BlobObjectId, AppError>> + Unpin + Send;
+}
+
+
+impl Deprecated for LocalRepository {
+    fn missing_blobs(&self, source_repo_id: String, target_repo_id: String) -> impl Stream<Item=Result<BlobObjectId, AppError>> + Unpin + Send {
+        self.db.missing_blobs(source_repo_id, target_repo_id).err_into()
     }
 }
