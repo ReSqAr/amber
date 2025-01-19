@@ -1,5 +1,5 @@
 use crate::db::models::FilePathWithObjectId;
-use crate::repository::local_repository::{Local, LocalRepository, Metadata, Reconciler};
+use crate::repository::local_repository::LocalRepository;
 use anyhow::{Context, Result};
 use async_tempfile::TempDir;
 use futures::StreamExt;
@@ -8,6 +8,7 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use crate::repository::traits::{Local, Metadata, Reconciler};
 
 pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;

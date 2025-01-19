@@ -9,7 +9,8 @@ use log::{debug, info};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use crate::repository::local_repository::{Adder, Deprecated, Local, LocalRepository, Metadata, Reconciler};
+use crate::repository::local_repository::LocalRepository;
+use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;

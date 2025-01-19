@@ -24,8 +24,8 @@ COMMANDS:
 - fsck  [Local + Metadata]
 
 TRAITS:
-- Metadata: repo id + look up of effective files(?) / blobs
-- Local: has path, remotes
+- Metadata: repo id
+- Local: has path, remotes, look up of effective files(?) / blobs
 - Adder: add files + add blobs
 - Syncer: sync DB files + sync DB blobs + sync DB repositories
 - Reconciler: bundles: DB target_filesystem_state + checkout new blobs files [overwrites existing and creates new]

@@ -1,9 +1,7 @@
 use crate::db::models::Blob as DbBlob;
 use crate::db::models::Repository as DbRepository;
 use crate::db::models::File as DbFile;
-use crate::repository::local_repository::{
-    LastIndicesSyncer, LocalRepository, Metadata, Syncer, SyncerParams,
-};
+use crate::repository::local_repository::LocalRepository;
 use crate::transport::client::Client;
 use crate::transport::server::invariable::Blob as GRPCBlob;
 use crate::transport::server::invariable::File as GRPCFile;
@@ -13,6 +11,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::Result;
 use futures::TryStreamExt;
 use log::{debug, info};
+use crate::repository::traits::{LastIndicesSyncer, Metadata, Syncer, SyncerParams};
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local = LocalRepository::new(None).await?;

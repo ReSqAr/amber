@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use tokio::{fs, io};
 
 use crate::db::models::{InputBlob, InputFile};
-use crate::repository::local_repository::{Adder, Local, LocalRepository, Metadata};
+use crate::repository::local_repository::LocalRepository;
 use sha2::{Digest, Sha256};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use crate::repository::traits::{Adder, Local, Metadata};
 
 async fn compute_sha256(file_path: &PathBuf) -> io::Result<String> {
     let mut file = File::open(file_path).await?;

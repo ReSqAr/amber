@@ -1,9 +1,9 @@
 use crate::db;
 use crate::db::models::InputBlob;
-use crate::repository::local_repository::{Adder, LastIndices, LastIndicesSyncer, Local, LocalRepository, Metadata, Syncer};
+use crate::repository::local_repository::LocalRepository;
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File,
-    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
+    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
 };
@@ -25,6 +25,7 @@ use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
+use crate::repository::traits::{Adder, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer};
 
 pub mod invariable {
     tonic::include_proto!("invariable");

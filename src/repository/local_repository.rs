@@ -8,6 +8,7 @@ use log::debug;
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::fs;
+use crate::repository::traits::{Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer, SyncerParams};
 
 #[derive(Clone)]
 pub(crate) struct LocalRepository {
@@ -103,12 +104,6 @@ impl LocalRepository {
     }
 }
 
-pub trait Local {
-    fn root(&self) -> PathBuf;
-    fn invariable_path(&self) -> PathBuf;
-    fn blob_path(&self) -> PathBuf;
-}
-
 impl Local for LocalRepository {
     fn root(&self) -> PathBuf {
         self.root.clone()
@@ -123,24 +118,10 @@ impl Local for LocalRepository {
     }
 }
 
-pub trait Metadata {
-    async fn repo_id(&self) -> Result<String, AppError>;
-}
-
 impl Metadata for LocalRepository {
     async fn repo_id(&self) -> Result<String, AppError> {
         Ok(self.repo_id.clone())
     }
-}
-
-pub trait Adder {
-    async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
-    where
-        S: Stream<Item = crate::db::models::InputFile> + Unpin;
-
-    async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
-    where
-        S: Stream<Item = crate::db::models::InputBlob> + Unpin;
 }
 
 impl Adder for LocalRepository {
@@ -160,20 +141,6 @@ impl Adder for LocalRepository {
 }
 
 
-
-
-#[derive(Debug)]
-pub struct LastIndices {
-    pub file: i32,
-    pub blob: i32,
-}
-
-
-pub trait LastIndicesSyncer {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError>;
-    async fn refresh(&self) -> Result<(), AppError>;
-}
-
 impl LastIndicesSyncer for LocalRepository {
     async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
         let Repository {
@@ -191,24 +158,10 @@ impl LastIndicesSyncer for LocalRepository {
 }
 
 
-pub trait SyncerParams {
-    type Params;
-}
-
-pub trait Syncer<T: SyncerParams> {
-    fn select(
-        &self,
-        params: <T as SyncerParams>::Params,
-    ) -> impl Future<Output=impl Stream<Item=Result<T, AppError>> + Unpin + Send + 'static>;
-
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
-    where
-        S: Stream<Item = T> + Unpin + Send + 'static;
-}
-
 impl SyncerParams for Repository {
     type Params = ();
 }
+
 
 impl Syncer<Repository> for LocalRepository {
     fn select(&self, _params: ()) -> impl Future<Output=impl Stream<Item=Result<Repository, AppError>> + Unpin + Send + 'static>{
@@ -223,9 +176,11 @@ impl Syncer<Repository> for LocalRepository {
     }
 }
 
+
 impl SyncerParams for File {
     type Params = i32;
 }
+
 
 impl Syncer<File> for LocalRepository {
     fn select(&self, last_index: i32) -> impl Future<Output=impl Stream<Item=Result<File, AppError>> + Unpin + Send + 'static>{
@@ -239,6 +194,8 @@ impl Syncer<File> for LocalRepository {
         self.db.merge_files(s).err_into()
     }
 }
+
+
 impl SyncerParams for Blob {
     type Params = i32;
 }
@@ -256,28 +213,10 @@ impl Syncer<Blob> for LocalRepository {
     }
 }
 
-pub trait Reconciler {
-    fn target_filesystem_state(
-        &self
-    ) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send;
-
-}
-
 impl Reconciler for LocalRepository {
     fn target_filesystem_state(&self) -> impl Stream<Item=Result<FilePathWithObjectId, AppError>> + Unpin + Send {
         self.db.target_filesystem_state(self.repo_id.clone()).err_into()
     }
-}
-
-
-#[deprecated]
-pub trait Deprecated {
-    #[deprecated]
-    fn missing_blobs(
-        &self,
-        source_repo_id: String,
-        target_repo_id: String,
-    ) -> impl Stream<Item=Result<BlobObjectId, AppError>> + Unpin + Send;
 }
 
 

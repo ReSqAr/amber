@@ -1,14 +1,13 @@
-use crate::repository::local_repository::{
-    LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
-};
+use crate::repository::traits::SyncerParams;
 use crate::transport::server::invariable::invariable_client::InvariableClient;
-use crate::transport::server::invariable::{Blob, File, Repository, RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest, LookupLastIndicesRequest, LookupLastIndicesResponse};
+use crate::transport::server::invariable::{Blob, File, LookupLastIndicesRequest, LookupLastIndicesResponse, Repository, RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest};
 use crate::utils::app_error::AppError;
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use std::sync::Arc;
 use log::debug;
 use tokio::sync::RwLock;
+use crate::repository::traits::{LastIndices, LastIndicesSyncer, Metadata, Syncer};
 
 #[derive(Clone)]
 pub(crate) struct Client {
