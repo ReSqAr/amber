@@ -37,15 +37,14 @@ message MergeFilesResponse {}
 message MergeBlobsResponse {}
 
 message UpdateLastIndicesRequest {}
-message UpdateLastIndicesResponse {
-    Repository current = 1;
-}
+message UpdateLastIndicesResponse {}
 
-message LookupRepositoryRequest {
+message LookupLastIndicesRequest {
     string repo_id = 1;
 }
-message LookupRepositoryResponse {
-    Repository repo = 1;
+message LookupLastIndicesResponse {
+    int32 file = 1;
+    int32 blob = 2;
 }
 
 message SelectRepositoriesRequest {}
@@ -75,7 +74,7 @@ service Invariable {
   rpc MergeBlobs (stream Blob) returns (MergeBlobsResponse);
   rpc UpdateLastIndices (UpdateLastIndicesRequest) returns (UpdateLastIndicesResponse);
 
-  rpc LookupRepository (LookupRepositoryRequest) returns (LookupRepositoryResponse);
+  rpc LookupLastIndices (LookupLastIndicesRequest) returns (LookupLastIndicesResponse);
   rpc SelectRepositories (SelectRepositoriesRequest) returns (stream Repository);
   rpc SelectFiles (SelectFilesRequest) returns (stream File);
   rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);

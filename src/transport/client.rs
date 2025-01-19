@@ -2,7 +2,7 @@ use crate::repository::local_repository::{
     LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
 };
 use crate::transport::server::invariable::invariable_client::InvariableClient;
-use crate::transport::server::invariable::{Blob, File, LookupRepositoryRequest, Repository, RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest};
+use crate::transport::server::invariable::{Blob, File, Repository, RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, UpdateLastIndicesRequest, LookupLastIndicesRequest, LookupLastIndicesResponse};
 use crate::utils::app_error::AppError;
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
@@ -41,27 +41,17 @@ impl Metadata for Client {
 
 impl LastIndicesSyncer for Client {
     async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
-        let Repository {
-            last_file_index,
-            last_blob_index,
-            ..
+        let LookupLastIndicesResponse {
+            file,
+            blob,
         } = self
             .client
             .write()
             .await
-            .lookup_repository(LookupRepositoryRequest { repo_id: repo_id.clone() })
+            .lookup_last_indices( LookupLastIndicesRequest  { repo_id: repo_id.clone() })
             .await?
-            .into_inner()
-            .repo
-            .unwrap_or(Repository {
-                repo_id: repo_id.clone(),
-                last_file_index: -1,
-                last_blob_index: -1,
-            });
-        Ok(LastIndices {
-            file: last_file_index,
-            blob: last_blob_index,
-        })
+            .into_inner();
+        Ok(LastIndices { file, blob })
     }
 
     async fn refresh(&self) -> Result<(), AppError> {

@@ -1,4 +1,4 @@
-use crate::db::models::{BlobObjectId, CurrentRepository, FilePathWithObjectId, InputBlob};
+use crate::db::models::{BlobObjectId, FilePathWithObjectId, InputBlob};
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::{
     DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
@@ -9,7 +9,7 @@ use log::{debug, info};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use crate::repository::local_repository::{Local, LocalRepository, Metadata};
+use crate::repository::local_repository::{Adder, Local, LocalRepository, Metadata};
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -54,7 +54,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             valid_from: chrono::Utc::now(),
         };
         let sb = stream::iter(vec![b]);
-        local_repository.db.add_blobs(sb).await?;
+        local_repository.add_blobs(sb).await?;
 
         debug!("added blob {:?}", object_path);
     }
@@ -66,7 +66,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), Box<dyn std::error::Error>> {
-    let CurrentRepository { repo_id } = local_repository.db.get_or_create_current_repository().await?;
+    let  repo_id = local_repository.repo_id().await?;
 
     let mut desired_state = local_repository.db.desired_filesystem_state(repo_id.clone());
     while let Some(next) = desired_state.next().await {

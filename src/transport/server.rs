@@ -1,9 +1,9 @@
 use crate::db;
-use crate::db::models::{CurrentRepository, InputBlob};
-use crate::repository::local_repository::{Adder, Local, LocalRepository, Syncer};
+use crate::db::models::InputBlob;
+use crate::repository::local_repository::{Adder, LastIndices, LastIndicesSyncer, Local, LocalRepository, Metadata, Syncer};
 use crate::transport::server::invariable::{
-    Blob, DownloadRequest, DownloadResponse, File, LookupRepositoryRequest,
-    LookupRepositoryResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+    Blob, DownloadRequest, DownloadResponse, File,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
 };
@@ -15,7 +15,7 @@ use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
 use futures::{stream, TryStreamExt};
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
@@ -124,12 +124,8 @@ impl Invariable for MyServer {
         &self,
         _: Request<RepositoryIdRequest>,
     ) -> Result<Response<RepositoryIdResponse>, Status> {
-        match self.repository.db.get_or_create_current_repository().await {
-            Ok(CurrentRepository { repo_id }) => {
-                Ok(Response::new(RepositoryIdResponse { repo_id }))
-            }
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+        let repo_id = self.repository.repo_id().await?;
+        Ok(Response::new(RepositoryIdResponse { repo_id }))
     }
 
     async fn merge_repositories(
@@ -149,8 +145,8 @@ impl Invariable for MyServer {
     ) -> Result<Response<MergeFilesResponse>, Status> {
         request
             .into_inner()
-            .map_ok(File::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_files(s))
+            .map_ok::<DbFile, _>(File::into)
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeFilesResponse {}))
     }
@@ -160,8 +156,8 @@ impl Invariable for MyServer {
     ) -> Result<Response<MergeBlobsResponse>, Status> {
         request
             .into_inner()
-            .map_ok(Blob::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.db.merge_blobs(s))
+            .map_ok::<DbBlob, _>(Blob::into)
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeBlobsResponse {}))
     }
@@ -170,29 +166,19 @@ impl Invariable for MyServer {
         &self,
         _: Request<UpdateLastIndicesRequest>,
     ) -> Result<Response<UpdateLastIndicesResponse>, Status> {
-        match self.repository.db.update_last_indices().await {
-            Ok(repo) => Ok(Response::new(UpdateLastIndicesResponse {
-                current: Some(repo.into()),
-            })),
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+        self.repository.refresh().await?;
+        Ok(Response::new(UpdateLastIndicesResponse {}))
     }
 
-    async fn lookup_repository(
+    async fn lookup_last_indices(
         &self,
-        request: Request<LookupRepositoryRequest>,
-    ) -> Result<Response<LookupRepositoryResponse>, Status> {
-        match self
+        request: Request<LookupLastIndicesRequest>,
+    ) -> Result<Response<LookupLastIndicesResponse>, Status> {
+        let LastIndices { file, blob } = self
             .repository
-            .db
-            .lookup_repository(request.into_inner().repo_id)
-            .await
-        {
-            Ok(repo) => Ok(Response::new(LookupRepositoryResponse {
-                repo: Some(repo.into()),
-            })),
-            Err(err) => Err(Status::from_error(err.into())),
-        }
+            .lookup(request.into_inner().repo_id)
+            .await?;
+        Ok(Response::new(LookupLastIndicesResponse {file, blob }))
     }
 
     type SelectRepositoriesStream =
@@ -204,10 +190,8 @@ impl Invariable for MyServer {
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
         let stream = <LocalRepository as Syncer<DbRepository>>::select(&self.repository, ())
             .await
-            .map(|r: Result<DbRepository, _>| match r {
-                Ok(file) => Ok(file.into()),
-                Err(err) => Err(Status::from_error(err.into())),
-            });
+            .err_into()
+            .map_ok::<Repository, _>(DbRepository::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -218,15 +202,10 @@ impl Invariable for MyServer {
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = self
-            .repository
-            .db
-            .select_files(last_index)
+        let stream = <LocalRepository as Syncer<DbFile>>::select(&self.repository, last_index)
             .await
-            .map(|r| match r {
-                Ok(file) => Ok(file.into()),
-                Err(err) => Err(Status::from_error(err.into())),
-            });
+            .err_into()
+            .map_ok::<File, _>(DbFile::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -237,15 +216,10 @@ impl Invariable for MyServer {
         request: Request<SelectBlobsRequest>,
     ) -> Result<Response<Self::SelectBlobsStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = self
-            .repository
-            .db
-            .select_blobs(last_index)
+        let stream = <LocalRepository as Syncer<DbBlob>>::select(&self.repository, last_index)
             .await
-            .map(|r| match r {
-                Ok(blob) => Ok(blob.into()),
-                Err(err) => Err(Status::from_error(err.into())),
-            });
+            .err_into()
+            .map_ok::<Blob, _>(DbBlob::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -263,12 +237,10 @@ impl Invariable for MyServer {
         file.write_all(&content).await?;
         file.sync_all().await?;
 
-        let CurrentRepository { repo_id } = self
+        let  repo_id  = self
             .repository
-            .db
-            .get_or_create_current_repository()
-            .await
-            .map_err(|err| Status::from_error(err.into()))?;
+            .repo_id()
+            .await?;
 
         let b = InputBlob {
             repo_id,
