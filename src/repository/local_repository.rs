@@ -9,10 +9,10 @@ use crate::repository::traits::{
     SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
+use crate::utils::control_flow::Message;
 use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
-use sqlx::Error;
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::fs;
@@ -267,11 +267,11 @@ impl Reconciler for LocalRepository {
 }
 
 impl VirtualFilesystem for LocalRepository {
-    async fn refresh(&self) -> Result<(), Error> {
+    async fn refresh(&self) -> Result<(), sqlx::Error> {
         self.db.refresh_virtual_filesystem().await
     }
 
-    async fn cleanup(&self, last_seen_id: i64) -> Result<(), Error> {
+    async fn cleanup(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
         self.db.cleanup_virtual_filesystem(last_seen_id).await
     }
 
@@ -279,14 +279,19 @@ impl VirtualFilesystem for LocalRepository {
         &self,
         last_seen_id: i64,
     ) -> DBOutputStream<'static, VirtualFile> {
-        self.db.select_deleted_files_on_virtual_filesystem(last_seen_id).await
+        self.db
+            .select_deleted_files_on_virtual_filesystem(last_seen_id)
+            .await
     }
 
     async fn add_observations(
         &self,
-        input_stream: impl Stream<Item = Observation> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = Result<VirtualFile, Error>> + Unpin + Send + 'static {
-        self.db.add_virtual_filesystem_observations(input_stream).await
+        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static
+    {
+        self.db
+            .add_virtual_filesystem_observations(input_stream)
+            .await
     }
 }
 

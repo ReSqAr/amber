@@ -2,15 +2,13 @@ use crate::db::models::{
     Blob, BlobId, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId, FileSeen,
     InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
 };
+use crate::utils::control_flow::Message;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
 use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::task::JoinHandle;
-use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -61,9 +59,9 @@ impl Database {
             "INSERT OR IGNORE INTO current_repository (id, repo_id) VALUES (1, ?)
             RETURNING repo_id;",
         )
-            .bind(potential_new_repository_id)
-            .fetch_optional(&self.pool)
-            .await?
+        .bind(potential_new_repository_id)
+        .fetch_optional(&self.pool)
+        .await?
         {
             return Ok(repo);
         }
@@ -74,7 +72,7 @@ impl Database {
 
     pub async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item=InsertFile> + Unpin,
+        S: Stream<Item = InsertFile> + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -121,7 +119,7 @@ impl Database {
 
     pub async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item=InsertBlob> + Unpin,
+        S: Stream<Item = InsertBlob> + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -182,7 +180,7 @@ impl Database {
             FROM files
             WHERE id > ?",
             )
-                .bind(last_index),
+            .bind(last_index),
         )
     }
 
@@ -194,13 +192,13 @@ impl Database {
                 FROM blobs
                 WHERE id > ?",
             )
-                .bind(last_index),
+            .bind(last_index),
         )
     }
 
     pub async fn merge_repositories<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item=Repository> + Unpin + Send,
+        S: Stream<Item = Repository> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -250,7 +248,7 @@ impl Database {
 
     pub async fn merge_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item=File> + Unpin + Send,
+        S: Stream<Item = File> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -296,7 +294,7 @@ impl Database {
 
     pub async fn merge_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item=Blob> + Unpin + Send,
+        S: Stream<Item = Blob> + Unpin + Send,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -353,10 +351,10 @@ impl Database {
                 LIMIT 1
             ",
         )
-            .bind(&repo_id)
-            .bind(&repo_id)
-            .fetch_one(&self.pool)
-            .await
+        .bind(&repo_id)
+        .bind(&repo_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     pub async fn update_last_indices(&self) -> Result<Repository, sqlx::Error> {
@@ -374,8 +372,8 @@ impl Database {
             RETURNING repo_id, last_file_index, last_blob_index;
             ",
         )
-            .fetch_one(&self.pool)
-            .await
+        .fetch_one(&self.pool)
+        .await
     }
 
     pub fn target_filesystem_state(&self, repo_id: String) -> DBOutputStream<FilePathWithBlobId> {
@@ -388,7 +386,7 @@ impl Database {
                 FROM repository_filesystem_available_files
                 WHERE repo_id = ?;",
             )
-                .bind(repo_id),
+            .bind(repo_id),
         )
     }
 
@@ -413,8 +411,8 @@ impl Database {
                         repo_id = ?
                 );",
             )
-                .bind(source_repo_id)
-                .bind(target_repo_id),
+            .bind(source_repo_id)
+            .bind(target_repo_id),
         )
     }
 
@@ -493,138 +491,26 @@ impl Database {
                 FROM virtual_filesystem
                 WHERE (file_last_seen_id != ? OR file_last_seen_id IS NULL) AND local_has_blob;",
             )
-                .bind(last_seen_id),
+            .bind(last_seen_id),
         )
-    }
-
-    pub async fn add_virtual_filesystem_observations_old(
-        &self,
-        input_stream: impl Stream<Item=Observation> + Unpin + Send + 'static,
-    ) -> Result<
-        (
-            JoinHandle<()>,
-            impl Stream<Item=Result<VirtualFile, sqlx::Error>> + Unpin + Send + 'static,
-        ),
-        sqlx::Error,
-    > {
-        let (tx, rx): (
-            Sender<Result<VirtualFile, sqlx::Error>>,
-            Receiver<Result<VirtualFile, sqlx::Error>>,
-        ) = tokio::sync::mpsc::channel(100);
-
-        let pool = self.pool.clone();
-
-        let handle: JoinHandle<()> = tokio::spawn(async move {
-            let tx = tx;
-            let mut stream = input_stream;
-
-            while let Some(observation) = stream.next().await {
-                let query = "
-                    INSERT INTO virtual_filesystem (
-                        path,
-                        file_last_seen_id,
-                        file_last_seen_dttm,
-                        file_last_modified_dttm,
-                        file_size,
-                        last_file_eq_blob_check_dttm,
-                        last_file_eq_blob_result,
-                        state
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, False), 'new')
-                    ON CONFLICT(path) DO UPDATE SET
-                        file_last_seen_id = COALESCE(excluded.file_last_seen_id, file_last_seen_id),
-                        file_last_seen_dttm = COALESCE(excluded.file_last_seen_dttm, file_last_seen_dttm),
-                        file_last_modified_dttm = COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm),
-                        file_size = COALESCE(excluded.file_size, file_size),
-                        last_file_eq_blob_check_dttm = COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm),
-                        last_file_eq_blob_result = COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result, False),
-
-                        state = CASE
-                                    WHEN blob_id IS NULL THEN 'new'
-                                    WHEN COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result) = FALSE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm) < COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm) THEN 'dirty'
-                                    WHEN (blob_id IS NOT NULL
-                                        AND COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result) = TRUE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm) < COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm)) THEN 'ok'
-                                    ELSE 'needs_check'
-                            END
-                    RETURNING
-                        path,
-                        file_last_seen_id,
-                        file_last_seen_dttm,
-                        file_last_modified_dttm,
-                        file_size,
-                        local_has_blob,
-                        blob_id,
-                        blob_size,
-                        last_file_eq_blob_check_dttm,
-                        last_file_eq_blob_result,
-                        state
-                    ;
-                ";
-
-                let ivf: InsertVirtualFile = match observation {
-                    Observation::FileSeen(FileSeen {
-                                              path,
-                                              last_seen_id,
-                                              last_seen_dttm,
-                                              last_modified_dttm,
-                                              size,
-                                          }) => InsertVirtualFile {
-                        path: path.clone(),
-                        file_last_seen_id: last_seen_id.into(),
-                        file_last_seen_dttm: last_seen_dttm.into(),
-                        file_last_modified_dttm: last_modified_dttm.into(),
-                        file_size: size.into(),
-                        last_file_eq_blob_check_dttm: None,
-                        last_file_eq_blob_result: None,
-                    },
-                    Observation::FileEqBlobCheck(FileEqBlobCheck {
-                                                     path,
-                                                     last_check_dttm,
-                                                     last_result,
-                                                 }) => InsertVirtualFile {
-                        path: path.clone(),
-                        file_last_seen_id: None,
-                        file_last_seen_dttm: None,
-                        file_last_modified_dttm: None,
-                        file_size: None,
-                        last_file_eq_blob_check_dttm: last_check_dttm.into(),
-                        last_file_eq_blob_result: last_result.into(),
-                    },
-                };
-
-                let result = sqlx::query_as::<_, VirtualFile>(query)
-                    .bind(ivf.path.clone())
-                    .bind(ivf.file_last_seen_id)
-                    .bind(ivf.file_last_seen_dttm)
-                    .bind(ivf.file_last_modified_dttm)
-                    .bind(ivf.file_size)
-                    .bind(ivf.last_file_eq_blob_check_dttm)
-                    .bind(ivf.last_file_eq_blob_result)
-                    .fetch_one(&pool)
-                    .await;
-
-                if tx.send(result).await.is_err() {
-                    break;
-                }
-            }
-
-            drop(tx);
-        });
-
-        let output_stream = ReceiverStream::new(rx);
-        Ok((handle, output_stream))
     }
 
     pub async fn add_virtual_filesystem_observations(
         &self,
-        input_stream: impl Stream<Item=Observation> + Unpin + Send + 'static,
-    ) -> impl Stream<Item=Result<VirtualFile, sqlx::Error>> + Unpin + Send + 'static {
+        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static
+    {
         let pool = self.pool.clone();
-        input_stream.then(move |observation: Observation| {
+        input_stream.then(move |message: Message<Observation>| {
             let pool = pool.clone();
             Box::pin(async move {
+                let observation = match message {
+                    Message::Data(observation) => observation,
+                    Message::Shutdown => {
+                        return Message::Shutdown
+                    }
+                };
+
                 let query = "
                     INSERT INTO virtual_filesystem (
                         path,
@@ -700,7 +586,6 @@ impl Database {
                     },
                 };
 
-                
 
                 sqlx::query_as::<_, VirtualFile>(query)
                     .bind(ivf.path.clone())
@@ -712,6 +597,7 @@ impl Database {
                     .bind(ivf.last_file_eq_blob_result)
                     .fetch_one(&pool)
                     .await
+                    .into()
             })
         })
     }

@@ -4,6 +4,7 @@ use crate::utils::app_error::AppError;
 use futures::Stream;
 use std::future::Future;
 use std::path::PathBuf;
+use crate::utils::control_flow::Message;
 
 pub trait Local {
     fn root(&self) -> PathBuf;
@@ -80,6 +81,6 @@ pub trait VirtualFilesystem {
 
     async fn add_observations(
         &self,
-        input_stream: impl Stream<Item = Observation> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = Result<VirtualFile, sqlx::Error>> + Unpin + Send + 'static;
+        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static;
 }

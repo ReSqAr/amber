@@ -4,6 +4,7 @@ use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use log::{error, info};
 
 use crate::db::models::{FileEqBlobCheck, FileSeen, FileState, Observation, VirtualFile};
+use crate::utils::control_flow::Message;
 use crate::utils::walker;
 use futures::{Stream, StreamExt};
 use std::fmt::Debug;
@@ -105,8 +106,8 @@ pub async fn state(
        - needs_check: files which need to be looked at
        - output channel
     */
-    let (obs_tx, obs_rx) = mpsc::channel::<Observation>(config.buffer_size);
-    let (needs_check_tx, mut needs_check_rx): (Sender<VirtualFile>, Receiver<VirtualFile>) =
+    let (obs_tx, obs_rx) = mpsc::channel::<Message<Observation>>(config.buffer_size);
+    let (needs_check_tx, mut needs_check_rx): (Sender<Message<VirtualFile>>, Receiver<Message<VirtualFile>>) =
         mpsc::channel(config.buffer_size);
     let (tx, rx): (
         Sender<Result<VirtualFile, Error>>,
@@ -117,7 +118,7 @@ pub async fn state(
     let (walker_handle, mut walker_rx) = walk(root, config.walker).await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
-    let db_output_rx = db.add_observations(ReceiverStream::new(obs_rx)).await;
+    let db_output_stream = db.add_observations(ReceiverStream::new(obs_rx)).await;
 
     // transforms the files seen by the filesystem walker into observations suitable for the DB
     let tx_clone = tx.clone();
@@ -137,7 +138,7 @@ pub async fn state(
                         last_modified_dttm: last_modified,
                         size,
                     });
-                    if let Err(e) = obs_tx_clone.send(observation).await {
+                    if let Err(e) = obs_tx_clone.send(observation.into()).await {
                         if let Err(e_send) = tx_clone.send(Err(e.into())).await {
                             panic!("failed to send error to output stream: {}", e_send);
                         }
@@ -152,32 +153,44 @@ pub async fn state(
         }
 
         // close the channels once the stream is exhausted.
-        // TODO: signal to obs_tx_clone that no more data will come
+        if let Err(e) = obs_tx_clone.send(Message::Shutdown).await {
+            panic!("failed to send error to output stream: {}", e);
+        }
     });
 
     // splits the observations by the filesystem walker into:
     // - output channel: for states new/dirty/ok
     // - needs_check channel: needs_check or unknown
     let tx_clone = tx.clone();
+    let needs_check_tx_clone = needs_check_tx.clone();
     let splitter_handle: JoinHandle<()> = tokio::spawn(async move {
-        let mut db_output_stream = db_output_rx;
+        let mut db_output_stream = db_output_stream;
         while let Some(vf_result) = db_output_stream.next().await {
             match vf_result {
-                Ok(vf) => match vf.state {
+                Message::Shutdown => {
+                    if let Err(e) = needs_check_tx_clone.send(Message::Shutdown).await {
+                        panic!("failed to send shutdown to needs check stream: {}", e);
+                    }
+                }
+                Message::Data(Ok(vf)) => match vf.state {
                     Some(FileState::New) | Some(FileState::Dirty) | Some(FileState::Ok) => {
                         if let Err(e) = tx_clone.send(Ok(vf)).await {
                             panic!("failed to send error to output stream: {}", e);
                         }
                     }
                     Some(FileState::NeedsCheck) | None => {
-                        if let Err(e) = needs_check_tx.send(vf).await {
+                        if needs_check_tx_clone.is_closed() {
+                            panic!("programming error: data with needs check was received after shutdown");
+                        }
+
+                        if let Err(e) = needs_check_tx_clone.send(vf.into()).await {
                             if let Err(e_send) = tx_clone.send(Err(e.into())).await {
                                 panic!("failed to send error to output stream: {}", e_send);
                             }
                         }
                     }
                 },
-                Err(e) => {
+                Message::Data(Err(e)) => {
                     if let Err(e_send) = tx_clone.send(Err(e.into())).await {
                         panic!("failed to send error to output stream: {}", e_send);
                     }
@@ -186,23 +199,32 @@ pub async fn state(
         }
 
         // Close the channels once the stream is exhausted.
-        drop(needs_check_tx);
+        drop(needs_check_tx_clone);
     });
 
     // performs the additional checks on files and then sends them back to the DB observation channel
     let obs_tx_clone = obs_tx.clone();
     let tx_clone = tx.clone();
+    let needs_check_tx_clone = needs_check_tx.clone();
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(vf) = needs_check_rx.recv().await {
-            // TODO: checker
-            let observation = Observation::FileEqBlobCheck(FileEqBlobCheck {
-                path: vf.path.clone(),
-                last_check_dttm: current_timestamp(),
-                last_result: true,
-            });
-            if let Err(e) = obs_tx_clone.send(observation).await {
-                if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                    panic!("failed to send error to output stream: {}", e_send);
+        while let Some(vf_msg) = needs_check_rx.recv().await {
+            match vf_msg {
+                Message::Data(vf) => {
+                    // TODO: checker
+                    let observation = Observation::FileEqBlobCheck(FileEqBlobCheck {
+                        path: vf.path.clone(),
+                        last_check_dttm: current_timestamp(),
+                        last_result: true,
+                    });
+                    if let Err(e) = obs_tx_clone.send(observation.into()).await {
+                        if let Err(e_send) = tx_clone.send(Err(e.into())).await {
+                            panic!("failed to send error to output stream: {}", e_send);
+                        }
+                    }
+                }
+                Message::Shutdown => {
+                    drop(needs_check_tx_clone);
+                    break;
                 }
             }
         }
