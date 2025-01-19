@@ -437,7 +437,7 @@ impl Database {
                 blob_id = excluded.blob_id,
                 blob_size = excluded.blob_size,
                 last_file_eq_blob_result = CASE
-                    WHEN blob_id = excluded.blob_id THEN excluded.last_file_eq_blob_result
+                    WHEN blob_id = excluded.blob_id THEN last_file_eq_blob_result
                     ELSE FALSE
                 END
             ;
@@ -538,10 +538,12 @@ impl Database {
                         state = CASE
                                     WHEN blob_id IS NULL THEN 'new'
                                     WHEN COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result) = FALSE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm) < COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm) THEN 'dirty'
+                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm)
+                                        <= COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm) THEN 'dirty'
                                     WHEN (blob_id IS NOT NULL
                                         AND COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result) = TRUE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm) < COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm)) THEN 'ok'
+                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm)
+                                        <= COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm)) THEN 'ok'
                                     ELSE 'needs_check'
                             END
                     RETURNING
