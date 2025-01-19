@@ -3,7 +3,7 @@ use crate::repository::traits::{Local, VirtualFilesystem};
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use log::{debug, error, info};
 
-use crate::db::models::{FileEqBlobCheck, FileSeen, FileState, Observation, VirtualFile};
+use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::utils::control_flow::Message;
 use crate::utils::walker;
 use futures::{Stream, StreamExt};
@@ -109,8 +109,36 @@ async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> 
     }))
 }
 
+async fn close(
+    tx: Sender<Result<VirtualFile, Error>>,
+    vfs: impl VirtualFilesystem + Local + Send + Sync + Clone,
+    last_seen_id: i64,
+) -> Result<(), Error> {
+    debug!("close: closing virtual filesystem");
+
+    vfs.cleanup(last_seen_id).await?;
+
+    let mut deleted_files = vfs.select_deleted_files(last_seen_id).await;
+    while let Some(r) = deleted_files.next().await {
+        match r {
+            Ok(vf) => {
+                if let Err(e) = tx.send(Ok(vf)).await {
+                    panic!("failed to send element to output stream: {}", e);
+                }
+            }
+            Err(e) => {
+                if let Err(e_send) = tx.send(Err(e.into())).await {
+                    panic!("failed to send error to output stream: {}", e_send);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn state(
-    vfs: impl VirtualFilesystem + Local + Send + Sync + 'static,
+    vfs: impl VirtualFilesystem + Local + Send + Sync + Clone + 'static,
     config: StateConfig,
 ) -> Result<
     (
@@ -199,13 +227,16 @@ pub async fn state(
                     }
                 }
                 Message::Data(Ok(vf)) => match vf.state {
-                    Some(FileState::New) | Some(FileState::Dirty) | Some(FileState::Ok) => {
+                    Some(VirtualFileState::New)
+                    | Some(VirtualFileState::Dirty)
+                    | Some(VirtualFileState::Ok)
+                    | Some(VirtualFileState::Deleted) => {
                         debug!("state -> splitter: {:?} ready for output", vf.path);
                         if let Err(e) = tx_clone.send(Ok(vf)).await {
                             panic!("failed to send error to output stream: {}", e);
                         }
                     }
-                    Some(FileState::NeedsCheck) | None => {
+                    Some(VirtualFileState::NeedsCheck) | None => {
                         debug!("state -> splitter: {:?} needs check", vf.path);
                         if needs_check_tx_clone.is_closed() {
                             panic!("programming error: data with needs check was received after shutdown");
@@ -231,13 +262,14 @@ pub async fn state(
     });
 
     // performs the additional checks on files and then sends them back to the DB observation channel
-    let obs_tx_clone = obs_tx.clone();
+    let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
+    let obs_tx_clone = obs_tx.clone();
     let needs_check_tx_clone = needs_check_tx.clone();
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
         while let Some(vf_msg) = needs_check_rx.recv().await {
             match vf_msg {
-                Message::Data(vf) => match check(&vfs, vf).await {
+                Message::Data(vf) => match check(&vfs_clone, vf).await {
                     Ok(observation) => {
                         if let Err(e) = obs_tx_clone.send(observation.into()).await {
                             if let Err(e_send) = tx_clone.send(Err(e.into())).await {
@@ -262,6 +294,8 @@ pub async fn state(
         drop(obs_tx_clone);
     });
 
+    let vfs_clone = vfs.clone();
+    let tx_clone = tx.clone();
     let final_handle = tokio::spawn(async move {
         match tokio::try_join!(
             walker_handle,
@@ -269,7 +303,11 @@ pub async fn state(
             splitter_handle,
             checker_handle,
         ) {
-            Ok(((), (), (), ())) => Ok(()),
+            Ok(((), (), (), ())) => {
+                close(tx_clone, vfs_clone, last_seen_id).await?;
+
+                Ok(())
+            }
             Err(e) => {
                 error!("error in task execution: {}", e);
                 Err(Error::TaskFailure(format!("task execution failed: {}", e)))

@@ -437,7 +437,7 @@ impl Database {
                 blob_id = excluded.blob_id,
                 blob_size = excluded.blob_size,
                 last_file_eq_blob_result = CASE
-                    WHEN blob_id = excluded.blob_id THEN last_file_eq_blob_result
+                    WHEN blob_id = excluded.blob_id THEN excluded.last_file_eq_blob_result
                     ELSE FALSE
                 END
             ;
@@ -451,11 +451,14 @@ impl Database {
 
         Ok(())
     }
-    pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
+    pub async fn cleanup_virtual_filesystem(
+        &self,
+        last_seen_id: i64,
+    ) -> Result<(), sqlx::Error> {
         let query = "
-            DELETE FROM virtual_filesystem
-            WHERE file_last_seen_id IS NOT NULL AND file_last_seen_id != ? AND blob_id IS NULL;
-        ";
+        DELETE FROM virtual_filesystem
+        WHERE file_last_seen_id IS NOT NULL AND file_last_seen_id != ? AND blob_id IS NULL;
+    ";
 
         let result = sqlx::query(query)
             .bind(last_seen_id)
@@ -476,20 +479,21 @@ impl Database {
         self.stream(
             query(
                 "
-                SELECT
-                    path,
-                    file_last_seen_id,
-                    file_last_seen_dttm,
-                    file_last_modified_dttm,
-                    file_size,
-                    local_has_blob,
-                    blob_id,
-                    blob_size,
-                    last_file_eq_blob_check_dttm,
-                    last_file_eq_blob_result,
-                    state
-                FROM virtual_filesystem
-                WHERE (file_last_seen_id != ? OR file_last_seen_id IS NULL) AND local_has_blob;",
+            UPDATE virtual_filesystem
+            SET state = 'deleted'
+            WHERE (file_last_seen_id != ? OR file_last_seen_id IS NULL) AND local_has_blob
+            RETURNING
+                path,
+                file_last_seen_id,
+                file_last_seen_dttm,
+                file_last_modified_dttm,
+                file_size,
+                local_has_blob,
+                blob_id,
+                blob_size,
+                last_file_eq_blob_check_dttm,
+                last_file_eq_blob_result,
+                state;",
             )
             .bind(last_seen_id),
         )

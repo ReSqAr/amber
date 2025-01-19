@@ -1,10 +1,10 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{BlobId, FilePathWithBlobId, Observation, VirtualFile};
 use crate::utils::app_error::AppError;
+use crate::utils::control_flow::Message;
 use futures::Stream;
 use std::future::Future;
 use std::path::PathBuf;
-use crate::utils::control_flow::Message;
 
 pub trait Local {
     fn root(&self) -> PathBuf;
@@ -46,7 +46,7 @@ pub trait Syncer<T: SyncerParams> {
     fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Future<Output=impl Stream<Item=Result<T, AppError>> + Unpin + Send + 'static>;
+    ) -> impl Future<Output = impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static>;
 
     fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
     where
@@ -55,30 +55,31 @@ pub trait Syncer<T: SyncerParams> {
 
 pub trait Reconciler {
     fn target_filesystem_state(
-        &self
-    ) -> impl Stream<Item=Result<FilePathWithBlobId, AppError>> + Unpin + Send;
-
+        &self,
+    ) -> impl Stream<Item = Result<FilePathWithBlobId, AppError>> + Unpin + Send;
 }
 
-#[deprecated]
+//#[deprecated]
 pub trait Deprecated {
-    #[deprecated]
+    //#[deprecated]
     fn missing_blobs(
         &self,
         source_repo_id: String,
         target_repo_id: String,
-    ) -> impl Stream<Item=Result<BlobId, AppError>> + Unpin + Send;
+    ) -> impl Stream<Item = Result<BlobId, AppError>> + Unpin + Send;
 }
-
 
 pub trait VirtualFilesystem {
     async fn refresh(&self) -> Result<(), sqlx::Error>;
-    async fn cleanup(&self, last_seen_id: i64) -> Result<(), sqlx::Error>;
-
-    async fn select_deleted_files(
+    fn cleanup(
         &self,
         last_seen_id: i64,
-    ) -> DBOutputStream<'static, VirtualFile>;
+    ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
+
+    fn select_deleted_files(
+        &self,
+        last_seen_id: i64,
+    ) -> impl Future<Output = DBOutputStream<'static, VirtualFile>> + Send;
 
     async fn add_observations(
         &self,

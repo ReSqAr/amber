@@ -275,17 +275,16 @@ impl VirtualFilesystem for LocalRepository {
         self.db.refresh_virtual_filesystem().await
     }
 
-    async fn cleanup(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
-        self.db.cleanup_virtual_filesystem(last_seen_id).await
+    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
+        self.db.cleanup_virtual_filesystem(last_seen_id)
     }
 
-    async fn select_deleted_files(
+    fn select_deleted_files(
         &self,
         last_seen_id: i64,
-    ) -> DBOutputStream<'static, VirtualFile> {
+    ) -> impl Future<Output = DBOutputStream<'static, VirtualFile>> + Send {
         self.db
             .select_deleted_files_on_virtual_filesystem(last_seen_id)
-            .await
     }
 
     async fn add_observations(

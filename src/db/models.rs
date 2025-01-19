@@ -59,13 +59,14 @@ pub struct FilePathWithBlobId {
     pub blob_id: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Type)]
+ #[derive(Debug, PartialEq, Eq, Type, Clone)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
-pub enum FileState {
+pub enum VirtualFileState {
     New,
     Dirty,
     Ok,
     NeedsCheck,
+    Deleted,
 }
 
 
@@ -91,19 +92,19 @@ pub struct FileEqBlobCheck {
     pub last_result: bool,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct VirtualFile {
     pub path: String,
-    pub file_last_seen_id: Option<i64>,
-    pub file_last_seen_dttm: Option<i64>,
-    pub file_last_modified_dttm: Option<i64>,
-    pub file_size: Option<i64>,
-    pub local_has_blob: bool,
-    pub blob_id: Option<String>,
-    pub blob_size: Option<i64>,
-    pub last_file_eq_blob_check_dttm: Option<i64>,
-    pub last_file_eq_blob_result: bool,
-    pub state: Option<FileState>,
+    #[allow(dead_code)] pub file_last_seen_id: Option<i64>,
+    #[allow(dead_code)] pub file_last_seen_dttm: Option<i64>,
+    #[allow(dead_code)] pub file_last_modified_dttm: Option<i64>,
+    #[allow(dead_code)] pub file_size: Option<i64>,
+    #[allow(dead_code)] pub local_has_blob: bool,
+    #[allow(dead_code)] pub blob_id: Option<String>,
+    #[allow(dead_code)] pub blob_size: Option<i64>,
+    #[allow(dead_code)] pub last_file_eq_blob_check_dttm: Option<i64>,
+    #[allow(dead_code)] pub last_file_eq_blob_result: bool,
+    pub state: Option<VirtualFileState>,
 }
 
 #[derive(Debug)]

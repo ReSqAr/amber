@@ -82,12 +82,11 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
             }
         },
         Err(e) => {
-            let err = Error::ObserverError(format!(
+            return Some(Err(Error::ObserverError(format!(
                 "Failed to get modified time for {}: {}",
                 rel_path.display(),
                 e
-            ));
-            return Some(Err(err));
+            ))));
         }
     };
     Some(Ok(FileObservation {
