@@ -70,6 +70,7 @@ impl From<DbBlob> for Blob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
             blob_id: blob.blob_id,
+            blob_size: blob.blob_size,
             has_blob: blob.has_blob,
             valid_from: datetime_to_timestamp(&blob.valid_from),
         }
@@ -103,6 +104,7 @@ impl From<Blob> for DbBlob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
             blob_id: blob.blob_id,
+            blob_size: blob.blob_size,
             has_blob: blob.has_blob,
             valid_from: timestamp_to_datetime(&blob.valid_from),
         }
@@ -247,6 +249,7 @@ impl Invariable for MyServer {
             repo_id,
             blob_id,
             has_blob: true,
+            blob_size: content.len() as i64,
             valid_from: Utc::now(),
         };
         let sb = stream::iter(vec![b]);

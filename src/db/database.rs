@@ -1,7 +1,4 @@
-use crate::db::models::{
-    Blob, BlobId, CurrentRepository, File, FilePathWithBlobId, InputBlob, InputFile,
-    Repository,
-};
+use crate::db::models::{Blob, BlobId, CurrentRepository, File, FilePathWithBlobId, InputBlob, InputFile, Repository};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
@@ -131,12 +128,12 @@ impl Database {
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?, ?, ?)")
+                .map(|_| "(?, ?, ?, ?, ?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, blob_id, has_blob, valid_from) VALUES {}",
+                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -148,6 +145,7 @@ impl Database {
                     .bind(uuid)
                     .bind(&blob.repo_id)
                     .bind(&blob.blob_id)
+                    .bind(blob.blob_size)
                     .bind(blob.has_blob)
                     .bind(blob.valid_from);
             }
@@ -186,7 +184,7 @@ impl Database {
         self.stream(
             query(
                 "
-                SELECT uuid, repo_id, blob_id, has_blob, valid_from
+                SELECT uuid, repo_id, blob_id, blob_size, has_blob, valid_from
                 FROM blobs
                 WHERE id > ?",
             )
@@ -305,12 +303,12 @@ impl Database {
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?, ?, ?)")
+                .map(|_| "(?, ?, ?, ?, ?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, has_blob, valid_from) VALUES {}",
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -321,6 +319,7 @@ impl Database {
                     .bind(&file.uuid)
                     .bind(&file.repo_id)
                     .bind(&file.blob_id)
+                    .bind(file.blob_size)
                     .bind(file.has_blob)
                     .bind(file.valid_from)
             }
@@ -373,10 +372,7 @@ impl Database {
         .await
     }
 
-    pub fn target_filesystem_state(
-        &self,
-        repo_id: String,
-    ) -> DBOutputStream<FilePathWithBlobId> {
+    pub fn target_filesystem_state(&self, repo_id: String) -> DBOutputStream<FilePathWithBlobId> {
         self.stream(
             query(
                 "

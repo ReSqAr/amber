@@ -28,8 +28,9 @@ message Blob {
     string uuid = 1;
     string repo_id = 2;
     string blob_id = 3;
-    bool has_blob = 4;
-    google.protobuf.Timestamp valid_from = 5;
+    int64 blob_size = 4;
+    bool has_blob = 5;
+    google.protobuf.Timestamp valid_from = 6;
 }
 
 message MergeRepositoriesResponse {}

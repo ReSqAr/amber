@@ -50,6 +50,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let b = InputBlob {
             repo_id: local_repo_id.clone(),
             blob_id,
+            blob_size: content.len() as i64,
             has_blob: true,
             valid_from: chrono::Utc::now(),
         };

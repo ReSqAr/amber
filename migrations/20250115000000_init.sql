@@ -31,6 +31,7 @@ CREATE TABLE blobs
     uuid        TEXT UNIQUE NOT NULL,
     repo_id     TEXT        NOT NULL,
     blob_id     TEXT        NOT NULL,
+    blob_size   INTEGER     NOT NULL,
     has_blob    INTEGER     NOT NULL,
     valid_from  DATETIME    NOT NULL
 );
