@@ -1,4 +1,4 @@
-pub(crate) mod db;
+pub(crate) mod database;
 pub(crate) mod models;
 pub(crate) mod schema;
 

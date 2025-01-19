@@ -11,14 +11,14 @@ use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct DB {
+pub struct Database {
     pool: SqlitePool,
     chunk_size: usize,
 }
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
-impl DB {
+impl Database {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,

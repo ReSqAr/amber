@@ -1,4 +1,4 @@
-use crate::db::db::DB;
+use crate::db::database::Database;
 use crate::db::establish_connection;
 use crate::db::models::{Blob, BlobId, File, FilePathWithBlobId, Repository};
 use crate::db::schema::run_migrations;
@@ -18,7 +18,7 @@ use tokio::fs;
 pub(crate) struct LocalRepository {
     root: PathBuf,
     repo_id: String,
-    db: DB,
+    db: Database,
 }
 
 /// Recursively searches parent directories for the `.inv` folder to determine the repository root.
@@ -72,7 +72,7 @@ impl LocalRepository {
             .await
             .expect("failed to run migrations");
 
-        let db = DB::new(pool.clone());
+        let db = Database::new(pool.clone());
         let repo = db
             .get_or_create_current_repository()
             .await
@@ -115,7 +115,7 @@ impl LocalRepository {
             .await
             .context("failed to run migrations")?;
 
-        let db = DB::new(pool.clone());
+        let db = Database::new(pool.clone());
 
         db.setup_db().await?;
 
