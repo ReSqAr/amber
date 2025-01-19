@@ -103,7 +103,7 @@ pub struct VirtualFile {
     #[allow(dead_code)] pub blob_id: Option<String>,
     #[allow(dead_code)] pub blob_size: Option<i64>,
     #[allow(dead_code)] pub last_file_eq_blob_check_dttm: Option<i64>,
-    #[allow(dead_code)] pub last_file_eq_blob_result: bool,
+    #[allow(dead_code)] pub last_file_eq_blob_result: Option<bool>,
     pub state: Option<VirtualFileState>,
 }
 
@@ -115,5 +115,5 @@ pub struct InsertVirtualFile {
     pub file_last_modified_dttm: Option<i64>,
     pub file_size: Option<i64>,
     pub last_file_eq_blob_check_dttm: Option<i64>,
-    pub last_file_eq_blob_result: Option<bool>, // Option = option not to update
+    pub last_file_eq_blob_result: Option<bool>,
 }

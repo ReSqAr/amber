@@ -48,6 +48,6 @@ CREATE TABLE virtual_filesystem (
     blob_id                       TEXT,
     blob_size                     INTEGER,
     last_file_eq_blob_check_dttm  INTEGER,
-    last_file_eq_blob_result      BOOLEAN NOT NULL DEFAULT FALSE,
+    last_file_eq_blob_result      BOOLEAN,
     state                         TEXT
 );
