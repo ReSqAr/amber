@@ -156,14 +156,14 @@ impl Metadata for LocalRepository {
 impl Adder for LocalRepository {
     async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InputFile> + Unpin,
+        S: Stream<Item = crate::db::models::InsertFile> + Unpin,
     {
         self.db.add_files(s).await
     }
 
     async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InputBlob> + Unpin,
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin,
     {
         self.db.add_blobs(s).await
     }

@@ -2,7 +2,7 @@ use futures::stream;
 use std::path::PathBuf;
 use tokio::{fs, io};
 
-use crate::db::models::{InputBlob, InputFile};
+use crate::db::models::{InsertBlob, InsertFile};
 use crate::repository::local_repository::LocalRepository;
 use sha2::{Digest, Sha256};
 use tokio::fs::File;
@@ -47,14 +47,14 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let valid_from = chrono::Utc::now();
-    let f = InputFile {
+    let f = InsertFile {
         path,
         blob_id: Some(blob_id.clone()),
         valid_from,
     };
     let sf = stream::iter(vec![f]);
     local_repository.add_files(sf).await?;
-    let b = InputBlob {
+    let b = InsertBlob {
         repo_id: local_repository.repo_id().await?,
         blob_id,
         blob_size,

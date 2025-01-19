@@ -1,5 +1,5 @@
 use crate::db;
-use crate::db::models::InputBlob;
+use crate::db::models::InsertBlob;
 use crate::repository::local_repository::LocalRepository;
 use crate::transport::server::invariable::{
     Blob, DownloadRequest, DownloadResponse, File,
@@ -245,7 +245,7 @@ impl Invariable for MyServer {
             .repo_id()
             .await?;
 
-        let b = InputBlob {
+        let b = InsertBlob {
             repo_id,
             blob_id,
             has_blob: true,

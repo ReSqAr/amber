@@ -1,4 +1,4 @@
-use crate::db::models::{BlobId, FilePathWithBlobId, InputBlob};
+use crate::db::models::{BlobId, FilePathWithBlobId, InsertBlob};
 use crate::transport::server::invariable::invariable_client::InvariableClient;
 use crate::transport::server::invariable::{
     DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
@@ -47,7 +47,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         file.write_all(&content).await?;
         file.sync_all().await?;
 
-        let b = InputBlob {
+        let b = InsertBlob {
             repo_id: local_repo_id.clone(),
             blob_id,
             blob_size: content.len() as i64,

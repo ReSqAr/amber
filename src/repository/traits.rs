@@ -17,11 +17,11 @@ pub trait Metadata {
 pub trait Adder {
     async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InputFile> + Unpin;
+        S: Stream<Item = crate::db::models::InsertFile> + Unpin;
 
     async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InputBlob> + Unpin;
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin;
 }
 
 #[derive(Debug)]

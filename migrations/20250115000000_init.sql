@@ -35,3 +35,19 @@ CREATE TABLE blobs
     has_blob    INTEGER     NOT NULL,
     valid_from  DATETIME    NOT NULL
 );
+
+-- table: virtual_filesystem
+CREATE TABLE virtual_filesystem (
+    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+    path                          TEXT UNIQUE NOT NULL,
+    file_last_seen_id             INTEGER,
+    file_last_seen_dttm           INTEGER,
+    file_last_modified_dttm       INTEGER,
+    file_size                     INTEGER,
+    local_has_blob                BOOLEAN NOT NULL DEFAULT FALSE,
+    blob_id                       TEXT,
+    blob_size                     INTEGER,
+    last_file_eq_blob_check_dttm  INTEGER,
+    last_file_eq_blob_result      BOOLEAN NOT NULL DEFAULT FALSE,
+    state                         TEXT
+);
