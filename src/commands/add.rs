@@ -52,7 +52,7 @@ pub async fn add_file(path: String) -> Result<(), Box<dyn std::error::Error>> {
     let sf = stream::iter(vec![f]);
     local_repository.add_files(sf).await?;
     let b = InputBlob {
-        repo_id: local_repository.repo_id(),
+        repo_id: local_repository.repo_id().await?,
         object_id,
         has_blob: true,
         valid_from,

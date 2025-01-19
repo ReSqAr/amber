@@ -14,7 +14,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::{stream, FutureExt, TryStreamExt};
+use futures::{stream, TryStreamExt};
 use futures::{Stream, StreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
