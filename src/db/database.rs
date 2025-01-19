@@ -505,7 +505,7 @@ impl Database {
     ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static
     {
         let pool = self.pool.clone();
-        input_stream.then(move |message: Message<Observation>| {
+        input_stream.then(move |message: Message<Observation>| { // TODO: use chunked + flush on Message::Shutdown
             let pool = pool.clone();
             Box::pin(async move {
                 let observation = match message {
