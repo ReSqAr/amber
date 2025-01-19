@@ -445,10 +445,56 @@ impl Database {
             ;
         ";
 
-        // Execute the query
-        sqlx::query(query).execute(&self.pool).await?;
+        let result = sqlx::query(query).execute(&self.pool).await?;
+        debug!(
+            "refresh_virtual_filesystem: rows affected={}",
+            result.rows_affected()
+        );
 
         Ok(())
+    }
+    pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
+        let query = "
+            DELETE FROM virtual_filesystem
+            WHERE file_last_seen_id IS NOT NULL AND file_last_seen_id != ? AND blob_id IS NULL;
+        ";
+
+        let result = sqlx::query(query)
+            .bind(last_seen_id)
+            .execute(&self.pool)
+            .await?;
+        debug!(
+            "cleanup_virtual_filesystem: rows affected={}",
+            result.rows_affected()
+        );
+
+        Ok(())
+    }
+
+    pub async fn select_deleted_files_on_virtual_filesystem(
+        &self,
+        last_seen_id: i64,
+    ) -> DBOutputStream<'static, VirtualFile> {
+        self.stream(
+            query(
+                "
+                SELECT
+                    path,
+                    file_last_seen_id,
+                    file_last_seen_dttm,
+                    file_last_modified_dttm,
+                    file_size,
+                    local_has_blob,
+                    blob_id,
+                    blob_size,
+                    last_file_eq_blob_check_dttm,
+                    last_file_eq_blob_result,
+                    state
+                FROM virtual_filesystem
+                WHERE (file_last_seen_id != ? OR file_last_seen_id IS NULL) AND local_has_blob;",
+            )
+            .bind(last_seen_id),
+        )
     }
 
     pub async fn add_virtual_filesystem_observations(
@@ -548,16 +594,16 @@ impl Database {
                     },
                 };
 
-                let result =  sqlx::query_as::<_, VirtualFile>(query)
-                        .bind(ivf.path.clone())
-                        .bind(ivf.file_last_seen_id)
-                        .bind(ivf.file_last_seen_dttm)
-                        .bind(ivf.file_last_modified_dttm)
-                        .bind(ivf.file_size)
-                        .bind(ivf.last_file_eq_blob_check_dttm)
-                        .bind(ivf.last_file_eq_blob_result)
-                        .fetch_one(&pool)
-                        .await;
+                let result = sqlx::query_as::<_, VirtualFile>(query)
+                    .bind(ivf.path.clone())
+                    .bind(ivf.file_last_seen_id)
+                    .bind(ivf.file_last_seen_dttm)
+                    .bind(ivf.file_last_modified_dttm)
+                    .bind(ivf.file_size)
+                    .bind(ivf.last_file_eq_blob_check_dttm)
+                    .bind(ivf.last_file_eq_blob_result)
+                    .fetch_one(&pool)
+                    .await;
 
                 if tx.send(result).await.is_err() {
                     break;
