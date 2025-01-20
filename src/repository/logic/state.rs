@@ -1,6 +1,6 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{Local, VirtualFilesystem};
-use crate::utils::control_flow::Message;
+use crate::utils::control_flow::{AltFlow, Flow};
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{Stream, StreamExt};
@@ -175,7 +175,7 @@ pub async fn state(
         }
 
         // close the channels once the stream is exhausted.
-        if let Err(e) = obs_tx_clone.send(Message::Shutdown).await {
+        if let Err(e) = obs_tx_clone.send(Flow::Shutdown).await {
             panic!("failed to send error to output stream: {}", e);
         }
     });
@@ -188,39 +188,47 @@ pub async fn state(
     let splitter_handle: JoinHandle<()> = tokio::spawn(async move {
         let mut db_output_stream = db_output_stream;
         while let Some(vf_result) = db_output_stream.next().await {
-            match vf_result {
-                Message::Shutdown => {
-                    if let Err(e) = needs_check_tx_clone.send(Message::Shutdown).await {
-                        panic!("failed to send shutdown to needs check stream: {}", e);
-                    }
-                }
-                Message::Data(Ok(vf)) => match vf.state {
-                    Some(VirtualFileState::New)
-                    | Some(VirtualFileState::Dirty)
-                    | Some(VirtualFileState::Ok)
-                    | Some(VirtualFileState::Deleted) => {
-                        debug!("state -> splitter: {:?} ready for output", vf.path);
-                        if let Err(e) = tx_clone.send(Ok(vf)).await {
-                            panic!("failed to send error to output stream: {}", e);
-                        }
-                    }
-                    Some(VirtualFileState::NeedsCheck) | None => {
-                        debug!("state -> splitter: {:?} needs check", vf.path);
-                        if needs_check_tx_clone.is_closed() {
-                            panic!("programming error: data with needs check was received after shutdown");
-                        }
+            let (has_shutdown, data) = match vf_result {
+                AltFlow::Data(data) => (false, data),
+                AltFlow::Shutdown(data) => (true, data),
+            };
+            match data {
+                Ok(vfs) => {
+                    for vf in vfs {
+                        match vf.state {
+                            Some(VirtualFileState::New)
+                            | Some(VirtualFileState::Dirty)
+                            | Some(VirtualFileState::Ok)
+                            | Some(VirtualFileState::Deleted) => {
+                                debug!("state -> splitter: {:?} ready for output", vf.path);
+                                if let Err(e) = tx_clone.send(Ok(vf)).await {
+                                    panic!("failed to send error to output stream: {}", e);
+                                }
+                            }
+                            Some(VirtualFileState::NeedsCheck) | None => {
+                                debug!("state -> splitter: {:?} needs check", vf.path);
+                                if needs_check_tx_clone.is_closed() {
+                                    panic!("programming error: data with needs check was received after shutdown");
+                                }
 
-                        if let Err(e) = needs_check_tx_clone.send(vf.into()).await {
-                            if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                                panic!("failed to send error to output stream: {}", e_send);
+                                if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
+                                    if let Err(e_send) = tx_clone.send(Err(e.into())).await {
+                                        panic!("failed to send error to output stream: {}", e_send);
+                                    }
+                                }
                             }
                         }
                     }
-                },
-                Message::Data(Err(e)) => {
+                }
+                Err(e) => {
                     if let Err(e_send) = tx_clone.send(Err(e.into())).await {
                         panic!("failed to send error to output stream: {}", e_send);
                     }
+                }
+            }
+            if has_shutdown {
+                if let Err(e) = needs_check_tx_clone.send(Flow::Shutdown).await {
+                    panic!("failed to send shutdown to needs check stream: {}", e);
                 }
             }
         }
@@ -237,7 +245,7 @@ pub async fn state(
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
         while let Some(vf_msg) = needs_check_rx.recv().await {
             match vf_msg {
-                Message::Data(vf) => match check(&vfs_clone, vf).await {
+                Flow::Data(vf) => match check(&vfs_clone, vf).await {
                     Ok(observation) => {
                         if let Err(e) = obs_tx_clone.send(observation.into()).await {
                             if let Err(e_send) = tx_clone.send(Err(e.into())).await {
@@ -251,7 +259,7 @@ pub async fn state(
                         }
                     }
                 },
-                Message::Shutdown => {
+                Flow::Shutdown => {
                     drop(needs_check_tx_clone);
                     break;
                 }

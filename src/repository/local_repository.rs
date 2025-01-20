@@ -9,7 +9,7 @@ use crate::repository::traits::{
     Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
-use crate::utils::control_flow::Message;
+use crate::utils::control_flow::{AltFlow, Flow};
 use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
@@ -300,8 +300,8 @@ impl VirtualFilesystem for LocalRepository {
 
     async fn add_observations(
         &self,
-        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static
+        input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = AltFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
     {
         self.db
             .add_virtual_filesystem_observations(input_stream)

@@ -2,7 +2,7 @@ use crate::db::models::{
     Blob, BlobId, BlobWithPaths, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
     FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
 };
-use crate::utils::control_flow::Message;
+use crate::utils::control_flow::{AltFlow, Flow};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
@@ -524,21 +524,30 @@ impl Database {
 
     pub async fn add_virtual_filesystem_observations(
         &self,
-        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static
+        input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = AltFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
     {
         let pool = self.pool.clone();
-        input_stream.then(move |message: Message<Observation>| { // TODO: use chunked + flush on Message::Shutdown
+        input_stream.ready_chunks(self.chunk_size).then(move |chunk: Vec<Flow<Observation>>| {
             let pool = pool.clone();
             Box::pin(async move {
-                let observation = match message {
-                    Message::Data(observation) => observation,
-                    Message::Shutdown => {
-                        return Message::Shutdown
+                let shutting_down = chunk.iter().any(
+                    |message| matches!(message, Flow::Shutdown)
+                );
+                let observations: Vec<_> = chunk.iter().filter_map(
+                    |message| match message {
+                        Flow::Data(observation) => Some(observation),
+                        Flow::Shutdown => None,
                     }
-                };
+                ).collect();
+                let placeholders = observations
+                    .iter()
+                    .map(|_| "(?, ?, ?, ?, ?, ?, ?, 'new')")
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
-                let query = "
+
+                let query_str = format!("
                     INSERT INTO virtual_filesystem (
                         path,
                         file_last_seen_id,
@@ -549,7 +558,7 @@ impl Database {
                         last_file_eq_blob_result,
                         state
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'new')
+                    VALUES {}
                     ON CONFLICT(path) DO UPDATE SET
                         file_last_seen_id = COALESCE(excluded.file_last_seen_id, file_last_seen_id),
                         file_last_seen_dttm = COALESCE(excluded.file_last_seen_dttm, file_last_seen_dttm),
@@ -582,51 +591,58 @@ impl Database {
                         last_file_eq_blob_result,
                         state
                     ;
-                ";
+                ", placeholders);
 
-                let ivf: InsertVirtualFile = match observation {
-                    Observation::FileSeen(FileSeen {
-                                              path,
-                                              last_seen_id,
-                                              last_seen_dttm,
-                                              last_modified_dttm,
-                                              size,
-                                          }) => InsertVirtualFile {
-                        path: path.clone(),
-                        file_last_seen_id: last_seen_id.into(),
-                        file_last_seen_dttm: last_seen_dttm.into(),
-                        file_last_modified_dttm: last_modified_dttm.into(),
-                        file_size: size.into(),
-                        last_file_eq_blob_check_dttm: None,
-                        last_file_eq_blob_result: None,
-                    },
-                    Observation::FileEqBlobCheck(FileEqBlobCheck {
-                                                     path,
-                                                     last_check_dttm,
-                                                     last_result,
-                                                 }) => InsertVirtualFile {
-                        path: path.clone(),
-                        file_last_seen_id: None,
-                        file_last_seen_dttm: None,
-                        file_last_modified_dttm: None,
-                        file_size: None,
-                        last_file_eq_blob_check_dttm: last_check_dttm.into(),
-                        last_file_eq_blob_result: last_result.into(),
-                    },
-                };
+                let mut query = sqlx::query_as::<_, VirtualFile>(&query_str);
+
+                for observation in observations {
+                    let ivf: InsertVirtualFile = match observation {
+                        Observation::FileSeen(FileSeen {
+                                                  path,
+                                                  last_seen_id,
+                                                  last_seen_dttm,
+                                                  last_modified_dttm,
+                                                  size,
+                                              }) => InsertVirtualFile {
+                            path: path.clone(),
+                            file_last_seen_id: (*last_seen_id).into(),
+                            file_last_seen_dttm: (*last_seen_dttm).into(),
+                            file_last_modified_dttm: (*last_modified_dttm).into(),
+                            file_size: (*size).into(),
+                            last_file_eq_blob_check_dttm: None,
+                            last_file_eq_blob_result: None,
+                        },
+                        Observation::FileEqBlobCheck(FileEqBlobCheck {
+                                                         path,
+                                                         last_check_dttm,
+                                                         last_result,
+                                                     }) => InsertVirtualFile {
+                            path: path.clone(),
+                            file_last_seen_id: None,
+                            file_last_seen_dttm: None,
+                            file_last_modified_dttm: None,
+                            file_size: None,
+                            last_file_eq_blob_check_dttm: (*last_check_dttm).into(),
+                            last_file_eq_blob_result: (*last_result).into(),
+                        },
+                    };
+
+                    query = query
+                        .bind(ivf.path.clone())
+                        .bind(ivf.file_last_seen_id)
+                        .bind(ivf.file_last_seen_dttm)
+                        .bind(ivf.file_last_modified_dttm)
+                        .bind(ivf.file_size)
+                        .bind(ivf.last_file_eq_blob_check_dttm)
+                        .bind(ivf.last_file_eq_blob_result);
+                }
 
 
-                sqlx::query_as::<_, VirtualFile>(query)
-                    .bind(ivf.path.clone())
-                    .bind(ivf.file_last_seen_id)
-                    .bind(ivf.file_last_seen_dttm)
-                    .bind(ivf.file_last_modified_dttm)
-                    .bind(ivf.file_size)
-                    .bind(ivf.last_file_eq_blob_check_dttm)
-                    .bind(ivf.last_file_eq_blob_result)
-                    .fetch_one(&pool)
-                    .await
-                    .into()
+                let result = query.fetch_all(&pool).await;
+                match shutting_down {
+                    true => AltFlow::Shutdown(result),
+                    false => AltFlow::Data(result)
+                }
             })
         })
     }

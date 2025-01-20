@@ -1,7 +1,7 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{BlobId, BlobWithPaths, FilePathWithBlobId, Observation, VirtualFile};
 use crate::utils::app_error::AppError;
-use crate::utils::control_flow::Message;
+use crate::utils::control_flow::{AltFlow, Flow};
 use futures::Stream;
 use std::future::Future;
 use std::path::PathBuf;
@@ -86,6 +86,6 @@ pub trait VirtualFilesystem {
 
     async fn add_observations(
         &self,
-        input_stream: impl Stream<Item = Message<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = Message<Result<VirtualFile, sqlx::Error>>> + Unpin + Send + 'static;
+        input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
+    ) -> impl Stream<Item = AltFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static;
 }

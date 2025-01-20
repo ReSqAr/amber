@@ -1,12 +1,15 @@
-use crate::utils::control_flow::Message::Data;
-
-pub enum Message<T> {
+pub enum Flow<T> {
     Data(T),
     Shutdown,
 }
 
-impl<T> From<T> for Message<T> {
+impl<T> From<T> for Flow<T> {
     fn from(value: T) -> Self {
-        Data(value)
+        Flow::Data(value)
     }
+}
+
+pub enum AltFlow<T> {
+    Data(T),
+    Shutdown(T),
 }
