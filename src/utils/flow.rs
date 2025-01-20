@@ -9,7 +9,7 @@ impl<T> From<T> for Flow<T> {
     }
 }
 
-pub enum AltFlow<T> {
+pub enum ExtFlow<T> {
     Data(T),
     Shutdown(T),
 }

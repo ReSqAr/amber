@@ -1,6 +1,6 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{Local, VirtualFilesystem};
-use crate::utils::flow::{AltFlow, Flow};
+use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{Stream, StreamExt};
@@ -133,7 +133,7 @@ pub async fn state(
        - output channel
     */
     let (obs_tx, obs_rx) = mpsc::channel(config.buffer_size);
-    let (needs_check_tx, mut needs_check_rx) = mpsc::channel(config.buffer_size);
+    let (needs_check_tx, needs_check_rx) = mpsc::channel(config.buffer_size);
     let (tx, rx) = mpsc::channel(config.buffer_size);
 
     // get the channel of the filesystem walker
@@ -189,8 +189,8 @@ pub async fn state(
         let mut db_output_stream = db_output_stream;
         while let Some(vf_result) = db_output_stream.next().await {
             let (has_shutdown, data) = match vf_result {
-                AltFlow::Data(data) => (false, data),
-                AltFlow::Shutdown(data) => (true, data),
+                ExtFlow::Data(data) => (false, data),
+                ExtFlow::Shutdown(data) => (true, data),
             };
             match data {
                 Ok(vfs) => {

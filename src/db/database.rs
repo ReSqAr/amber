@@ -2,7 +2,7 @@ use crate::db::models::{
     Blob, BlobId, BlobWithPaths, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
     FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
 };
-use crate::utils::flow::{AltFlow, Flow};
+use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
@@ -525,7 +525,7 @@ impl Database {
     pub async fn add_virtual_filesystem_observations(
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = AltFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
+    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
     {
         let pool = self.pool.clone();
         input_stream.ready_chunks(self.chunk_size).then(move |chunk: Vec<Flow<Observation>>| {
@@ -540,12 +540,19 @@ impl Database {
                         Flow::Shutdown => None,
                     }
                 ).collect();
+
+                if observations.is_empty() { // SQL is otherwise not valid
+                    return match shutting_down {
+                        true => ExtFlow::Shutdown(Ok(vec![])),
+                        false => ExtFlow::Data(Ok(vec![]))
+                    }
+                }
+
                 let placeholders = observations
                     .iter()
                     .map(|_| "(?, ?, ?, ?, ?, ?, ?, 'new')")
                     .collect::<Vec<_>>()
                     .join(", ");
-
 
                 let query_str = format!("
                     INSERT INTO virtual_filesystem (
@@ -640,8 +647,8 @@ impl Database {
 
                 let result = query.fetch_all(&pool).await;
                 match shutting_down {
-                    true => AltFlow::Shutdown(result),
-                    false => AltFlow::Data(result)
+                    true => ExtFlow::Shutdown(result),
+                    false => ExtFlow::Data(result)
                 }
             })
         })
