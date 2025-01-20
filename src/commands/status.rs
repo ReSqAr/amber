@@ -1,31 +1,62 @@
 use crate::repository::local_repository::LocalRepository;
-use log::{error, info};
+use log::{error};
+use std::collections::HashMap;
 
-use futures::StreamExt;
-
+use crate::db::models::VirtualFileState;
 use crate::repository::logic::state;
 use crate::repository::logic::state::StateConfig;
+use futures::StreamExt;
 
-
-pub async fn status() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn status(details: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
     let (handle, mut stream) = state::state(local_repository, StateConfig::default()).await?;
     let output_handle = tokio::spawn(async move {
+        let mut count = HashMap::new();
+
         while let Some(file_result) = stream.next().await {
             match file_result {
-                Ok(file_obs) => {
-                    info!("file observed: {:?}", file_obs);
+                Ok(file) => {
+                    let state = file.state.unwrap_or(VirtualFileState::NeedsCheck);
+                    *count.entry(state.clone()).or_insert(0) += 1;
+                    if details {
+                        match state {
+                            VirtualFileState::New => {
+                                println!("new: {}", file.path);
+                            }
+                            VirtualFileState::Deleted => {
+                                println!("deleted: {}", file.path);
+                            }
+                            VirtualFileState::Dirty | VirtualFileState::NeedsCheck => {
+                                println!("BROKEN: {}", file.path);
+                            }
+                            VirtualFileState::Ok => {}
+                        }
+                    }
                 }
                 Err(e) => {
-                    error!("Error during traversal: {}", e);
+                    error!("error during traversal: {}", e);
                 }
             }
         }
+
+        let new_count = *count.entry(VirtualFileState::New).or_default();
+        let deleted_count = *count.entry(VirtualFileState::Deleted).or_default();
+        let ok_count = *count.entry(VirtualFileState::Ok).or_default();
+        let dirty_count = *count.entry(VirtualFileState::Dirty).or_default();
+        let needs_check_count = *count.entry(VirtualFileState::NeedsCheck).or_default();
+        println!(
+            "new: {} deleted: {} ok: {} broken: {}",
+            new_count,
+            deleted_count,
+            ok_count,
+            dirty_count + needs_check_count
+        );
     });
 
     handle.await??;
     output_handle.await?;
+
 
     Ok(())
 }

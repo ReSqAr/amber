@@ -59,7 +59,7 @@ pub struct FilePathWithBlobId {
     pub blob_id: String,
 }
 
- #[derive(Debug, PartialEq, Eq, Type, Clone)]
+ #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum VirtualFileState {
     New,

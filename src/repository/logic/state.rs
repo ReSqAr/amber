@@ -1,5 +1,5 @@
 use tokio::fs;
-use log::{debug, error, info};
+use log::{debug, error};
 use tokio::task::JoinHandle;
 use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
@@ -125,7 +125,7 @@ pub async fn state(
     let last_seen_id = current_timestamp();
 
     vfs.refresh().await?;
-    info!("Virtual filesystem refreshed.");
+    debug!("virtual filesystem refreshed");
 
     /* Three channels:
        - obs: observations by the filesystem walker

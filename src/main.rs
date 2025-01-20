@@ -23,7 +23,10 @@ enum Commands {
     Add {
         path: String,
     },
-    Status {},
+    Status {
+        #[arg(long, default_value_t = false)]
+        details: bool
+    },
     Serve {
         #[arg(default_value_t = 50001)]
         port: u16,
@@ -58,8 +61,8 @@ async fn main() {
                 .await
                 .expect("Failed to add file to invariable");
         }
-        Commands::Status { } => {
-            commands::status::status()
+        Commands::Status { details } => {
+            commands::status::status(details)
                 .await
                 .expect("Failed to get status of invariable");
         }
