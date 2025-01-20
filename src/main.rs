@@ -21,7 +21,8 @@ struct Cli {
 enum Commands {
     Init {},
     Add {
-        path: String,
+        #[arg(long, default_value_t = false)]
+        dry_run: bool
     },
     Status {
         #[arg(long, default_value_t = false)]
@@ -56,8 +57,8 @@ async fn main() {
                 .await
                 .expect("Failed to initialize repository");
         }
-        Commands::Add { path } => {
-            commands::add::add_file(path)
+        Commands::Add { dry_run } => {
+            commands::add::add_file(dry_run)
                 .await
                 .expect("Failed to add file to invariable");
         }
