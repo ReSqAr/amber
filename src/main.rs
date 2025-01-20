@@ -6,6 +6,7 @@ mod repository;
 mod utils;
 
 use clap::{Parser, Subcommand};
+use tokio::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "invariant")]
@@ -54,6 +55,7 @@ async fn main() {
     env_logger::init();
 
     let cli = Cli::parse();
+    let start_time = Instant::now();
 
     match cli.command {
         Commands::Init {} => {
@@ -62,7 +64,7 @@ async fn main() {
                 .expect("Failed to initialize repository");
         }
         Commands::Add { dry_run } => {
-            commands::add::add_file(dry_run)
+            commands::add::add(dry_run)
                 .await
                 .expect("Failed to add file to invariable");
         }
@@ -93,4 +95,6 @@ async fn main() {
                 .expect("Failed to export");
         }
     }
+    let duration = start_time.elapsed();
+    println!("took: {:.2?}", duration);
 }

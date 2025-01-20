@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct StateConfig {
@@ -90,7 +91,12 @@ async fn close(
 ) -> Result<(), Error> {
     debug!("close: closing virtual filesystem");
 
+    let start_time = Instant::now();
     vfs.cleanup(last_seen_id).await?;
+    let duration = start_time.elapsed();
+    debug!("cleanup: {:.2?}", duration);
+
+    let start_time = Instant::now();
 
     let mut deleted_files = vfs.select_deleted_files(last_seen_id).await;
     while let Some(r) = deleted_files.next().await {
@@ -108,6 +114,9 @@ async fn close(
         }
     }
 
+    let duration = start_time.elapsed();
+    debug!("deleted: {:.2?}", duration);
+
     Ok(())
 }
 
@@ -124,8 +133,11 @@ pub async fn state(
     let root = vfs.root();
     let last_seen_id = current_timestamp();
 
+    let start_time = Instant::now();
     vfs.refresh().await?;
     debug!("virtual filesystem refreshed");
+    let duration = start_time.elapsed();
+    debug!("refreshed: {:.2?}", duration);
 
     /* Three channels:
        - obs: observations by the filesystem walker
