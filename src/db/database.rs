@@ -444,40 +444,60 @@ impl Database {
 
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "
-            INSERT OR REPLACE INTO virtual_filesystem (
-                path,
-                file_last_seen_id,
-                file_last_seen_dttm,
-                file_last_modified_dttm,
-                file_size,
-                local_has_blob,
-                blob_id,
-                blob_size,
-                last_file_eq_blob_check_dttm,
-                last_file_eq_blob_result,
-                state
-            )
-            SELECT
-                f.path,
-                vfs.file_last_seen_id,
-                vfs.file_last_seen_dttm,
-                vfs.file_last_modified_dttm,
-                vfs.file_size,
-                CASE
-                    WHEN a.blob_id IS NOT NULL THEN TRUE
-                    ELSE FALSE
-                    END AS local_has_blob,
-                a.blob_id,
-                a.blob_size,
-                vfs.last_file_eq_blob_check_dttm,
-                CASE
-                    WHEN vfs.blob_id = f.blob_id THEN vfs.last_file_eq_blob_result
-                    ELSE FALSE
-                    END,
-                vfs.state
-            FROM latest_filesystem_files f
-                 LEFT JOIN (SELECT blob_id, blob_size FROM latest_available_blobs INNER JOIN current_repository USING (repo_id)) a ON f.blob_id = a.blob_id
-                 LEFT JOIN virtual_filesystem vfs ON vfs.path = f.path;
+                INSERT OR REPLACE INTO virtual_filesystem (
+                    path,
+                    file_last_seen_id,
+                    file_last_seen_dttm,
+                    file_last_modified_dttm,
+                    file_size,
+                    local_has_blob,
+                    blob_id,
+                    blob_size,
+                    last_file_eq_blob_check_dttm,
+                    last_file_eq_blob_result,
+                    state
+                )
+                WITH
+                    locally_available_blobs AS (
+                        SELECT
+                            blob_id,
+                            blob_size
+                        FROM latest_available_blobs
+                            INNER JOIN current_repository USING (repo_id)
+                    ),
+                    all_files AS (
+                        SELECT
+                            path,
+                            CASE
+                                WHEN a.blob_id IS NOT NULL THEN TRUE
+                                ELSE FALSE
+                                END AS local_has_blob,
+                            f.blob_id,
+                            blob_size
+                        FROM latest_filesystem_files f
+                            LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
+                )
+                SELECT
+                    a.path,
+                    vfs.file_last_seen_id,
+                    vfs.file_last_seen_dttm,
+                    vfs.file_last_modified_dttm,
+                    vfs.file_size,
+                    a.local_has_blob,
+                    a.blob_id,
+                    a.blob_size,
+                    vfs.last_file_eq_blob_check_dttm,
+                    CASE
+                        WHEN vfs.blob_id = a.blob_id THEN vfs.last_file_eq_blob_result
+                        ELSE FALSE
+                        END,
+                    vfs.state
+                FROM all_files a
+                     LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
+                WHERE
+                    a.blob_id IS DISTINCT FROM vfs.blob_id
+                    OR a.local_has_blob IS DISTINCT FROM vfs.local_has_blob
+                ;
      ";
 
         let result = sqlx::query(query).execute(&self.pool).await?;
