@@ -1,7 +1,7 @@
 use crate::db::models::Blob as DbBlob;
 use crate::db::models::File as DbFile;
 use crate::db::models::Repository as DbRepository;
-use crate::repository::grpc::Client;
+use crate::repository::grpc::GRPCClient;
 use crate::repository::local_repository::LocalRepository;
 use crate::repository::logic::sync;
 use crate::repository::traits::{LastIndicesSyncer, Metadata};
@@ -10,8 +10,7 @@ use log::{debug, info};
 
 pub async fn sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local = LocalRepository::new(None).await?;
-
-    let remote = Client::connect(format!("http://127.0.0.1:{}", port)).await?;
+    let remote = GRPCClient::connect(format!("http://127.0.0.1:{}", port)).await?;
 
     let local_repo_id = local.repo_id().await?;
     debug!("local repo_id={}", local_repo_id);

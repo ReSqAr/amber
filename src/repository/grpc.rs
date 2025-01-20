@@ -17,11 +17,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
-pub(crate) struct Client {
+pub(crate) struct GRPCClient {
     client: Arc<RwLock<InvariableClient<tonic::transport::Channel>>>,
 }
 
-impl Client {
+impl GRPCClient {
     pub fn new(client: InvariableClient<tonic::transport::Channel>) -> Self {
         Self {
             client: Arc::new(client.into()),
@@ -37,7 +37,7 @@ impl Client {
     }
 }
 
-impl Metadata for Client {
+impl Metadata for GRPCClient {
     async fn repo_id(&self) -> Result<String, AppError> {
         let repo_id_request = tonic::Request::new(RepositoryIdRequest {});
         let remote_repo = self
@@ -51,7 +51,7 @@ impl Metadata for Client {
     }
 }
 
-impl LastIndicesSyncer for Client {
+impl LastIndicesSyncer for GRPCClient {
     async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
         let LookupLastIndicesResponse { file, blob } = self
             .client
@@ -75,7 +75,7 @@ impl LastIndicesSyncer for Client {
     }
 }
 
-impl Syncer<DbRepository> for Client {
+impl Syncer<DbRepository> for GRPCClient {
     fn select(
         &self,
         _params: (),
@@ -109,7 +109,7 @@ impl Syncer<DbRepository> for Client {
     }
 }
 
-impl Syncer<DbFile> for Client {
+impl Syncer<DbFile> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
@@ -143,7 +143,7 @@ impl Syncer<DbFile> for Client {
     }
 }
 
-impl Syncer<DbBlob> for Client {
+impl Syncer<DbBlob> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
