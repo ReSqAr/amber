@@ -1,7 +1,7 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{BlobId, BlobWithPaths, FilePathWithBlobId, Observation, VirtualFile};
 use crate::utils::app_error::AppError;
-use crate::utils::control_flow::{AltFlow, Flow};
+use crate::utils::flow::{AltFlow, Flow};
 use futures::Stream;
 use std::future::Future;
 use std::path::PathBuf;

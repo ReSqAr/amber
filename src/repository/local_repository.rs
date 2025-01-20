@@ -9,7 +9,7 @@ use crate::repository::traits::{
     Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
-use crate::utils::control_flow::{AltFlow, Flow};
+use crate::utils::flow::{AltFlow, Flow};
 use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;

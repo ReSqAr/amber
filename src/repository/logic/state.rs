@@ -1,6 +1,6 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{Local, VirtualFilesystem};
-use crate::utils::control_flow::{AltFlow, Flow};
+use crate::utils::flow::{AltFlow, Flow};
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{Stream, StreamExt};

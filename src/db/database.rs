@@ -2,7 +2,7 @@ use crate::db::models::{
     Blob, BlobId, BlobWithPaths, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
     FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
 };
-use crate::utils::control_flow::{AltFlow, Flow};
+use crate::utils::flow::{AltFlow, Flow};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
