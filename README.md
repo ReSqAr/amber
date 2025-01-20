@@ -1,7 +1,7 @@
 # PROJECT MANAGEMENT
 - sync (done)
 - add/status/missing, needs:
-  - parallel & batch processing for file checks, file hashing
+  - parallel & batch processing for file checks, file hashing (done)
 - remote add
 - pull/push
     - SSHRepository: ssh + call + GRPC

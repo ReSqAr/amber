@@ -444,30 +444,41 @@ impl Database {
 
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "
-            INSERT INTO virtual_filesystem (path, local_has_blob, blob_id, blob_size, last_file_eq_blob_result)
+            INSERT OR REPLACE INTO virtual_filesystem (
+                path,
+                file_last_seen_id,
+                file_last_seen_dttm,
+                file_last_modified_dttm,
+                file_size,
+                local_has_blob,
+                blob_id,
+                blob_size,
+                last_file_eq_blob_check_dttm,
+                last_file_eq_blob_result,
+                state
+            )
             SELECT
                 f.path,
+                vfs.file_last_seen_id,
+                vfs.file_last_seen_dttm,
+                vfs.file_last_modified_dttm,
+                vfs.file_size,
                 CASE
                     WHEN a.blob_id IS NOT NULL THEN TRUE
                     ELSE FALSE
                     END AS local_has_blob,
                 a.blob_id,
-                b.blob_size,
-                FALSE
-            FROM latest_filesystem_files f
-                     LEFT JOIN latest_available_blobs a ON f.blob_id = a.blob_id
-                     LEFT JOIN blobs b ON f.blob_id = b.blob_id
-            WHERE a.repo_id = (SELECT repo_id FROM current_repository LIMIT 1)
-            ON CONFLICT(path) DO UPDATE SET
-                local_has_blob = excluded.local_has_blob,
-                blob_id = excluded.blob_id,
-                blob_size = excluded.blob_size,
-                last_file_eq_blob_result = CASE
-                    WHEN blob_id = excluded.blob_id THEN last_file_eq_blob_result
+                a.blob_size,
+                vfs.last_file_eq_blob_check_dttm,
+                CASE
+                    WHEN vfs.blob_id = f.blob_id THEN vfs.last_file_eq_blob_result
                     ELSE FALSE
-                END
-            ;
-        ";
+                    END,
+                vfs.state
+            FROM latest_filesystem_files f
+                 LEFT JOIN (SELECT blob_id, blob_size FROM latest_available_blobs INNER JOIN current_repository USING (repo_id)) a ON f.blob_id = a.blob_id
+                 LEFT JOIN virtual_filesystem vfs ON vfs.path = f.path;
+     ";
 
         let result = sqlx::query(query).execute(&self.pool).await?;
         debug!(
