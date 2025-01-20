@@ -1,5 +1,4 @@
 use crate::db::models::{InsertBlob, InsertFile};
-use crate::repository::local_repository::LocalRepository;
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::sha256;
 use async_lock::Mutex;
@@ -13,7 +12,7 @@ use uuid::Uuid;
 pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
 
 pub(crate) async fn blobify(
-    local_repository: &LocalRepository,
+    local_repository: &(impl Local + Metadata),
     path: String,
     dry_run: bool,
     blob_locks: BlobLockMap,

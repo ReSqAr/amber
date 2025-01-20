@@ -6,7 +6,14 @@ use tokio_stream::StreamExt;
 pub async fn missing(files_only: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
-    let mut missing_blobs = local_repository.missing();
+    list_missing_blobs(local_repository, files_only).await
+}
+
+pub async fn list_missing_blobs(
+    repository: impl Missing,
+    files_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut missing_blobs = repository.missing();
 
     let mut count_files = 0usize;
     let mut count_blobs = 0usize;

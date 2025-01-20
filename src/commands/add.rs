@@ -3,7 +3,7 @@ use crate::repository::local_repository::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::state::{Error, StateConfig};
 use crate::repository::logic::{blobify, state};
-use crate::repository::traits::{Adder, Local};
+use crate::repository::traits::{Adder, Local, Metadata, VirtualFilesystem};
 use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
@@ -13,14 +13,21 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub async fn add_file(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let concurrency = 10;
-
+pub async fn add(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
+
+    add_files(local_repository, dry_run).await
+}
+
+pub async fn add_files(
+    repository: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Sync + Send + 'static,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let concurrency = 10;
 
     let (file_tx, file_rx) = mpsc::channel(100);
     let db_file_handle = {
-        let local_repository = local_repository.clone();
+        let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
                 .add_files(ReceiverStream::new(file_rx))
@@ -29,7 +36,7 @@ pub async fn add_file(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     };
     let (blob_tx, blob_rx) = mpsc::channel(100);
     let db_blob_handle = {
-        let local_repository = local_repository.clone();
+        let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
                 .add_blobs(ReceiverStream::new(blob_rx))
@@ -37,11 +44,10 @@ pub async fn add_file(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
-    fs::create_dir_all(&local_repository.staging_path())
+    fs::create_dir_all(&repository.staging_path())
         .await
         .context("unable to create staging directory")?;
-    let (state_handle, stream) =
-        state::state(local_repository.clone(), StateConfig::default()).await?;
+    let (state_handle, stream) = state::state(repository.clone(), StateConfig::default()).await?;
 
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
         let state = file_result.state.clone();
@@ -57,7 +63,7 @@ pub async fn add_file(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
             tokio_stream::StreamExt::map(stream, |file_result: Result<VirtualFile, Error>| {
                 let file_tx_clone = file_tx_clone.clone();
                 let blob_tx_clone = blob_tx_clone.clone();
-                let local_repository_clone = local_repository.clone();
+                let local_repository_clone = repository.clone();
                 let blob_locks_clone = blob_locks.clone();
                 async move {
                     let path = file_result?.path;

@@ -5,12 +5,19 @@ use std::collections::HashMap;
 use crate::db::models::VirtualFileState;
 use crate::repository::logic::state;
 use crate::repository::logic::state::StateConfig;
+use crate::repository::traits::{Adder, Local, Metadata, VirtualFilesystem};
 use futures::StreamExt;
 
 pub async fn status(details: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
-    let (handle, mut stream) = state::state(local_repository, StateConfig::default()).await?;
+    show_status(local_repository, details).await
+}
+pub async fn show_status(
+    repository: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Sync + Send + 'static,
+    details: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (handle, mut stream) = state::state(repository, StateConfig::default()).await?;
     let mut count = HashMap::new();
 
     while let Some(file_result) = stream.next().await {
