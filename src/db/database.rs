@@ -76,7 +76,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.chunk_size);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -123,7 +123,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.chunk_size);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
