@@ -3,7 +3,7 @@ use crate::repository::traits::{Local, VirtualFilesystem};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
-use futures::{Stream, StreamExt};
+use futures::{future, Stream, StreamExt};
 use log::{debug, error};
 use std::os::unix::fs::MetadataExt;
 use thiserror::Error;
@@ -243,9 +243,26 @@ pub async fn state(
     let obs_tx_clone = obs_tx.clone();
     let needs_check_tx_clone = needs_check_tx.clone();
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(vf_msg) = needs_check_rx.recv().await {
-            match vf_msg {
-                Flow::Data(vf) => match check(&vfs_clone, vf).await {
+        ReceiverStream::new(needs_check_rx)
+            .take_while(|message| future::ready(matches!(message, Flow::Data(_))))
+            .filter_map(|message| {
+                future::ready(match message {
+                    Flow::Data(x) => Some(x),
+                    _ => None, // This branch won't actually be hit due to take_while
+                })
+            })
+            .map(|vf| {
+                let vfs_clone = vfs_clone.clone();
+                async move {
+                    match check(&vfs_clone, vf).await {
+                        Ok(observation) => Ok(observation),
+                        Err(e) => Err(e),
+                    }
+                }
+            })
+            .buffer_unordered(config.buffer_size)
+            .for_each(|result| async {
+                match result {
                     Ok(observation) => {
                         if let Err(e) = obs_tx_clone.send(observation.into()).await {
                             if let Err(e_send) = tx_clone.send(Err(e.into())).await {
@@ -258,15 +275,12 @@ pub async fn state(
                             panic!("failed to send error to output stream: {}", e_send);
                         }
                     }
-                },
-                Flow::Shutdown => {
-                    drop(needs_check_tx_clone);
-                    break;
                 }
-            }
-        }
+            })
+            .await;
 
-        // Close the channels once the stream is exhausted.
+        // close the channels once the stream is exhausted.
+        drop(needs_check_tx_clone); // note: this is how we break the dependency loop
         drop(obs_tx_clone);
     });
 
