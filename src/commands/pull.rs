@@ -1,16 +1,14 @@
 use crate::db::models::{BlobId, FilePathWithBlobId, InsertBlob};
-use crate::transport::server::invariable::invariable_client::InvariableClient;
-use crate::transport::server::invariable::{
-    DownloadRequest, RepositoryIdRequest, RepositoryIdResponse,
-};
+use crate::grpc::server::invariable::invariable_client::InvariableClient;
+use crate::grpc::server::invariable::{DownloadRequest, RepositoryIdRequest, RepositoryIdResponse};
+use crate::repository::local_repository::LocalRepository;
+use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
 use anyhow::{Context, Result};
 use futures::{stream, StreamExt};
 use log::{debug, info};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use crate::repository::local_repository::LocalRepository;
-use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -28,7 +26,8 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     } = client.repository_id(repo_id_request).await?.into_inner();
     info!("remote repo_id={}", remote_repo_id);
 
-    let mut missing_blobs = local_repository.missing_blobs(remote_repo_id.clone(), local_repo_id.clone());
+    let mut missing_blobs =
+        local_repository.deprecated_missing_blobs(remote_repo_id.clone(), local_repo_id.clone());
     while let Some(next) = missing_blobs.next().await {
         let BlobId { blob_id } = next?;
         let content = client
@@ -66,7 +65,9 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn reconcile_filesystem(local_repository: &LocalRepository) -> Result<(), Box<dyn std::error::Error>> {
+async fn reconcile_filesystem(
+    local_repository: &LocalRepository,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut desired_state = local_repository.target_filesystem_state();
     while let Some(next) = desired_state.next().await {
         let FilePathWithBlobId {

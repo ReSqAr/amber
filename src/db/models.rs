@@ -1,6 +1,7 @@
 use chrono::prelude::{DateTime, Utc};
-use sqlx::FromRow;
+use sqlx::sqlite::SqliteRow;
 use sqlx::Type;
+use sqlx::{FromRow, Row};
 
 #[derive(Debug, FromRow)]
 pub struct CurrentRepository {
@@ -53,13 +54,29 @@ pub struct BlobId {
     pub blob_id: String,
 }
 
+#[derive(Debug)]
+pub struct BlobWithPaths {
+    pub blob_id: String,
+    pub paths: Vec<String>,
+}
+
+impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
+    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
+        let blob_id: String = row.try_get("blob_id")?;
+        let paths_json: String = row.try_get("paths")?;
+        let paths: Vec<String> = serde_json::from_str(&paths_json)
+            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {}", e).into()))?;
+        Ok(BlobWithPaths { blob_id, paths })
+    }
+}
+
 #[derive(Debug, FromRow)]
 pub struct FilePathWithBlobId {
     pub path: String,
     pub blob_id: String,
 }
 
- #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum VirtualFileState {
     New,
@@ -68,7 +85,6 @@ pub enum VirtualFileState {
     NeedsCheck,
     Deleted,
 }
-
 
 #[derive(Debug)]
 pub enum Observation {
@@ -95,15 +111,24 @@ pub struct FileEqBlobCheck {
 #[derive(Debug, FromRow, Clone)]
 pub struct VirtualFile {
     pub path: String,
-    #[allow(dead_code)] pub file_last_seen_id: Option<i64>,
-    #[allow(dead_code)] pub file_last_seen_dttm: Option<i64>,
-    #[allow(dead_code)] pub file_last_modified_dttm: Option<i64>,
-    #[allow(dead_code)] pub file_size: Option<i64>,
-    #[allow(dead_code)] pub local_has_blob: bool,
-    #[allow(dead_code)] pub blob_id: Option<String>,
-    #[allow(dead_code)] pub blob_size: Option<i64>,
-    #[allow(dead_code)] pub last_file_eq_blob_check_dttm: Option<i64>,
-    #[allow(dead_code)] pub last_file_eq_blob_result: Option<bool>,
+    #[allow(dead_code)]
+    pub file_last_seen_id: Option<i64>,
+    #[allow(dead_code)]
+    pub file_last_seen_dttm: Option<i64>,
+    #[allow(dead_code)]
+    pub file_last_modified_dttm: Option<i64>,
+    #[allow(dead_code)]
+    pub file_size: Option<i64>,
+    #[allow(dead_code)]
+    pub local_has_blob: bool,
+    #[allow(dead_code)]
+    pub blob_id: Option<String>,
+    #[allow(dead_code)]
+    pub blob_size: Option<i64>,
+    #[allow(dead_code)]
+    pub last_file_eq_blob_check_dttm: Option<i64>,
+    #[allow(dead_code)]
+    pub last_file_eq_blob_result: Option<bool>,
     pub state: Option<VirtualFileState>,
 }
 

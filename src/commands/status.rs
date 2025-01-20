@@ -1,5 +1,5 @@
 use crate::repository::local_repository::LocalRepository;
-use log::{error};
+use log::error;
 use std::collections::HashMap;
 
 use crate::db::models::VirtualFileState;

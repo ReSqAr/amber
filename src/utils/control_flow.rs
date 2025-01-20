@@ -10,4 +10,3 @@ impl<T> From<T> for Message<T> {
         Data(value)
     }
 }
-

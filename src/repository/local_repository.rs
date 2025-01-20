@@ -1,12 +1,12 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::establish_connection;
+use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobId, File, FilePathWithBlobId, Observation, Repository, VirtualFile,
+    Blob, BlobId, BlobWithPaths, File, FilePathWithBlobId, Observation, Repository, VirtualFile,
 };
-use crate::db::schema::run_migrations;
 use crate::repository::traits::{
-    Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Reconciler, Syncer,
-    SyncerParams, VirtualFilesystem,
+    Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Missing, Reconciler,
+    Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
 use crate::utils::control_flow::Message;
@@ -14,7 +14,7 @@ use anyhow::Context;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 #[derive(Clone)]
@@ -25,7 +25,7 @@ pub(crate) struct LocalRepository {
 }
 
 /// Recursively searches parent directories for the `.inv` folder to determine the repository root.
-async fn find_repository_root(start_path: &PathBuf) -> Result<PathBuf, anyhow::Error> {
+async fn find_repository_root(start_path: &Path) -> Result<PathBuf, anyhow::Error> {
     let mut current = start_path.canonicalize()?;
 
     loop {
@@ -154,6 +154,10 @@ impl Local for LocalRepository {
     fn blob_path(&self, blob_id: String) -> PathBuf {
         self.blobs_path().join(blob_id)
     }
+
+    fn staging_path(&self) -> PathBuf {
+        self.invariable_path().join("staging")
+    }
 }
 
 impl Metadata for LocalRepository {
@@ -162,17 +166,23 @@ impl Metadata for LocalRepository {
     }
 }
 
+impl Missing for LocalRepository {
+    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, AppError>> + Unpin + Send {
+        self.db.missing_blobs(self.repo_id.clone()).err_into()
+    }
+}
+
 impl Adder for LocalRepository {
     async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InsertFile> + Unpin,
+        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send + Sync,
     {
         self.db.add_files(s).await
     }
 
     async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin,
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send + Sync,
     {
         self.db.add_blobs(s).await
     }
@@ -205,8 +215,9 @@ impl Syncer<Repository> for LocalRepository {
     fn select(
         &self,
         _params: (),
-    ) -> impl Future<Output = impl Stream<Item = Result<Repository, AppError>> + Unpin + Send + 'static>
-    {
+    ) -> impl Future<
+        Output = impl Stream<Item = Result<Repository, AppError>> + Unpin + Send + 'static,
+    > + Send {
         self.db.select_repositories().map(|s| s.err_into())
     }
 
@@ -226,7 +237,7 @@ impl Syncer<File> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<File, AppError>> + Unpin + Send + 'static>
+    ) -> impl Future<Output = impl Stream<Item = Result<File, AppError>> + Unpin + Send + 'static> + Send
     {
         self.db.select_files(last_index).map(|s| s.err_into())
     }
@@ -247,7 +258,7 @@ impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<Blob, AppError>> + Unpin + Send + 'static>
+    ) -> impl Future<Output = impl Stream<Item = Result<Blob, AppError>> + Unpin + Send + 'static> + Send
     {
         self.db.select_blobs(last_index).map(|s| s.err_into())
     }
@@ -299,13 +310,13 @@ impl VirtualFilesystem for LocalRepository {
 }
 
 impl Deprecated for LocalRepository {
-    fn missing_blobs(
+    fn deprecated_missing_blobs(
         &self,
         source_repo_id: String,
         target_repo_id: String,
     ) -> impl Stream<Item = Result<BlobId, AppError>> + Unpin + Send {
         self.db
-            .missing_blobs(source_repo_id, target_repo_id)
+            .deprecated_missing_blobs(source_repo_id, target_repo_id)
             .err_into()
     }
 }

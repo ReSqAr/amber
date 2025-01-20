@@ -4,9 +4,9 @@ use std::fmt::Debug;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use std::path::PathBuf;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::task::JoinHandle;
 use thiserror::Error;
+use tokio::sync::mpsc::{self, Receiver};
+use tokio::task::JoinHandle;
 
 pub struct WalkerConfig {
     pub threads: usize,
@@ -27,13 +27,12 @@ impl Default for WalkerConfig {
 #[derive(Error, Debug)]
 pub(crate) enum Error {
     #[error("I/O error")]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
     #[error("walker error")]
-    IgnoreError(#[from] ignore::Error),
+    Ignore(#[from] ignore::Error),
     #[error("observer error")]
-    ObserverError(String),
+    Observer(String),
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileObservation {
@@ -43,14 +42,14 @@ pub struct FileObservation {
 }
 
 fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObservation, Error>> {
-    if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+    if !entry.file_type().is_some_and(|ft| ft.is_file()) {
         return None;
     }
 
     let rel_path = match entry.path().strip_prefix(root) {
         Ok(rel_path) => rel_path,
         Err(_) => {
-            return Some(Err(Error::ObserverError(format!(
+            return Some(Err(Error::Observer(format!(
                 "Cannot transform to relative path: {}",
                 entry.path().display()
             ))));
@@ -61,7 +60,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     let metadata = match entry.metadata() {
         Ok(meta) => meta,
         Err(e) => {
-            return Some(Err(Error::ObserverError(format!(
+            return Some(Err(Error::Observer(format!(
                 "Failed to get metadata for {}: {}",
                 rel_path.display(),
                 e
@@ -74,7 +73,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
         Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
             Ok(dur) => dur.as_secs() as i64,
             Err(e) => {
-                return Some(Err(Error::ObserverError(format!(
+                return Some(Err(Error::Observer(format!(
                     "SystemTime before UNIX_EPOCH for {}: {}",
                     rel_path.display(),
                     e
@@ -82,7 +81,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
             }
         },
         Err(e) => {
-            return Some(Err(Error::ObserverError(format!(
+            return Some(Err(Error::Observer(format!(
                 "Failed to get modified time for {}: {}",
                 rel_path.display(),
                 e
@@ -96,7 +95,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     }))
 }
 
-pub async fn walk<'a>(
+pub async fn walk(
     root_path: PathBuf,
     config: WalkerConfig,
 ) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>>
@@ -119,10 +118,7 @@ pub async fn walk<'a>(
         .overrides(override_builder.build()?);
 
     let walker = walk_builder.build_parallel();
-    let (tx, rx): (
-        Sender<Result<FileObservation, Error>>,
-        Receiver<Result<FileObservation, Error>>,
-    ) = mpsc::channel(config.max_buffer_size);
+    let (tx, rx) = mpsc::channel(config.max_buffer_size);
     let handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
         walker.run(|| {
             let root = root.clone();
@@ -130,8 +126,7 @@ pub async fn walk<'a>(
             Box::new(move |result| {
                 let obs = match result {
                     Ok(entry) => observe_dir_entry(&root, entry),
-                    Err(e) => Some(Err(Error::ObserverError(format!("Walk error: {}", e),
-                    ))),
+                    Err(e) => Some(Err(Error::Observer(format!("Walk error: {}", e)))),
                 };
                 if let Some(observation) = obs {
                     let _ = tx.blocking_send(observation);

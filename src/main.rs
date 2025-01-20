@@ -1,8 +1,8 @@
 mod commands;
 mod db;
 
+mod grpc;
 mod repository;
-mod transport;
 mod utils;
 
 use clap::{Parser, Subcommand};
@@ -22,11 +22,15 @@ enum Commands {
     Init {},
     Add {
         #[arg(long, default_value_t = false)]
-        dry_run: bool
+        dry_run: bool,
     },
     Status {
         #[arg(long, default_value_t = false)]
-        details: bool
+        details: bool,
+    },
+    Missing {
+        #[arg(long, default_value_t = false)]
+        files_only: bool,
     },
     Serve {
         #[arg(default_value_t = 50001)]
@@ -64,6 +68,11 @@ async fn main() {
         }
         Commands::Status { details } => {
             commands::status::status(details)
+                .await
+                .expect("Failed to get status of invariable");
+        }
+        Commands::Missing { files_only } => {
+            commands::missing::missing(files_only)
                 .await
                 .expect("Failed to get status of invariable");
         }

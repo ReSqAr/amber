@@ -1,7 +1,7 @@
 # PROJECT MANAGEMENT
 - sync (done)
-- add/status/missing
-- QOL: config/.inv ignored
+- add/status/missing, needs:
+  - parallel & batch processing for DB updates, file checks, file hashing
 - remote add
 - pull/push
     - SSHRepository: ssh + call + GRPC

@@ -1,18 +1,18 @@
-use tokio::fs;
-use log::{debug, error};
-use tokio::task::JoinHandle;
-use futures::{Stream, StreamExt};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_stream::wrappers::ReceiverStream;
-use tokio::sync::mpsc::error::SendError;
-use thiserror::Error;
-use std::os::unix::fs::MetadataExt;
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{Local, VirtualFilesystem};
 use crate::utils::control_flow::Message;
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
+use futures::{Stream, StreamExt};
+use log::{debug, error};
+use std::os::unix::fs::MetadataExt;
+use thiserror::Error;
+use tokio::fs;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::SendError;
+use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
+use tokio_stream::wrappers::ReceiverStream;
 
 pub struct StateConfig {
     buffer_size: usize,
@@ -31,20 +31,20 @@ impl Default for StateConfig {
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("I/O error: {0}")]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
     #[error("sqlx error: {0}")]
-    SQLXError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
     #[error("fs walker error: {0}")]
-    WalkerError(#[from] walker::Error),
+    Walker(#[from] walker::Error),
     #[error("observation send error: {0}")]
-    SendError(String),
+    Send(String),
     #[error("task execution failed: {0}")]
     TaskFailure(String),
 }
 
 impl<T> From<SendError<T>> for Error {
     fn from(value: SendError<T>) -> Self {
-        Error::SendError(value.to_string())
+        Error::Send(value.to_string())
     }
 }
 
@@ -132,15 +132,9 @@ pub async fn state(
        - needs_check: files which need to be looked at
        - output channel
     */
-    let (obs_tx, obs_rx) = mpsc::channel::<Message<Observation>>(config.buffer_size);
-    let (needs_check_tx, mut needs_check_rx): (
-        Sender<Message<VirtualFile>>,
-        Receiver<Message<VirtualFile>>,
-    ) = mpsc::channel(config.buffer_size);
-    let (tx, rx): (
-        Sender<Result<VirtualFile, Error>>,
-        Receiver<Result<VirtualFile, Error>>,
-    ) = mpsc::channel(config.buffer_size);
+    let (obs_tx, obs_rx) = mpsc::channel(config.buffer_size);
+    let (needs_check_tx, mut needs_check_rx) = mpsc::channel(config.buffer_size);
+    let (tx, rx) = mpsc::channel(config.buffer_size);
 
     // get the channel of the filesystem walker
     let (walker_handle, mut walker_rx) = walk(root, config.walker).await?;

@@ -1,5 +1,5 @@
 use crate::db::database::DBOutputStream;
-use crate::db::models::{BlobId, FilePathWithBlobId, Observation, VirtualFile};
+use crate::db::models::{BlobId, BlobWithPaths, FilePathWithBlobId, Observation, VirtualFile};
 use crate::utils::app_error::AppError;
 use crate::utils::control_flow::Message;
 use futures::Stream;
@@ -11,20 +11,25 @@ pub trait Local {
     fn invariable_path(&self) -> PathBuf;
     fn blobs_path(&self) -> PathBuf;
     fn blob_path(&self, blob_id: String) -> PathBuf;
+    fn staging_path(&self) -> PathBuf;
 }
 
 pub trait Metadata {
-    async fn repo_id(&self) -> Result<String, AppError>;
+    fn repo_id(&self) -> impl Future<Output = Result<String, AppError>> + Send;
+}
+
+pub trait Missing {
+    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, AppError>> + Unpin + Send;
 }
 
 pub trait Adder {
-    async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item = crate::db::models::InsertFile> + Unpin;
+        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send + Sync;
 
-    async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin;
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send + Sync;
 }
 
 #[derive(Debug)]
@@ -34,8 +39,9 @@ pub struct LastIndices {
 }
 
 pub trait LastIndicesSyncer {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError>;
-    async fn refresh(&self) -> Result<(), AppError>;
+    fn lookup(&self, repo_id: String)
+        -> impl Future<Output = Result<LastIndices, AppError>> + Send;
+    fn refresh(&self) -> impl Future<Output = Result<(), AppError>> + Send;
 }
 
 pub trait SyncerParams {
@@ -46,7 +52,7 @@ pub trait Syncer<T: SyncerParams> {
     fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Future<Output = impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static>;
+    ) -> impl Future<Output = impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static> + Send;
 
     fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
     where
@@ -62,7 +68,7 @@ pub trait Reconciler {
 //#[deprecated]
 pub trait Deprecated {
     //#[deprecated]
-    fn missing_blobs(
+    fn deprecated_missing_blobs(
         &self,
         source_repo_id: String,
         target_repo_id: String,
@@ -71,10 +77,7 @@ pub trait Deprecated {
 
 pub trait VirtualFilesystem {
     async fn refresh(&self) -> Result<(), sqlx::Error>;
-    fn cleanup(
-        &self,
-        last_seen_id: i64,
-    ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
+    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
     fn select_deleted_files(
         &self,

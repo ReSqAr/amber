@@ -1,128 +1,58 @@
 use crate::db;
 use crate::db::models::InsertBlob;
-use crate::repository::local_repository::LocalRepository;
-use crate::transport::server::invariable::{
-    Blob, DownloadRequest, DownloadResponse, File,
-    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+use crate::grpc::server::invariable::{
+    Blob, DownloadRequest, DownloadResponse, File, LookupLastIndicesRequest,
+    LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
 };
+use crate::repository::traits::{Adder, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer};
 use crate::utils::app_error::AppError;
 use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::Context;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::Utc;
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
-use futures::{stream, TryStreamExt};
 use futures::Stream;
+use futures::{stream, TryStreamExt};
 use invariable::invariable_server::Invariable;
 use invariable::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
-use prost_types::Timestamp;
 use std::pin::Pin;
 use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
-use crate::repository::traits::{Adder, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer};
 
 pub mod invariable {
     tonic::include_proto!("invariable");
 }
 
-fn datetime_to_timestamp(dt: &DateTime<Utc>) -> Option<Timestamp> {
-    Some(Timestamp {
-        seconds: dt.timestamp(),
-        nanos: dt.timestamp_subsec_nanos() as i32,
-    })
+pub struct GRPCServer<T> {
+    repository: T,
 }
 
-fn timestamp_to_datetime(ts: &Option<Timestamp>) -> DateTime<Utc> {
-    ts.and_then(|ts| Utc.timestamp_opt(ts.seconds, ts.nanos as u32).single())
-        .unwrap_or_default()
-}
-
-impl From<DbRepository> for Repository {
-    fn from(repo: DbRepository) -> Self {
-        Repository {
-            repo_id: repo.repo_id,
-            last_file_index: repo.last_file_index,
-            last_blob_index: repo.last_blob_index,
-        }
-    }
-}
-
-impl From<DbFile> for File {
-    fn from(file: DbFile) -> Self {
-        File {
-            uuid: file.uuid,
-            path: file.path,
-            blob_id: file.blob_id,
-            valid_from: datetime_to_timestamp(&file.valid_from),
-        }
-    }
-}
-
-impl From<DbBlob> for Blob {
-    fn from(blob: DbBlob) -> Self {
-        Blob {
-            uuid: blob.uuid,
-            repo_id: blob.repo_id,
-            blob_id: blob.blob_id,
-            blob_size: blob.blob_size,
-            has_blob: blob.has_blob,
-            valid_from: datetime_to_timestamp(&blob.valid_from),
-        }
-    }
-}
-
-impl From<Repository> for DbRepository {
-    fn from(repo: Repository) -> Self {
-        DbRepository {
-            repo_id: repo.repo_id,
-            last_file_index: repo.last_file_index,
-            last_blob_index: repo.last_blob_index,
-        }
-    }
-}
-impl From<File> for DbFile {
-    fn from(file: File) -> Self {
-        DbFile {
-            uuid: file.uuid,
-            path: file.path,
-            blob_id: file.blob_id,
-            valid_from: timestamp_to_datetime(&file.valid_from),
-        }
-    }
-}
-
-// Conversion from Blob to DbBlob
-impl From<Blob> for DbBlob {
-    fn from(blob: Blob) -> Self {
-        DbBlob {
-            uuid: blob.uuid,
-            repo_id: blob.repo_id,
-            blob_id: blob.blob_id,
-            blob_size: blob.blob_size,
-            has_blob: blob.has_blob,
-            valid_from: timestamp_to_datetime(&blob.valid_from),
-        }
-    }
-}
-
-pub struct MyServer {
-    repository: LocalRepository,
-}
-
-impl MyServer {
-    pub fn new(repository: LocalRepository) -> Self {
+impl<T> GRPCServer<T> {
+    pub fn new(repository: T) -> Self {
         Self { repository }
     }
 }
 
 #[tonic::async_trait]
-impl Invariable for MyServer {
+impl<T> Invariable for GRPCServer<T>
+where
+    T: Metadata
+        + Local
+        + Adder
+        + LastIndicesSyncer
+        + Syncer<DbRepository>
+        + Syncer<DbFile>
+        + Syncer<DbBlob>
+        + Sync
+        + Send
+        + 'static,
+{
     async fn repository_id(
         &self,
         _: Request<RepositoryIdRequest>,
@@ -177,11 +107,9 @@ impl Invariable for MyServer {
         &self,
         request: Request<LookupLastIndicesRequest>,
     ) -> Result<Response<LookupLastIndicesResponse>, Status> {
-        let LastIndices { file, blob } = self
-            .repository
-            .lookup(request.into_inner().repo_id)
-            .await?;
-        Ok(Response::new(LookupLastIndicesResponse {file, blob }))
+        let LastIndices { file, blob } =
+            self.repository.lookup(request.into_inner().repo_id).await?;
+        Ok(Response::new(LookupLastIndicesResponse { file, blob }))
     }
 
     type SelectRepositoriesStream =
@@ -191,7 +119,7 @@ impl Invariable for MyServer {
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = <LocalRepository as Syncer<DbRepository>>::select(&self.repository, ())
+        let stream = <T as Syncer<DbRepository>>::select(&self.repository, ())
             .await
             .err_into()
             .map_ok::<Repository, _>(DbRepository::into);
@@ -205,7 +133,7 @@ impl Invariable for MyServer {
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = <LocalRepository as Syncer<DbFile>>::select(&self.repository, last_index)
+        let stream = <T as Syncer<DbFile>>::select(&self.repository, last_index)
             .await
             .err_into()
             .map_ok::<File, _>(DbFile::into);
@@ -219,7 +147,7 @@ impl Invariable for MyServer {
         request: Request<SelectBlobsRequest>,
     ) -> Result<Response<Self::SelectBlobsStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = <LocalRepository as Syncer<DbBlob>>::select(&self.repository, last_index)
+        let stream = <T as Syncer<DbBlob>>::select(&self.repository, last_index)
             .await
             .err_into()
             .map_ok::<Blob, _>(DbBlob::into);
@@ -240,10 +168,7 @@ impl Invariable for MyServer {
         file.write_all(&content).await?;
         file.sync_all().await?;
 
-        let  repo_id  = self
-            .repository
-            .repo_id()
-            .await?;
+        let repo_id = self.repository.repo_id().await?;
 
         let b = InsertBlob {
             repo_id,

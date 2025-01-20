@@ -1,6 +1,6 @@
 use crate::db::models::{
-    Blob, BlobId, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId, FileSeen,
-    InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
+    Blob, BlobId, BlobWithPaths, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
+    FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
 };
 use crate::utils::control_flow::Message;
 use futures::stream::BoxStream;
@@ -390,7 +390,33 @@ impl Database {
         )
     }
 
-    pub fn missing_blobs(
+    pub(crate) fn missing_blobs(
+        &self,
+        repo_id: String,
+    ) -> impl Stream<Item = Result<BlobWithPaths, sqlx::Error>> + Unpin + Send + Sized {
+        self.stream(
+            query(
+                "
+                WITH filtered_blobs AS (
+                    SELECT blob_id
+                    FROM latest_available_blobs
+                    WHERE repo_id = ?
+                )
+                SELECT
+                    f.blob_id,
+                    json_group_array(f.path) AS paths
+                FROM latest_filesystem_files f
+                         LEFT JOIN filtered_blobs b
+                                   ON f.blob_id = b.blob_id
+                WHERE b.blob_id IS NULL
+                GROUP BY f.blob_id;
+            ",
+            )
+            .bind(repo_id),
+        )
+    }
+
+    pub fn deprecated_missing_blobs(
         &self,
         source_repo_id: String,
         target_repo_id: String,
@@ -451,10 +477,7 @@ impl Database {
 
         Ok(())
     }
-    pub async fn cleanup_virtual_filesystem(
-        &self,
-        last_seen_id: i64,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
         let query = "
         DELETE FROM virtual_filesystem
         WHERE file_last_seen_id IS NOT NULL AND file_last_seen_id != ? AND blob_id IS NULL;
