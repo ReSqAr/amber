@@ -1,5 +1,5 @@
 use crate::db::models::{Connection, ConnectionType};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use crate::repository::traits::ConnectionManager;
 
 pub async fn list() -> Result<(), Box<dyn std::error::Error>> {

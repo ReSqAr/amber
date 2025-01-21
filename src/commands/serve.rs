@@ -1,5 +1,5 @@
 use crate::grpc::server::{grpc, GRPCServer};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use log::info;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tonic::transport::Server;

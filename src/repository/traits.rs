@@ -94,7 +94,7 @@ pub trait VirtualFilesystem {
 
 pub trait ConnectionManager {
     async fn add(&self, connection: &Connection) -> Result<(), AppError>;
-    async fn lookup_by_name(&self, name: &String) -> Result<Option<Connection>, AppError>;
+    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, AppError>;
     async fn list(&self) -> Result<Vec<Connection>, AppError>;
     async fn connect(
         &self,

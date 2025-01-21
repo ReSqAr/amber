@@ -329,7 +329,7 @@ impl ConnectionManager for LocalRepository {
         self.db.add_connection(connection).await.map_err(Into::into)
     }
 
-    async fn lookup_by_name(&self, name: &String) -> Result<Option<Connection>, AppError> {
+    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, AppError> {
         self.db.connection_by_name(name).await.map_err(Into::into)
     }
 

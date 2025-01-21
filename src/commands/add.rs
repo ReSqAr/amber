@@ -1,5 +1,5 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::state::{Error, StateConfig};
 use crate::repository::logic::{blobify, state};

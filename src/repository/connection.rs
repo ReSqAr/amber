@@ -1,6 +1,6 @@
 use crate::db::models::ConnectionType;
 use crate::repository::grpc::GRPCClient;
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use crate::repository::traits::Metadata;
 use log::debug;
 

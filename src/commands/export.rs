@@ -1,5 +1,5 @@
 use crate::db::models::FilePathWithBlobId;
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Local, Metadata, Reconciler};
 use anyhow::{Context, Result};
 use async_tempfile::TempDir;

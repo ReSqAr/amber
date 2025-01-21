@@ -1,7 +1,7 @@
 use crate::db::models::{BlobId, FilePathWithBlobId, InsertBlob};
 use crate::grpc::server::grpc::grpc_client::GrpcClient;
 use crate::grpc::server::grpc::{DownloadRequest, RepositoryIdRequest, RepositoryIdResponse};
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
 use anyhow::{Context, Result};
 use futures::{stream, StreamExt};

@@ -701,10 +701,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn connection_by_name(
-        &self,
-        name: &String,
-    ) -> Result<Option<Connection>, sqlx::Error> {
+    pub async fn connection_by_name(&self, name: &str) -> Result<Option<Connection>, sqlx::Error> {
         let query = "
             SELECT name, connection_type, parameter
             FROM connections

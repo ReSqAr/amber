@@ -1,4 +1,4 @@
-use crate::repository::local_repository::LocalRepository;
+use crate::repository::local::LocalRepository;
 use log::error;
 use std::collections::HashMap;
 

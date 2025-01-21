@@ -10,7 +10,7 @@ log = "0.4.25"
 env_logger = "0.11.6"
 uuid = { version = "1.12.0", features = ["v4", "v7"] }
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "macros", "process"] }
-clap = { version = "4.5.26", features = ["derive"] }
+clap = { version = "4.5.26", features = ["derive", "color", "suggestions"] }
 sha2 = "0.10.8"
 tonic = "0.12.3"
 prost = "0.13.4"
