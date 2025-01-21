@@ -5,7 +5,7 @@ mod grpc;
 mod repository;
 mod utils;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tokio::time::Instant;
 
 #[derive(Parser)]
@@ -48,6 +48,35 @@ enum Commands {
     Export {
         path: String,
     },
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteCommands {
+    Add {
+        name: String,
+        #[arg(value_enum)]
+        connection_type: ConnectionType,
+        parameter: String,
+    },
+
+    List {},
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ConnectionType {
+    Local,
+}
+
+impl From<ConnectionType> for db::models::ConnectionType {
+    fn from(val: ConnectionType) -> Self {
+        match val {
+            ConnectionType::Local => db::models::ConnectionType::Local,
+        }
+    }
 }
 
 #[tokio::main]
@@ -94,6 +123,22 @@ async fn main() {
                 .await
                 .expect("Failed to export");
         }
+        Commands::Remote { command } => match command {
+            RemoteCommands::Add {
+                name,
+                connection_type,
+                parameter,
+            } => {
+                commands::remote::add(name, connection_type.into(), parameter)
+                    .await
+                    .expect("Failed to add remote");
+            }
+            RemoteCommands::List {} => {
+                commands::remote::list()
+                    .await
+                    .expect("Failed to list remotes");
+            }
+        },
     }
     let duration = start_time.elapsed();
     println!("took: {:.2?}", duration);

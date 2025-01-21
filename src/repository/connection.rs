@@ -1,8 +1,8 @@
 use crate::db::models::ConnectionType;
 use crate::repository::grpc::GRPCClient;
 use crate::repository::local_repository::LocalRepository;
-use crate::repository::traits::ConnectionManager;
-use anyhow::anyhow;
+use crate::repository::traits::Metadata;
+use log::debug;
 
 pub enum ConnectedRepository {
     Local(LocalRepository),
@@ -10,31 +10,27 @@ pub enum ConnectedRepository {
 }
 
 pub struct Connection {
-    repository: ConnectedRepository,
-}
-
-pub async fn connect(
-    manager: impl ConnectionManager,
-    name: String,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    if let Ok(Some(connection)) = manager.by_name(&name).await {
-        Connection::connect(connection).await
-    } else {
-        Err(anyhow!("unable to find the connection '{}'", name).into())
-    }
+    pub repository: ConnectedRepository,
 }
 
 impl Connection {
     pub async fn connect(
-        connection: crate::db::models::Connection,
+        name: String,
+        connection_type: ConnectionType,
+        parameter: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        match connection.connection_type {
+        match connection_type {
             ConnectionType::Local => {
-                let root = connection.parameter;
+                let root = parameter;
+                let repository = LocalRepository::new(Some(root.parse()?)).await?;
+                debug!(
+                    "connecting to local database {} at {}: {}",
+                    name,
+                    root,
+                    repository.repo_id().await?
+                );
                 Ok(Self {
-                    repository: ConnectedRepository::Local(
-                        LocalRepository::new(Some(root.parse()?)).await?,
-                    ),
+                    repository: ConnectedRepository::Local(repository),
                 })
             }
         }

@@ -686,18 +686,19 @@ impl Database {
         })
     }
 
-    pub async fn add_connection(&self, connection: &Connection) -> Result<Connection, sqlx::Error> {
+    pub async fn add_connection(&self, connection: &Connection) -> Result<(), sqlx::Error> {
         let query = "
             INSERT INTO connections (name, connection_type, parameter)
             VALUES (?, ?, ?)
         ";
 
-        sqlx::query_as::<_, Connection>(query)
+        sqlx::query(query)
             .bind(&connection.name)
             .bind(&connection.connection_type)
             .bind(&connection.parameter)
-            .fetch_one(&self.pool)
-            .await
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn connection_by_name(

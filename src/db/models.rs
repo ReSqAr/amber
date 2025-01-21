@@ -2,6 +2,7 @@ use chrono::prelude::{DateTime, Utc};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Type;
 use sqlx::{FromRow, Row};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, FromRow)]
 pub struct CurrentRepository {
@@ -147,6 +148,14 @@ pub struct InsertVirtualFile {
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum ConnectionType {
     Local,
+}
+
+impl Display for ConnectionType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionType::Local => write!(f, "local"),
+        }
+    }
 }
 
 #[derive(Debug, FromRow)]

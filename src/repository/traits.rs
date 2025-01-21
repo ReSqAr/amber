@@ -93,7 +93,11 @@ pub trait VirtualFilesystem {
 }
 
 pub trait ConnectionManager {
-    async fn add(&self, connection: &Connection) -> Result<Connection, AppError>;
-    async fn by_name(&self, name: &String) -> Result<Option<Connection>, AppError>;
+    async fn add(&self, connection: &Connection) -> Result<(), AppError>;
+    async fn lookup_by_name(&self, name: &String) -> Result<Option<Connection>, AppError>;
     async fn list(&self) -> Result<Vec<Connection>, AppError>;
+    async fn connect(
+        &self,
+        name: String,
+    ) -> Result<crate::repository::connection::Connection, Box<dyn std::error::Error>>;
 }

@@ -1,4 +1,4 @@
-mod connection;
+pub(crate) mod connection;
 pub(crate) mod grpc;
 pub(crate) mod local_repository;
 pub(crate) mod logic;

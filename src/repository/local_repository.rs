@@ -11,7 +11,7 @@ use crate::repository::traits::{
 };
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
@@ -325,15 +325,32 @@ impl Deprecated for LocalRepository {
 }
 
 impl ConnectionManager for LocalRepository {
-    async fn add(&self, connection: &Connection) -> Result<Connection, AppError> {
+    async fn add(&self, connection: &Connection) -> Result<(), AppError> {
         self.db.add_connection(connection).await.map_err(Into::into)
     }
 
-    async fn by_name(&self, name: &String) -> Result<Option<Connection>, AppError> {
+    async fn lookup_by_name(&self, name: &String) -> Result<Option<Connection>, AppError> {
         self.db.connection_by_name(name).await.map_err(Into::into)
     }
 
     async fn list(&self) -> Result<Vec<Connection>, AppError> {
         self.db.list_all_connections().await.map_err(Into::into)
+    }
+
+    async fn connect(
+        &self,
+        name: String,
+    ) -> Result<crate::repository::connection::Connection, Box<dyn std::error::Error>> {
+        if let Ok(Some(crate::db::models::Connection {
+            connection_type,
+            parameter,
+            ..
+        })) = self.lookup_by_name(&name).await
+        {
+            crate::repository::connection::Connection::connect(name, connection_type, parameter)
+                .await
+        } else {
+            Err(anyhow!("unable to find the connection '{}'", name).into())
+        }
     }
 }
