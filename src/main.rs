@@ -9,8 +9,8 @@ use clap::{Parser, Subcommand};
 use tokio::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "invariant")]
-#[command(author = "Yasin Zähringer <yasin-invariable@yhjz.de>")]
+#[command(name = "amber")]
+#[command(author = "Yasin Zähringer <yasin@yhjz.de>")]
 #[command(version = "1.0")]
 #[command(about = "distribute blobs", long_about = None)]
 struct Cli {
@@ -66,17 +66,17 @@ async fn main() {
         Commands::Add { dry_run } => {
             commands::add::add(dry_run)
                 .await
-                .expect("Failed to add file to invariable");
+                .expect("Failed to add file");
         }
         Commands::Status { details } => {
             commands::status::status(details)
                 .await
-                .expect("Failed to get status of invariable");
+                .expect("Failed to get status");
         }
         Commands::Missing { files_only } => {
             commands::missing::missing(files_only)
                 .await
-                .expect("Failed to get status of invariable");
+                .expect("Failed to get missing");
         }
         Commands::Serve { port } => {
             commands::serve::serve(port)

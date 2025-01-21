@@ -1,4 +1,4 @@
-use crate::grpc::server::{invariable, GRPCServer};
+use crate::grpc::server::{grpc, GRPCServer};
 use crate::repository::local_repository::LocalRepository;
 use log::info;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -13,7 +13,7 @@ pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     info!("listening on {}", addr);
 
     Server::builder()
-        .add_service(invariable::invariable_server::InvariableServer::new(server))
+        .add_service(grpc::grpc_server::GrpcServer::new(server))
         .serve(addr)
         .await?;
 

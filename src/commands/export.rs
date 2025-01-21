@@ -15,7 +15,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
 
     debug!("local repo_id={}", local_repository.repo_id().await?);
 
-    let staging_path = local_repository.invariable_path().join("staging");
+    let staging_path = local_repository.staging_path();
     fs::create_dir_all(&staging_path)
         .await
         .context("unable to create staging directory")?;

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
 
-package invariable;
+package grpc;
 
 
 
@@ -68,7 +68,7 @@ message DownloadResponse{
     bytes content = 1;
 }
 
-service Invariable {
+service Grpc {
   rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);
   rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
   rpc MergeFiles (stream File) returns (MergeFilesResponse);

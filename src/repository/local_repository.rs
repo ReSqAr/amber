@@ -17,6 +17,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+const REPO_FOLDER_NAME: &str = ".amb";
+
 #[derive(Clone)]
 pub(crate) struct LocalRepository {
     root: PathBuf,
@@ -24,12 +26,12 @@ pub(crate) struct LocalRepository {
     db: Database,
 }
 
-/// Recursively searches parent directories for the `.inv` folder to determine the repository root.
+/// Recursively searches parent directories for the folder to determine the repository root.
 async fn find_repository_root(start_path: &Path) -> Result<PathBuf, anyhow::Error> {
     let mut current = start_path.canonicalize()?;
 
     loop {
-        let inv_path = current.join(".inv");
+        let inv_path = current.join(REPO_FOLDER_NAME);
         if fs::metadata(&inv_path)
             .await
             .map(|m| m.is_dir())
@@ -60,8 +62,8 @@ impl LocalRepository {
                 .context("could not find an invariant folder")?
         };
 
-        let invariable_path = root.join(".inv");
-        if !fs::metadata(&invariable_path)
+        let repository_path = root.join(REPO_FOLDER_NAME);
+        if !fs::metadata(&repository_path)
             .await
             .map(|m| m.is_dir())
             .unwrap_or(false)
@@ -69,7 +71,7 @@ impl LocalRepository {
             return Err(anyhow::anyhow!("repository is not initialised").into());
         };
 
-        let db_path = invariable_path.join("db.sqlite");
+        let db_path = repository_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
             .await
             .expect("failed to establish connection");
@@ -98,8 +100,8 @@ impl LocalRepository {
         } else {
             fs::canonicalize(".").await?
         };
-        let invariable_path = root.join(".inv");
-        if fs::metadata(&invariable_path)
+        let repository_path = root.join(REPO_FOLDER_NAME);
+        if fs::metadata(&repository_path)
             .await
             .map(|m| m.is_dir())
             .unwrap_or(false)
@@ -107,12 +109,12 @@ impl LocalRepository {
             return Err(anyhow::anyhow!("repository is already initialised").into());
         };
 
-        fs::create_dir(invariable_path.as_path()).await?;
+        fs::create_dir(repository_path.as_path()).await?;
 
-        let blobs_path = invariable_path.join("blobs");
+        let blobs_path = repository_path.join("blobs");
         fs::create_dir_all(blobs_path.as_path()).await?;
 
-        let db_path = invariable_path.join("db.sqlite");
+        let db_path = repository_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
             .await
             .context("failed to establish connection")?;
@@ -143,12 +145,12 @@ impl Local for LocalRepository {
         self.root.clone()
     }
 
-    fn invariable_path(&self) -> PathBuf {
-        self.root().join(".inv")
+    fn repository_path(&self) -> PathBuf {
+        self.root().join(REPO_FOLDER_NAME)
     }
 
     fn blobs_path(&self) -> PathBuf {
-        self.invariable_path().join("blobs")
+        self.repository_path().join("blobs")
     }
 
     fn blob_path(&self, blob_id: String) -> PathBuf {
@@ -156,7 +158,7 @@ impl Local for LocalRepository {
     }
 
     fn staging_path(&self) -> PathBuf {
-        self.invariable_path().join("staging")
+        self.repository_path().join("staging")
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::db;
 use crate::db::models::InsertBlob;
-use crate::grpc::server::invariable::{
+use crate::grpc::server::grpc::{
     Blob, DownloadRequest, DownloadResponse, File, LookupLastIndicesRequest,
     LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
     Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
@@ -16,8 +16,8 @@ use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
 use futures::Stream;
 use futures::{stream, TryStreamExt};
-use invariable::invariable_server::Invariable;
-use invariable::{RepositoryIdRequest, RepositoryIdResponse};
+use grpc::grpc_server::Grpc;
+use grpc::{RepositoryIdRequest, RepositoryIdResponse};
 use log::debug;
 use std::pin::Pin;
 use tokio::fs;
@@ -25,8 +25,8 @@ use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
 
-pub mod invariable {
-    tonic::include_proto!("invariable");
+pub mod grpc {
+    tonic::include_proto!("grpc");
 }
 
 pub struct GRPCServer<T> {
@@ -40,7 +40,7 @@ impl<T> GRPCServer<T> {
 }
 
 #[tonic::async_trait]
-impl<T> Invariable for GRPCServer<T>
+impl<T> Grpc for GRPCServer<T>
 where
     T: Metadata
         + Local

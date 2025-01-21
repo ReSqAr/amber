@@ -1,5 +1,5 @@
 use crate::db::models::{Blob as DbBlob, File as DbFile, Repository as DbRepository};
-use crate::grpc::server::invariable::{Blob, File, Repository};
+use crate::grpc::server::grpc::{Blob, File, Repository};
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 

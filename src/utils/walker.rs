@@ -19,7 +19,7 @@ impl Default for WalkerConfig {
         Self {
             threads: 0,
             max_buffer_size: 1000,
-            patterns: vec!["!.inv/".into(),"!.git/".into()],
+            patterns: vec!["!.amb/".into(), "!.git/".into()],
         }
     }
 }

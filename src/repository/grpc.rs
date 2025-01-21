@@ -1,8 +1,8 @@
 use crate::db::models::Blob as DbBlob;
 use crate::db::models::File as DbFile;
 use crate::db::models::Repository as DbRepository;
-use crate::grpc::server::invariable::invariable_client::InvariableClient;
-use crate::grpc::server::invariable::{
+use crate::grpc::server::grpc::grpc_client::GrpcClient;
+use crate::grpc::server::grpc::{
     Blob, File, LookupLastIndicesRequest, LookupLastIndicesResponse, Repository,
     RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     UpdateLastIndicesRequest,
@@ -18,11 +18,11 @@ use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub(crate) struct GRPCClient {
-    client: Arc<RwLock<InvariableClient<tonic::transport::Channel>>>,
+    client: Arc<RwLock<GrpcClient<tonic::transport::Channel>>>,
 }
 
 impl GRPCClient {
-    pub fn new(client: InvariableClient<tonic::transport::Channel>) -> Self {
+    pub fn new(client: GrpcClient<tonic::transport::Channel>) -> Self {
         Self {
             client: Arc::new(client.into()),
         }
@@ -30,7 +30,7 @@ impl GRPCClient {
 
     pub async fn connect(addr: String) -> Result<Self, tonic::transport::Error> {
         debug!("connecting to {}", &addr);
-        let client = InvariableClient::connect(addr.clone()).await?;
+        let client = GrpcClient::connect(addr.clone()).await?;
         debug!("connected to {}", &addr);
 
         Ok(Self::new(client))

@@ -1,6 +1,6 @@
 use crate::db::models::{BlobId, FilePathWithBlobId, InsertBlob};
-use crate::grpc::server::invariable::invariable_client::InvariableClient;
-use crate::grpc::server::invariable::{DownloadRequest, RepositoryIdRequest, RepositoryIdResponse};
+use crate::grpc::server::grpc::grpc_client::GrpcClient;
+use crate::grpc::server::grpc::{DownloadRequest, RepositoryIdRequest, RepositoryIdResponse};
 use crate::repository::local_repository::LocalRepository;
 use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
 use anyhow::{Context, Result};
@@ -17,7 +17,7 @@ pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("http://127.0.0.1:{}", port);
     debug!("connecting to {}", &addr);
-    let mut client = InvariableClient::connect(addr.clone()).await?;
+    let mut client = GrpcClient::connect(addr.clone()).await?;
     debug!("connected to {}", &addr);
 
     let repo_id_request = tonic::Request::new(RepositoryIdRequest {});
@@ -74,9 +74,7 @@ async fn reconcile_filesystem(
             path: relative_path,
             blob_id,
         } = next?;
-        let invariable_path = local_repository.root().join(".inv");
-        let blobs_path = invariable_path.join("blobs");
-        let object_path = blobs_path.join(blob_id);
+        let object_path = local_repository.blob_path(blob_id);
 
         let target_path = local_repository.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);

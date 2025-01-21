@@ -33,6 +33,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "amber"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "async-tempfile",
+ "chrono",
+ "clap",
+ "env_logger",
+ "filetime",
+ "futures",
+ "ignore",
+ "lazy_static",
+ "log",
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "uuid",
+]
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1162,35 +1191,6 @@ checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
-]
-
-[[package]]
-name = "invariant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-lock",
- "async-tempfile",
- "chrono",
- "clap",
- "env_logger",
- "filetime",
- "futures",
- "ignore",
- "lazy_static",
- "log",
- "prost",
- "prost-types",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
- "uuid",
 ]
 
 [[package]]
