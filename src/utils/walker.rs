@@ -18,7 +18,7 @@ impl Default for WalkerConfig {
     fn default() -> Self {
         Self {
             threads: 0,
-            max_buffer_size: 1000,
+            max_buffer_size: 10000,
             patterns: vec!["!.amb/".into(), "!.git/".into()],
         }
     }

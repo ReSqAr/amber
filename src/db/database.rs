@@ -24,7 +24,7 @@ impl Database {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            chunk_size: 100,
+            chunk_size: 10000,
         }
     }
 

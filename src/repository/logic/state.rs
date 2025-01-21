@@ -23,7 +23,7 @@ pub struct StateConfig {
 impl Default for StateConfig {
     fn default() -> Self {
         Self {
-            buffer_size: 1000,
+            buffer_size: 10000,
             walker: WalkerConfig::default(),
         }
     }
