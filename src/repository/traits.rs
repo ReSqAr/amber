@@ -1,5 +1,7 @@
 use crate::db::database::DBOutputStream;
-use crate::db::models::{BlobId, BlobWithPaths, FilePathWithBlobId, Observation, VirtualFile};
+use crate::db::models::{
+    BlobId, BlobWithPaths, Connection, FilePathWithBlobId, Observation, VirtualFile,
+};
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::Stream;
@@ -88,4 +90,10 @@ pub trait VirtualFilesystem {
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
     ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static;
+}
+
+pub trait ConnectionManager {
+    async fn add(&self, connection: &Connection) -> Result<Connection, AppError>;
+    async fn by_name(&self, name: &String) -> Result<Option<Connection>, AppError>;
+    async fn list(&self) -> Result<Vec<Connection>, AppError>;
 }

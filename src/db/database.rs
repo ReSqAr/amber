@@ -1,6 +1,7 @@
 use crate::db::models::{
-    Blob, BlobId, BlobWithPaths, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
-    FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, VirtualFile,
+    Blob, BlobId, BlobWithPaths, Connection, CurrentRepository, File, FileEqBlobCheck,
+    FilePathWithBlobId, FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation,
+    Repository, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -683,5 +684,46 @@ impl Database {
                 }
             })
         })
+    }
+
+    pub async fn add_connection(&self, connection: &Connection) -> Result<Connection, sqlx::Error> {
+        let query = "
+            INSERT INTO connections (name, connection_type, parameter)
+            VALUES (?, ?, ?)
+        ";
+
+        sqlx::query_as::<_, Connection>(query)
+            .bind(&connection.name)
+            .bind(&connection.connection_type)
+            .bind(&connection.parameter)
+            .fetch_one(&self.pool)
+            .await
+    }
+
+    pub async fn connection_by_name(
+        &self,
+        name: &String,
+    ) -> Result<Option<Connection>, sqlx::Error> {
+        let query = "
+            SELECT name, connection_type, parameter
+            FROM connections
+            WHERE name = ?
+        ";
+
+        sqlx::query_as::<_, Connection>(query)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    pub async fn list_all_connections(&self) -> Result<Vec<Connection>, sqlx::Error> {
+        let query = "
+            SELECT name, connection_type, parameter
+            FROM connections
+        ";
+
+        sqlx::query_as::<_, Connection>(query)
+            .fetch_all(&self.pool)
+            .await
     }
 }

@@ -142,3 +142,16 @@ pub struct InsertVirtualFile {
     pub last_file_eq_blob_check_dttm: Option<i64>,
     pub last_file_eq_blob_result: Option<bool>,
 }
+
+#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum ConnectionType {
+    Local,
+}
+
+#[derive(Debug, FromRow)]
+pub struct Connection {
+    pub name: String,
+    pub connection_type: ConnectionType,
+    pub parameter: String,
+}

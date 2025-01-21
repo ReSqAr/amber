@@ -2,11 +2,12 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::establish_connection;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobId, BlobWithPaths, File, FilePathWithBlobId, Observation, Repository, VirtualFile,
+    Blob, BlobId, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
+    VirtualFile,
 };
 use crate::repository::traits::{
-    Adder, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Missing, Reconciler,
-    Syncer, SyncerParams, VirtualFilesystem,
+    Adder, ConnectionManager, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Missing,
+    Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -320,5 +321,19 @@ impl Deprecated for LocalRepository {
         self.db
             .deprecated_missing_blobs(source_repo_id, target_repo_id)
             .err_into()
+    }
+}
+
+impl ConnectionManager for LocalRepository {
+    async fn add(&self, connection: &Connection) -> Result<Connection, AppError> {
+        self.db.add_connection(connection).await.map_err(Into::into)
+    }
+
+    async fn by_name(&self, name: &String) -> Result<Option<Connection>, AppError> {
+        self.db.connection_by_name(name).await.map_err(Into::into)
+    }
+
+    async fn list(&self) -> Result<Vec<Connection>, AppError> {
+        self.db.list_all_connections().await.map_err(Into::into)
     }
 }

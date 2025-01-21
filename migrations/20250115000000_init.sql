@@ -51,3 +51,12 @@ CREATE TABLE virtual_filesystem (
     last_file_eq_blob_result      BOOLEAN,
     state                         TEXT
 );
+
+-- table: connections
+CREATE TABLE connections
+(
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT UNIQUE NOT NULL,
+    connection_type  TEXT        NOT NULL,
+    parameter        TEXT        NOT NULL
+);
