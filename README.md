@@ -1,5 +1,4 @@
 # PROJECT MANAGEMENT
-- sync via remote
 - pull/push
     - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
