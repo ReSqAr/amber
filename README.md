@@ -1,4 +1,5 @@
 # PROJECT MANAGEMENT
+- drop staging at the end of local repo - create it in the beginning
 - pull/push
     - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
