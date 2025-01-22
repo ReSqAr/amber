@@ -5,6 +5,7 @@ use crate::db::models::{
     Blob, BlobId, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
     VirtualFile,
 };
+use crate::repository::connection::ConnectedRepository;
 use crate::repository::traits::{
     Adder, ConnectionManager, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Missing,
     Reconciler, Syncer, SyncerParams, VirtualFilesystem,
@@ -340,15 +341,14 @@ impl ConnectionManager for LocalRepository {
     async fn connect(
         &self,
         name: String,
-    ) -> Result<crate::repository::connection::Connection, Box<dyn std::error::Error>> {
-        if let Ok(Some(crate::db::models::Connection {
+    ) -> Result<ConnectedRepository, Box<dyn std::error::Error>> {
+        if let Ok(Some(Connection {
             connection_type,
             parameter,
             ..
         })) = self.lookup_by_name(&name).await
         {
-            crate::repository::connection::Connection::connect(name, connection_type, parameter)
-                .await
+            ConnectedRepository::connect(name, connection_type, parameter).await
         } else {
             Err(anyhow!("unable to find the connection '{}'", name).into())
         }

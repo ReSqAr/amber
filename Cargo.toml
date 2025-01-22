@@ -4,28 +4,27 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sqlx = { version = "0.8.3", features = ["sqlite", "runtime-tokio", "chrono"] }
-chrono = "0.4.39"
-log = "0.4.25"
-env_logger = "0.11.6"
-uuid = { version = "1.12.0", features = ["v4", "v7"] }
-tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "macros", "process"] }
-clap = { version = "4.5.26", features = ["derive", "color", "suggestions"] }
-sha2 = "0.10.8"
-tonic = "0.12.3"
-prost = "0.13.4"
-prost-types = "0.13.4"
-futures = "0.3.31"
 anyhow = "1.0.95"
-async-tempfile = "0.6.0"
+async-lock = "3.4"
+async-tempfile = "0.6"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive", "color", "suggestions"] }
+env_logger = "0.11"
+filetime = "0.2"
+futures = "0.3"
+ignore = "0.4"
+log = "0.4.25"
+prost = "0.13"
+prost-types = "0.13"
 serde = { version = "1.0.217", features = ["derive"] }
-ignore = "0.4.23"
-tokio-stream = "0.1.17"
-thiserror = "2.0.11"
-lazy_static = "1.5.0"
-async-lock = "3.4.0"
-filetime = "0.2.25"
 serde_json = "1.0.135"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono"] }
+thiserror = "2.0"
+tokio = { version = "1.43", features = ["rt", "rt-multi-thread", "macros", "process"] }
+tokio-stream = "0.1.17"
+tonic = "0.12"
+uuid = { version = "1.12", features = ["v4", "v7"] }
 
 [build-dependencies]
 tonic-build = "0.12.3"

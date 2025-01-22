@@ -45,7 +45,6 @@ dependencies = [
  "filetime",
  "futures",
  "ignore",
- "lazy_static",
  "log",
  "prost",
  "prost-types",

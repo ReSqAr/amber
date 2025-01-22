@@ -1,4 +1,5 @@
 use crate::db::models::{Connection, ConnectionType};
+use crate::repository::connection::ConnectedRepository;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::ConnectionManager;
 
@@ -18,12 +19,7 @@ pub async fn add(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
 
-    crate::repository::connection::Connection::connect(
-        name.clone(),
-        connection_type.clone(),
-        parameter.clone(),
-    )
-    .await?;
+    ConnectedRepository::connect(name.clone(), connection_type.clone(), parameter.clone()).await?;
 
     let connection = Connection {
         name: name.clone(),

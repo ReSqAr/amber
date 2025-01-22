@@ -99,5 +99,5 @@ pub trait ConnectionManager {
     async fn connect(
         &self,
         name: String,
-    ) -> Result<crate::repository::connection::Connection, Box<dyn std::error::Error>>;
+    ) -> Result<crate::repository::connection::ConnectedRepository, Box<dyn std::error::Error>>;
 }
