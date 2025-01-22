@@ -1,19 +1,19 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{Local, VirtualFilesystem};
+use crate::utils;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{future, Stream, StreamExt};
 use log::{debug, error};
-use std::os::unix::fs::MetadataExt;
 use thiserror::Error;
-use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
+use utils::fs::are_hardlinked;
 
 pub struct StateConfig {
     buffer_size: usize,
@@ -55,18 +55,6 @@ fn current_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| std::time::Duration::from_secs(0))
         .as_secs() as i64
-}
-
-async fn are_hardlinked(path1: &std::path::Path, path2: &std::path::Path) -> std::io::Result<bool> {
-    let metadata1 = fs::metadata(path1).await?;
-    let metadata2 = fs::metadata(path2).await?;
-
-    let result = metadata1.dev() == metadata2.dev() && metadata1.ino() == metadata2.ino();
-    debug!(
-        "are_hardlinked: path1: {:?}, path2: {:?} result {:}",
-        path1, path2, result,
-    );
-    Ok(result)
 }
 
 async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> {

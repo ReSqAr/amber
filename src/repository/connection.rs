@@ -75,8 +75,7 @@ where
     async fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static
-    {
+    ) -> impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static {
         let boxed_stream: BoxStream<'static, _> = match self {
             TrackingRepository::Local(local) => {
                 <LocalRepository as Syncer<T>>::select(local, params)
