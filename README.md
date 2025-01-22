@@ -3,7 +3,44 @@
 - pull/push
     - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
+- sync should also 'checkout' files
 - fsck
+
+
+# Pull & Push
+
+transfer id = 32bit random uint
+
+BlobSender:
+- prepare_transfer(transfer_id, stream of (blob_id,path))
+  - hard links blob_id to staging/<transfer_id>/path if exists
+
+BlobReceiver:
+- create_transfer_request(transfer_id)
+    - creates <repo>/staging/tid_<transfer_id>/
+    - creates temp table with: (blob_id,path)
+    - streams that table
+- finalise_transfer(transfer_id):
+  - stream from temp table
+  - stream like adder - blob_adder:
+    - in parallel: hardlink files to blob
+      - recompute hash -> fail if files do not match advertised hash (sender corruption)
+    - add to blobs table
+
+Connection:
+- transfer(transfer_id, source repo, target repo, stream of (blob_id,path)) -> Transfer
+
+Transfer:
+- Transfer::new:(transfer_id, sender repo, receiver repo) figures out the direction of transfer: up or down
+- Transfer::execute
+  - calls: receiver::create_transfer_request:
+    - stream of (blob_id,path) to: 
+      - sender::prepare_transfer
+      - locally: <repo>/staging/rclone_<transfer_id>.<conf|txt>/
+  - execute rclone using rclone files
+  - receiver::finalise_transfer
+
+
 
 
 # TODO

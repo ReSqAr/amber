@@ -1,8 +1,10 @@
-use crate::db::models::ConnectionType;
+use crate::db::models::{ConnectionType, TransferItem};
 use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneClient;
-use crate::repository::traits::{LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams};
+use crate::repository::traits::{
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
+};
 use crate::utils::app_error::AppError;
 use futures::{Stream, StreamExt};
 use log::debug;
@@ -94,6 +96,44 @@ where
         match self {
             TrackingRepository::Local(local) => local.merge(s).await,
             TrackingRepository::Grpc(grpc) => grpc.merge(s).await,
+        }
+    }
+}
+
+impl BlobSender for TrackingRepository {
+    async fn prepare_transfer<S>(&self, s: S) -> Result<(), AppError>
+    where
+        S: Stream<Item = TransferItem> + Unpin + Send + 'static,
+    {
+        match self {
+            TrackingRepository::Local(local) => local.prepare_transfer(s).await,
+            TrackingRepository::Grpc(grpc) => grpc.prepare_transfer(s).await,
+        }
+    }
+}
+
+impl BlobReceiver for TrackingRepository {
+    async fn create_transfer_request(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static {
+        match self {
+            TrackingRepository::Local(local) => local
+                .create_transfer_request(transfer_id, repo_id)
+                .await
+                .boxed(),
+            TrackingRepository::Grpc(grpc) => grpc
+                .create_transfer_request(transfer_id, repo_id)
+                .await
+                .boxed(),
+        }
+    }
+
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+        match self {
+            TrackingRepository::Local(local) => local.finalise_transfer(transfer_id).await,
+            TrackingRepository::Grpc(grpc) => grpc.finalise_transfer(transfer_id).await,
         }
     }
 }

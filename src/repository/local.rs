@@ -3,12 +3,12 @@ use crate::db::establish_connection;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     Blob, BlobId, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
-    VirtualFile,
+    TransferItem, VirtualFile,
 };
 use crate::repository::connection::ConnectedRepository;
 use crate::repository::traits::{
-    Adder, ConnectionManager, Deprecated, LastIndices, LastIndicesSyncer, Local, Metadata, Missing,
-    Reconciler, Syncer, SyncerParams, VirtualFilesystem,
+    Adder, BlobReceiver, BlobSender, ConnectionManager, Deprecated, LastIndices, LastIndicesSyncer,
+    Local, Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -161,6 +161,10 @@ impl Local for LocalRepository {
 
     fn staging_path(&self) -> PathBuf {
         self.repository_path().join("staging")
+    }
+
+    fn transfer_path(&self, transfer_id: u32) -> PathBuf {
+        self.staging_path().join(format!("t_{}", transfer_id))
     }
 }
 
@@ -352,5 +356,47 @@ impl ConnectionManager for LocalRepository {
         } else {
             Err(anyhow!("unable to find the connection '{}'", name).into())
         }
+    }
+}
+
+impl BlobSender for LocalRepository {
+    async fn prepare_transfer<S>(&self, s: S) -> Result<(), AppError>
+    where
+        S: Stream<Item = TransferItem> + Unpin + Send + 'static,
+    {
+        // TODO: hardlink files to staging folder to the desired path (make sure it stays in the transfer folder)
+        // create path as part of event stream
+        // let transfer_path = self.transfer_path(transfer_id);
+        // fs::create_dir_all(transfer_path)
+        //     .await
+        //     .context("unable to create transfer directory")?;
+        Ok(())
+    }
+}
+
+impl BlobReceiver for LocalRepository {
+    async fn create_transfer_request(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static {
+        let transfer_path = self.transfer_path(transfer_id);
+        fs::create_dir_all(transfer_path)
+            .await
+            .context("unable to create transfer directory")
+            .expect("unable to create transfer directory"); // TODO
+
+        self.db
+            .populate_missing_blobs_for_transfer(transfer_id, repo_id)
+            .await
+            .err_into()
+    }
+
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+        let missing_blobs = self.db.select_missing_blobs_for_transfer(transfer_id).await;
+
+        // TODO: use 'blob_adder' to assimilate/move all the blobs
+
+        todo!()
     }
 }

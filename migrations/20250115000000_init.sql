@@ -60,3 +60,12 @@ CREATE TABLE connections
     connection_type  TEXT        NOT NULL,
     parameter        TEXT        NOT NULL
 );
+
+-- table: transfers
+CREATE TABLE transfers
+(
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    transfer_id      TEXT NOT NULL,
+    blob_id          TEXT NOT NULL,
+    path             TEXT NOT NULL
+);

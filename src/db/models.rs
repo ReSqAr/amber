@@ -164,3 +164,10 @@ pub struct Connection {
     pub connection_type: ConnectionType,
     pub parameter: String,
 }
+
+#[derive(Debug, FromRow)]
+pub struct TransferItem {
+    pub transfer_id: u32,
+    pub blob_id: String,
+    pub path: String,
+}

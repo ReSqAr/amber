@@ -1,17 +1,20 @@
 use crate::db::models::Blob as DbBlob;
 use crate::db::models::File as DbFile;
 use crate::db::models::Repository as DbRepository;
+use crate::db::models::TransferItem as DbTransferItem;
 use crate::grpc::server::grpc::grpc_client::GrpcClient;
 use crate::grpc::server::grpc::{
-    Blob, File, LookupLastIndicesRequest, LookupLastIndicesResponse, Repository,
-    RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    UpdateLastIndicesRequest,
+    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, LookupLastIndicesRequest,
+    LookupLastIndicesResponse, Repository, RepositoryIdRequest, SelectBlobsRequest,
+    SelectFilesRequest, SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest,
 };
-use crate::repository::traits::{LastIndices, LastIndicesSyncer, Metadata, Syncer};
+use crate::repository::traits::{
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
+};
 use crate::utils::app_error::AppError;
-use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
+use futures::{Stream, StreamExt};
 use log::debug;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -174,5 +177,58 @@ impl Syncer<DbBlob> for GRPCClient {
                 .map_ok(|_| ())
                 .await
         }
+    }
+}
+
+impl BlobSender for GRPCClient {
+    fn prepare_transfer<S>(
+        &self,
+        s: S,
+    ) -> impl std::future::Future<Output = Result<(), AppError>> + Send
+    where
+        S: Stream<Item = DbTransferItem> + Unpin + Send + 'static,
+    {
+        let arc_client = self.client.clone();
+        async move {
+            let mut guard = arc_client.write().await;
+            guard
+                .prepare_transfer(s.map(TransferItem::from))
+                .err_into()
+                .map_ok(|_| ())
+                .await
+        }
+    }
+}
+
+impl BlobReceiver for GRPCClient {
+    fn create_transfer_request(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> impl std::future::Future<
+        Output = impl Stream<Item = Result<DbTransferItem, AppError>> + Unpin + Send + 'static,
+    > {
+        let arc_client = self.client.clone();
+        async move {
+            let mut guard = arc_client.write().await;
+            guard
+                .create_transfer_request(CreateTransferRequestRequest {
+                    transfer_id,
+                    repo_id,
+                })
+                .map_ok(tonic::Response::into_inner)
+                .map(|r| r.unwrap().err_into().map_ok(DbTransferItem::from))
+                .await
+        }
+    }
+
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+        self.client
+            .write()
+            .await
+            .finalise_transfer(tonic::Request::new(FinaliseTransferRequest { transfer_id }))
+            .await?
+            .into_inner();
+        Ok(())
     }
 }

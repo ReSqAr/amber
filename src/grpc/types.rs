@@ -1,5 +1,7 @@
-use crate::db::models::{Blob as DbBlob, File as DbFile, Repository as DbRepository};
-use crate::grpc::server::grpc::{Blob, File, Repository};
+use crate::db::models::{
+    Blob as DbBlob, File as DbFile, Repository as DbRepository, TransferItem as DbTransferItem,
+};
+use crate::grpc::server::grpc::{Blob, File, Repository, TransferItem};
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 
@@ -70,7 +72,6 @@ impl From<File> for DbFile {
     }
 }
 
-// Conversion from Blob to DbBlob
 impl From<Blob> for DbBlob {
     fn from(blob: Blob) -> Self {
         DbBlob {
@@ -80,6 +81,26 @@ impl From<Blob> for DbBlob {
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
             valid_from: timestamp_to_datetime(&blob.valid_from),
+        }
+    }
+}
+
+impl From<TransferItem> for DbTransferItem {
+    fn from(i: TransferItem) -> Self {
+        Self {
+            transfer_id: i.transfer_id,
+            blob_id: i.blob_id,
+            path: i.path,
+        }
+    }
+}
+
+impl From<DbTransferItem> for TransferItem {
+    fn from(i: DbTransferItem) -> Self {
+        Self {
+            transfer_id: i.transfer_id,
+            blob_id: i.blob_id,
+            path: i.path,
         }
     }
 }

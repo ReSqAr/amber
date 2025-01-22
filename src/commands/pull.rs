@@ -1,64 +1,16 @@
-use crate::db::models::{BlobId, FilePathWithBlobId, InsertBlob};
-use crate::grpc::server::grpc::grpc_client::GrpcClient;
-use crate::grpc::server::grpc::{DownloadRequest, RepositoryIdRequest, RepositoryIdResponse};
+use crate::db::models::FilePathWithBlobId;
 use crate::repository::local::LocalRepository;
-use crate::repository::traits::{Adder, Deprecated, Local, Metadata, Reconciler};
+use crate::repository::traits::{Local, Metadata, Reconciler};
 use anyhow::{Context, Result};
-use futures::{stream, StreamExt};
-use log::{debug, info};
+use futures::StreamExt;
+use log::debug;
 use tokio::fs;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 
 pub async fn pull(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
     let local_repo_id = local_repository.repo_id().await?;
     debug!("local repo_id={}", local_repo_id);
-
-    let addr = format!("http://127.0.0.1:{}", port);
-    debug!("connecting to {}", &addr);
-    let mut client = GrpcClient::connect(addr.clone()).await?;
-    debug!("connected to {}", &addr);
-
-    let repo_id_request = tonic::Request::new(RepositoryIdRequest {});
-    let RepositoryIdResponse {
-        repo_id: remote_repo_id,
-    } = client.repository_id(repo_id_request).await?.into_inner();
-    info!("remote repo_id={}", remote_repo_id);
-
-    let mut missing_blobs =
-        local_repository.deprecated_missing_blobs(remote_repo_id.clone(), local_repo_id.clone());
-    while let Some(next) = missing_blobs.next().await {
-        let BlobId { blob_id } = next?;
-        let content = client
-            .download(DownloadRequest {
-                blob_id: blob_id.clone(),
-            })
-            .await?
-            .into_inner()
-            .content;
-
-        let blobs_path = local_repository.blobs_path();
-        fs::create_dir_all(blobs_path.as_path()).await?;
-        let object_path = blobs_path.join(&blob_id);
-
-        let mut file = File::create(&object_path).await?;
-        file.write_all(&content).await?;
-        file.sync_all().await?;
-
-        let b = InsertBlob {
-            repo_id: local_repo_id.clone(),
-            blob_id,
-            blob_size: content.len() as i64,
-            has_blob: true,
-            valid_from: chrono::Utc::now(),
-        };
-        let sb = stream::iter(vec![b]);
-        local_repository.add_blobs(sb).await?;
-
-        debug!("added blob {:?}", object_path);
-    }
-    debug!("downloaded all blobs");
+    // TODO
 
     reconcile_filesystem(&local_repository).await?;
 

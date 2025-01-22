@@ -68,6 +68,22 @@ message DownloadResponse{
     bytes content = 1;
 }
 
+message TransferItem {
+    uint32 transfer_id = 1;
+    string blob_id = 2;
+    string path = 3;
+}
+
+message PrepareTransferResponse {}
+message CreateTransferRequestRequest {
+    uint32 transfer_id = 1;
+    string repo_id = 2;
+}
+message FinaliseTransferRequest {
+    uint32 transfer_id = 1;
+}
+message FinaliseTransferResponse {}
+
 service Grpc {
   rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);
   rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
@@ -80,6 +96,7 @@ service Grpc {
   rpc SelectFiles (SelectFilesRequest) returns (stream File);
   rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);
   
-  rpc Upload(UploadRequest) returns (UploadResponse);
-  rpc Download(DownloadRequest) returns (DownloadResponse);
+  rpc PrepareTransfer(stream TransferItem) returns (PrepareTransferResponse);
+  rpc CreateTransferRequest(CreateTransferRequestRequest) returns (stream TransferItem);
+  rpc FinaliseTransfer(FinaliseTransferRequest) returns (FinaliseTransferResponse);
 }

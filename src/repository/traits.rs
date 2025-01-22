@@ -1,6 +1,6 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    BlobId, BlobWithPaths, Connection, FilePathWithBlobId, Observation, VirtualFile,
+    BlobId, BlobWithPaths, Connection, FilePathWithBlobId, Observation, TransferItem, VirtualFile,
 };
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -14,6 +14,7 @@ pub trait Local {
     fn blobs_path(&self) -> PathBuf;
     fn blob_path(&self, blob_id: String) -> PathBuf;
     fn staging_path(&self) -> PathBuf;
+    fn transfer_path(&self, transfer_id: u32) -> PathBuf;
 }
 
 pub trait Metadata {
@@ -100,4 +101,25 @@ pub trait ConnectionManager {
         &self,
         name: String,
     ) -> Result<crate::repository::connection::ConnectedRepository, Box<dyn std::error::Error>>;
+}
+
+pub trait BlobSender {
+    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    where
+        S: Stream<Item = TransferItem> + Unpin + Send + 'static;
+}
+
+pub trait BlobReceiver {
+    fn create_transfer_request(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> impl Future<
+        Output = impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static,
+    > + Send;
+
+    fn finalise_transfer(
+        &self,
+        transfer_id: u32,
+    ) -> impl Future<Output = Result<(), AppError>> + Send;
 }

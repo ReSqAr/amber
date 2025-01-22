@@ -1,28 +1,25 @@
 use crate::db;
-use crate::db::models::InsertBlob;
+use crate::db::models::TransferItem as DbTransferItem;
 use crate::grpc::server::grpc::{
-    Blob, DownloadRequest, DownloadResponse, File, LookupLastIndicesRequest,
-    LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
-    Repository, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    UpdateLastIndicesRequest, UpdateLastIndicesResponse, UploadRequest, UploadResponse,
+    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
+    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
+    MergeRepositoriesResponse, PrepareTransferResponse, Repository, SelectBlobsRequest,
+    SelectFilesRequest, SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest,
+    UpdateLastIndicesResponse,
 };
-use crate::repository::traits::{Adder, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer};
+use crate::repository::traits::{
+    Adder, BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
+};
 use crate::utils::app_error::AppError;
 use crate::utils::pipe::TryForwardIntoExt;
-use anyhow::Context;
-use chrono::Utc;
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
 use futures::Stream;
-use futures::{stream, TryStreamExt};
+use futures::TryStreamExt;
 use grpc::grpc_server::Grpc;
 use grpc::{RepositoryIdRequest, RepositoryIdResponse};
-use log::debug;
 use std::pin::Pin;
-use tokio::fs;
-use tokio::fs::File as TokioFile;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status, Streaming};
 
 pub mod grpc {
@@ -49,6 +46,8 @@ where
         + Syncer<DbRepository>
         + Syncer<DbFile>
         + Syncer<DbBlob>
+        + BlobSender
+        + BlobReceiver
         + Sync
         + Send
         + 'static,
@@ -154,59 +153,44 @@ where
         Ok(Response::new(Box::pin(stream)))
     }
 
-    async fn upload(
+    async fn prepare_transfer(
         &self,
-        request: Request<UploadRequest>,
-    ) -> Result<Response<UploadResponse>, Status> {
-        let UploadRequest { blob_id, content } = request.into_inner();
-
-        let blobs_path = self.repository.blobs_path();
-        fs::create_dir_all(blobs_path.as_path()).await?;
-        let object_path = blobs_path.join(&blob_id);
-
-        let mut file = TokioFile::create(&object_path).await?;
-        file.write_all(&content).await?;
-        file.sync_all().await?;
-
-        let repo_id = self.repository.repo_id().await?;
-
-        let b = InsertBlob {
-            repo_id,
-            blob_id,
-            has_blob: true,
-            blob_size: content.len() as i64,
-            valid_from: Utc::now(),
-        };
-        let sb = stream::iter(vec![b]);
-        self.repository
-            .add_blobs(sb)
-            .await
-            .map_err(|err| Status::from_error(err.into()))?;
-        debug!("added blob {:?}", object_path);
-
-        Ok(Response::new(UploadResponse {}))
+        request: Request<Streaming<TransferItem>>,
+    ) -> Result<Response<PrepareTransferResponse>, Status> {
+        let transfer_id = request
+            .into_inner()
+            .map_ok::<DbTransferItem, _>(TransferItem::into)
+            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.prepare_transfer(s))
+            .await?;
+        Ok(Response::new(PrepareTransferResponse {}))
     }
 
-    async fn download(
+    type CreateTransferRequestStream =
+        Pin<Box<dyn Stream<Item = Result<TransferItem, Status>> + Send + 'static>>;
+
+    async fn create_transfer_request(
         &self,
-        request: Request<DownloadRequest>,
-    ) -> Result<Response<DownloadResponse>, Status> {
-        let DownloadRequest { blob_id } = request.into_inner();
-
-        let blobs_path = self.repository.blobs_path().clone();
-        let object_path = blobs_path.join(&blob_id);
-
-        let mut file = TokioFile::open(&object_path)
+        request: Request<CreateTransferRequestRequest>,
+    ) -> Result<Response<Self::CreateTransferRequestStream>, Status> {
+        let CreateTransferRequestRequest {
+            transfer_id,
+            repo_id,
+        } = request.into_inner();
+        let stream = self
+            .repository
+            .create_transfer_request(transfer_id, repo_id)
             .await
-            .context(format!("unable to access {:?}", object_path))
-            .map_err(|err| Status::from_error(err.into()))?;
-        let mut content = Vec::new();
-        file.read_to_end(&mut content)
-            .await
-            .context(format!("unable to read {:?}", object_path))
-            .map_err(|err| Status::from_error(err.into()))?;
-        debug!("read blob {:?}", object_path);
+            .err_into()
+            .map_ok::<TransferItem, _>(DbTransferItem::into);
+        Ok(Response::new(Box::pin(stream)))
+    }
 
-        Ok(Response::new(DownloadResponse { content }))
+    async fn finalise_transfer(
+        &self,
+        request: Request<FinaliseTransferRequest>,
+    ) -> Result<Response<FinaliseTransferResponse>, Status> {
+        let FinaliseTransferRequest { transfer_id } = request.into_inner();
+        self.repository.finalise_transfer(transfer_id).await?;
+        Ok(Response::new(FinaliseTransferResponse {}))
     }
 }

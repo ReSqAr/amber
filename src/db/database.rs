@@ -1,7 +1,7 @@
 use crate::db::models::{
     Blob, BlobId, BlobWithPaths, Connection, CurrentRepository, File, FileEqBlobCheck,
     FilePathWithBlobId, FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation,
-    Repository, VirtualFile,
+    Repository, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -723,5 +723,31 @@ impl Database {
         sqlx::query_as::<_, Connection>(query)
             .fetch_all(&self.pool)
             .await
+    }
+    pub(crate) async fn populate_missing_blobs_for_transfer(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> DBOutputStream<'static, TransferItem> {
+        self.stream(
+            query(
+                "
+            INSERT INTO transfers
+            SELECT * FROM <>
+            WHERE ...
+            RETURNING blob_id, path;",
+            )
+            .bind(transfer_id)
+            .bind(repo_id),
+        )
+    }
+
+    pub(crate) async fn select_missing_blobs_for_transfer(
+        &self,
+        transfer_id: u32,
+    ) -> DBOutputStream<'static, TransferItem> {
+        self.stream(
+            query("SELECT blob_id, path FROM transfers WHERE transfer_id = ?;").bind(transfer_id),
+        )
     }
 }
