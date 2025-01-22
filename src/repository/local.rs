@@ -13,7 +13,7 @@ use crate::repository::traits::{
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
 use anyhow::{anyhow, Context};
-use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
+use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -381,19 +381,19 @@ impl BlobReceiver for LocalRepository {
         repo_id: String,
     ) -> impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static {
         let transfer_path = self.transfer_path(transfer_id);
-        fs::create_dir_all(transfer_path)
-            .await
-            .context("unable to create transfer directory")
-            .expect("unable to create transfer directory"); // TODO
+        if let Err(e) = fs::create_dir_all(transfer_path).await {
+            return stream::iter(vec![Err(e.into())]).boxed();
+        }
 
         self.db
             .populate_missing_blobs_for_transfer(transfer_id, repo_id)
             .await
             .err_into()
+            .boxed()
     }
 
     async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
-        let missing_blobs = self.db.select_missing_blobs_for_transfer(transfer_id).await;
+        let missing_blobs = self.db.select_transfer(transfer_id).await;
 
         // TODO: use 'blob_adder' to assimilate/move all the blobs
 

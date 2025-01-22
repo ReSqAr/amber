@@ -26,9 +26,9 @@ impl Default for WalkerConfig {
 
 #[derive(Error, Debug)]
 pub(crate) enum Error {
-    #[error("I/O error")]
+    #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
-    #[error("walker error")]
+    #[error("walker error: {0}")]
     Ignore(#[from] ignore::Error),
     #[error("observer error")]
     Observer(String),

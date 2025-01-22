@@ -727,22 +727,43 @@ impl Database {
     pub(crate) async fn populate_missing_blobs_for_transfer(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        remote_repo_id: String,
     ) -> DBOutputStream<'static, TransferItem> {
         self.stream(
             query(
                 "
-            INSERT INTO transfers
-            SELECT * FROM <>
-            WHERE ...
-            RETURNING blob_id, path;",
+            INSERT INTO transfers (transfer_id, blob_id, path)
+            WITH
+                local_blobs AS (
+                    SELECT blob_id
+                    FROM latest_available_blobs
+                    INNER JOIN current_repository ON (repo_id)
+                ),
+                remote_blobs AS (
+                    SELECT blob_id
+                    FROM latest_available_blobs
+                    WHERE repo_id = ?
+                ),
+                missing_blob_ids AS (
+                    SELECT DISTINCT f.blob_id
+                    FROM latest_filesystem_files f
+                    LEFT JOIN local_blobs lb ON f.blob_id = lb.blob_id
+                    WHERE lb.blob_id IS NULL
+                )
+            SELECT
+                ? AS transfer_id,
+                m.blob_id,
+                m.blob_id AS path
+            FROM missing_blob_ids m
+            INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
+            RETURNING transfer_id, blob_id, path;",
             )
-            .bind(transfer_id)
-            .bind(repo_id),
+            .bind(remote_repo_id)
+            .bind(transfer_id),
         )
     }
 
-    pub(crate) async fn select_missing_blobs_for_transfer(
+    pub(crate) async fn select_transfer(
         &self,
         transfer_id: u32,
     ) -> DBOutputStream<'static, TransferItem> {
