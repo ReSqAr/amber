@@ -4,7 +4,6 @@ use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneClient;
 use crate::repository::traits::{LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams};
 use crate::utils::app_error::AppError;
-use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use log::debug;
 
@@ -76,7 +75,7 @@ where
         &self,
         params: <T as SyncerParams>::Params,
     ) -> impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static {
-        let boxed_stream: BoxStream<'static, _> = match self {
+        match self {
             TrackingRepository::Local(local) => {
                 <LocalRepository as Syncer<T>>::select(local, params)
                     .await
@@ -85,8 +84,7 @@ where
             TrackingRepository::Grpc(grpc) => <GRPCClient as Syncer<T>>::select(grpc, params)
                 .await
                 .boxed(),
-        };
-        boxed_stream
+        }
     }
 
     async fn merge<S>(&self, s: S) -> Result<(), AppError>
