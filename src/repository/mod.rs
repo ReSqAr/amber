@@ -4,4 +4,3 @@ pub(crate) mod local;
 pub(crate) mod logic;
 pub(crate) mod rclone;
 pub(crate) mod traits;
-mod transfer;

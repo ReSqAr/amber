@@ -365,8 +365,8 @@ impl BlobSender for LocalRepository {
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
         // TODO: hardlink files to staging folder to the desired path (make sure it stays in the transfer folder)
-        // create path as part of event stream
-        // let transfer_path = self.transfer_path(transfer_id);
+        // create path as part of event stream (flight: ok)
+        // let transfer_path = self.transfer_path(transfer_id); // needs to happen anyway since folders can be nested
         // fs::create_dir_all(transfer_path)
         //     .await
         //     .context("unable to create transfer directory")?;
@@ -395,7 +395,12 @@ impl BlobReceiver for LocalRepository {
     async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
         let missing_blobs = self.db.select_transfer(transfer_id).await;
 
-        // TODO: use 'blob_adder' to assimilate/move all the blobs
+        // TODO: use 'blob_adder' to assimilate/move all the blobs (flight: ok)
+        // save to
+        // 1. get hash
+        // 2. mv to self.blob_path(<blob_id>)
+        // then (stream down the line)
+        // 1. mv to blob
 
         todo!()
     }
