@@ -165,7 +165,7 @@ pub struct Connection {
     pub parameter: String,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct TransferItem {
     pub transfer_id: u32,
     pub blob_id: String,
