@@ -23,7 +23,7 @@ pub async fn add_files(
     repository: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Sync + Send + 'static,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let concurrency = 10;
+    let concurrency = 100; // TODO: config constant
 
     let (file_tx, file_rx) = mpsc::channel(100);
     let db_file_handle = {
@@ -34,7 +34,7 @@ pub async fn add_files(
                 .await
         })
     };
-    let (blob_tx, blob_rx) = mpsc::channel(100);
+    let (blob_tx, blob_rx) = mpsc::channel(100); // TODO: constant
     let db_blob_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -105,8 +105,8 @@ pub async fn add_files(
         state_handle.await??;
     }
 
-    drop(file_tx);
-    drop(blob_tx);
+    drop(file_tx); // TODO: check that no messages get lost
+    drop(blob_tx); // TODO: check that no messages get lost
     db_file_handle.await??;
     db_blob_handle.await??;
 

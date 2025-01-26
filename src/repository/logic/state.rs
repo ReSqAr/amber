@@ -234,7 +234,7 @@ pub async fn state(
         }
 
         // close the channels once the stream is exhausted.
-        drop(needs_check_tx_clone);
+        drop(needs_check_tx_clone); // TODO: check that no messages get lost
     });
 
     // performs the additional checks on files and then sends them back to the DB observation channel
@@ -281,7 +281,7 @@ pub async fn state(
 
         // close the channels once the stream is exhausted.
         drop(needs_check_tx_clone); // note: this is how we break the dependency loop
-        drop(obs_tx_clone);
+        drop(obs_tx_clone); // TODO: check that no messages get lost
     });
 
     let vfs_clone = vfs.clone();
