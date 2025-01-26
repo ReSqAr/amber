@@ -7,8 +7,8 @@ use crate::db::models::{
 };
 use crate::repository::connection::ConnectedRepository;
 use crate::repository::traits::{
-    Adder, BlobReceiver, BlobSender, ConnectionManager, Deprecated, LastIndices, LastIndicesSyncer,
-    Local, Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
+    Adder, BlobReceiver, BlobSender, ConnectionManager, LastIndices, LastIndicesSyncer, Local,
+    Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::app_error::AppError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -314,18 +314,6 @@ impl VirtualFilesystem for LocalRepository {
         self.db
             .add_virtual_filesystem_observations(input_stream)
             .await
-    }
-}
-
-impl Deprecated for LocalRepository {
-    fn deprecated_missing_blobs(
-        &self,
-        source_repo_id: String,
-        target_repo_id: String,
-    ) -> impl Stream<Item = Result<BlobId, AppError>> + Unpin + Send {
-        self.db
-            .deprecated_missing_blobs(source_repo_id, target_repo_id)
-            .err_into()
     }
 }
 

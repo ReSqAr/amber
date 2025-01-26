@@ -1,7 +1,7 @@
 use crate::db::models::{
-    Blob, BlobId, BlobWithPaths, Connection, CurrentRepository, File, FileEqBlobCheck,
-    FilePathWithBlobId, FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation,
-    Repository, TransferItem, VirtualFile,
+    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
+    FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, TransferItem,
+    VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -414,32 +414,6 @@ impl Database {
             ",
             )
             .bind(repo_id),
-        )
-    }
-
-    pub fn deprecated_missing_blobs(
-        &self,
-        source_repo_id: String,
-        target_repo_id: String,
-    ) -> DBOutputStream<BlobId> {
-        self.stream(
-            query(
-                "
-                SELECT
-                    b.blob_id
-                FROM latest_available_blobs b
-                WHERE
-                      b.repo_id = ?
-                  AND b.blob_id NOT IN (
-                    SELECT
-                        blob_id
-                    FROM latest_available_blobs
-                    WHERE
-                        repo_id = ?
-                );",
-            )
-            .bind(source_repo_id)
-            .bind(target_repo_id),
         )
     }
 
