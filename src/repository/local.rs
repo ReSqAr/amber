@@ -10,7 +10,7 @@ use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, ConnectionManager, LastIndices, LastIndicesSyncer, Local,
     Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use anyhow::{anyhow, Context};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -169,13 +169,13 @@ impl Local for LocalRepository {
 }
 
 impl Metadata for LocalRepository {
-    async fn repo_id(&self) -> Result<String, AppError> {
+    async fn repo_id(&self) -> Result<String, InternalError> {
         Ok(self.repo_id.clone())
     }
 }
 
 impl Missing for LocalRepository {
-    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, AppError>> + Unpin + Send {
+    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send {
         self.db.missing_blobs(self.repo_id.clone()).err_into()
     }
 }
@@ -197,7 +197,7 @@ impl Adder for LocalRepository {
 }
 
 impl LastIndicesSyncer for LocalRepository {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
+    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
         let Repository {
             last_file_index,
             last_blob_index,
@@ -209,7 +209,7 @@ impl LastIndicesSyncer for LocalRepository {
         })
     }
 
-    async fn refresh(&self) -> Result<(), AppError> {
+    async fn refresh(&self) -> Result<(), InternalError> {
         self.db.update_last_indices().await?;
         Ok(())
     }
@@ -224,12 +224,12 @@ impl Syncer<Repository> for LocalRepository {
         &self,
         _params: (),
     ) -> impl Future<
-        Output = impl Stream<Item = Result<Repository, AppError>> + Unpin + Send + 'static,
+        Output = impl Stream<Item = Result<Repository, InternalError>> + Unpin + Send + 'static,
     > + Send {
         self.db.select_repositories().map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = Repository> + Unpin + Send + 'static,
     {
@@ -245,12 +245,12 @@ impl Syncer<File> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<File, AppError>> + Unpin + Send + 'static> + Send
-    {
+    ) -> impl Future<Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static>
+           + Send {
         self.db.select_files(last_index).map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = File> + Unpin + Send + 'static,
     {
@@ -266,12 +266,12 @@ impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<Blob, AppError>> + Unpin + Send + 'static> + Send
-    {
+    ) -> impl Future<Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static>
+           + Send {
         self.db.select_blobs(last_index).map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = Blob> + Unpin + Send + 'static,
     {
@@ -282,7 +282,7 @@ impl Syncer<Blob> for LocalRepository {
 impl Reconciler for LocalRepository {
     fn target_filesystem_state(
         &self,
-    ) -> impl Stream<Item = Result<FilePathWithBlobId, AppError>> + Unpin + Send {
+    ) -> impl Stream<Item = Result<FilePathWithBlobId, InternalError>> + Unpin + Send {
         self.db
             .target_filesystem_state(self.repo_id.clone())
             .err_into()
@@ -318,15 +318,15 @@ impl VirtualFilesystem for LocalRepository {
 }
 
 impl ConnectionManager for LocalRepository {
-    async fn add(&self, connection: &Connection) -> Result<(), AppError> {
+    async fn add(&self, connection: &Connection) -> Result<(), InternalError> {
         self.db.add_connection(connection).await.map_err(Into::into)
     }
 
-    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, AppError> {
+    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, InternalError> {
         self.db.connection_by_name(name).await.map_err(Into::into)
     }
 
-    async fn list(&self) -> Result<Vec<Connection>, AppError> {
+    async fn list(&self) -> Result<Vec<Connection>, InternalError> {
         self.db.list_all_connections().await.map_err(Into::into)
     }
 
@@ -348,7 +348,7 @@ impl ConnectionManager for LocalRepository {
 }
 
 impl BlobSender for LocalRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<(), AppError>
+    async fn prepare_transfer<S>(&self, s: S) -> Result<(), InternalError>
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
@@ -367,7 +367,7 @@ impl BlobReceiver for LocalRepository {
         &self,
         transfer_id: u32,
         repo_id: String,
-    ) -> impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
         let transfer_path = self.transfer_path(transfer_id);
         if let Err(e) = fs::create_dir_all(transfer_path).await {
             return stream::iter(vec![Err(e.into())]).boxed();
@@ -380,7 +380,7 @@ impl BlobReceiver for LocalRepository {
             .boxed()
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
         let missing_blobs = self.db.select_transfer(transfer_id).await;
 
         // TODO: use 'blob_adder' to assimilate/move all the blobs (flight: ok)

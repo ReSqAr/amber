@@ -11,7 +11,7 @@ use crate::grpc::server::grpc::{
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
 };
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};
@@ -41,7 +41,7 @@ impl GRPCClient {
 }
 
 impl Metadata for GRPCClient {
-    async fn repo_id(&self) -> Result<String, AppError> {
+    async fn repo_id(&self) -> Result<String, InternalError> {
         let repo_id_request = tonic::Request::new(RepositoryIdRequest {});
         let remote_repo = self
             .client
@@ -55,7 +55,7 @@ impl Metadata for GRPCClient {
 }
 
 impl LastIndicesSyncer for GRPCClient {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
+    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
         let LookupLastIndicesResponse { file, blob } = self
             .client
             .write()
@@ -68,7 +68,7 @@ impl LastIndicesSyncer for GRPCClient {
         Ok(LastIndices { file, blob })
     }
 
-    async fn refresh(&self) -> Result<(), AppError> {
+    async fn refresh(&self) -> Result<(), InternalError> {
         self.client
             .write()
             .await
@@ -83,7 +83,10 @@ impl Syncer<DbRepository> for GRPCClient {
         &self,
         _params: (),
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbRepository, AppError>> + Unpin + Send + 'static,
+        Output = impl futures::Stream<Item = Result<DbRepository, InternalError>>
+                     + Unpin
+                     + Send
+                     + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -96,7 +99,7 @@ impl Syncer<DbRepository> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = DbRepository> + Unpin + Send + 'static,
     {
@@ -117,7 +120,7 @@ impl Syncer<DbFile> for GRPCClient {
         &self,
         last_index: i32,
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbFile, AppError>> + Unpin + Send + 'static,
+        Output = impl futures::Stream<Item = Result<DbFile, InternalError>> + Unpin + Send + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -130,7 +133,7 @@ impl Syncer<DbFile> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = DbFile> + Unpin + Send + 'static,
     {
@@ -151,7 +154,7 @@ impl Syncer<DbBlob> for GRPCClient {
         &self,
         last_index: i32,
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbBlob, AppError>> + Unpin + Send + 'static,
+        Output = impl futures::Stream<Item = Result<DbBlob, InternalError>> + Unpin + Send + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -164,7 +167,7 @@ impl Syncer<DbBlob> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = DbBlob> + Unpin + Send + 'static,
     {
@@ -184,7 +187,7 @@ impl BlobSender for GRPCClient {
     fn prepare_transfer<S>(
         &self,
         s: S,
-    ) -> impl std::future::Future<Output = Result<(), AppError>> + Send
+    ) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = DbTransferItem> + Unpin + Send + 'static,
     {
@@ -206,7 +209,7 @@ impl BlobReceiver for GRPCClient {
         transfer_id: u32,
         repo_id: String,
     ) -> impl std::future::Future<
-        Output = impl Stream<Item = Result<DbTransferItem, AppError>> + Unpin + Send + 'static,
+        Output = impl Stream<Item = Result<DbTransferItem, InternalError>> + Unpin + Send + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -222,7 +225,7 @@ impl BlobReceiver for GRPCClient {
         }
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
         self.client
             .write()
             .await

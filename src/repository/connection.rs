@@ -5,7 +5,7 @@ use crate::repository::rclone::RCloneClient;
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
 };
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use futures::{Stream, StreamExt};
 use log::debug;
 
@@ -27,7 +27,7 @@ impl Repository {
 }
 
 impl Metadata for Repository {
-    async fn repo_id(&self) -> Result<String, AppError> {
+    async fn repo_id(&self) -> Result<String, InternalError> {
         match self {
             Repository::Local(local) => local.repo_id().await,
             Repository::Grpc(grpc) => grpc.repo_id().await,
@@ -43,7 +43,7 @@ pub enum TrackingRepository {
 }
 
 impl Metadata for TrackingRepository {
-    async fn repo_id(&self) -> Result<String, AppError> {
+    async fn repo_id(&self) -> Result<String, InternalError> {
         match self {
             TrackingRepository::Local(local) => local.repo_id().await,
             TrackingRepository::Grpc(grpc) => grpc.repo_id().await,
@@ -52,14 +52,14 @@ impl Metadata for TrackingRepository {
 }
 
 impl LastIndicesSyncer for TrackingRepository {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, AppError> {
+    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
         match self {
             TrackingRepository::Local(local) => local.lookup(repo_id).await,
             TrackingRepository::Grpc(grpc) => grpc.lookup(repo_id).await,
         }
     }
 
-    async fn refresh(&self) -> Result<(), AppError> {
+    async fn refresh(&self) -> Result<(), InternalError> {
         match self {
             TrackingRepository::Local(local) => local.refresh().await,
             TrackingRepository::Grpc(grpc) => grpc.refresh().await,
@@ -76,7 +76,7 @@ where
     async fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static {
         match self {
             TrackingRepository::Local(local) => {
                 <LocalRepository as Syncer<T>>::select(local, params)
@@ -89,7 +89,7 @@ where
         }
     }
 
-    async fn merge<S>(&self, s: S) -> Result<(), AppError>
+    async fn merge<S>(&self, s: S) -> Result<(), InternalError>
     where
         S: Stream<Item = T> + Unpin + Send + 'static,
     {
@@ -101,7 +101,7 @@ where
 }
 
 impl BlobSender for TrackingRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<(), AppError>
+    async fn prepare_transfer<S>(&self, s: S) -> Result<(), InternalError>
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
@@ -117,7 +117,7 @@ impl BlobReceiver for TrackingRepository {
         &self,
         transfer_id: u32,
         repo_id: String,
-    ) -> impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
         match self {
             TrackingRepository::Local(local) => local
                 .create_transfer_request(transfer_id, repo_id)
@@ -130,7 +130,7 @@ impl BlobReceiver for TrackingRepository {
         }
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), AppError> {
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
         match self {
             TrackingRepository::Local(local) => local.finalise_transfer(transfer_id).await,
             TrackingRepository::Grpc(grpc) => grpc.finalise_transfer(transfer_id).await,

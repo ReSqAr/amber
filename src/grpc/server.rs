@@ -10,7 +10,7 @@ use crate::grpc::server::grpc::{
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
 };
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
@@ -67,7 +67,7 @@ where
         request
             .into_inner()
             .map_ok::<DbRepository, _>(Repository::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -78,7 +78,7 @@ where
         request
             .into_inner()
             .map_ok::<DbFile, _>(File::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeFilesResponse {}))
     }
@@ -89,7 +89,7 @@ where
         request
             .into_inner()
             .map_ok::<DbBlob, _>(Blob::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeBlobsResponse {}))
     }
@@ -157,10 +157,10 @@ where
         &self,
         request: Request<Streaming<TransferItem>>,
     ) -> Result<Response<PrepareTransferResponse>, Status> {
-        let transfer_id = request
+        request
             .into_inner()
             .map_ok::<DbTransferItem, _>(TransferItem::into)
-            .try_forward_into::<_, _, _, _, AppError>(|s| self.repository.prepare_transfer(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.prepare_transfer(s))
             .await?;
         Ok(Response::new(PrepareTransferResponse {}))
     }

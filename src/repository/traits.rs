@@ -1,8 +1,8 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    BlobId, BlobWithPaths, Connection, FilePathWithBlobId, Observation, TransferItem, VirtualFile,
+    BlobWithPaths, Connection, FilePathWithBlobId, Observation, TransferItem, VirtualFile,
 };
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::Stream;
 use std::future::Future;
@@ -18,11 +18,11 @@ pub trait Local {
 }
 
 pub trait Metadata {
-    fn repo_id(&self) -> impl Future<Output = Result<String, AppError>> + Send;
+    fn repo_id(&self) -> impl Future<Output = Result<String, InternalError>> + Send;
 }
 
 pub trait Missing {
-    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, AppError>> + Unpin + Send;
+    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send;
 }
 
 pub trait Adder {
@@ -42,9 +42,11 @@ pub struct LastIndices {
 }
 
 pub trait LastIndicesSyncer {
-    fn lookup(&self, repo_id: String)
-        -> impl Future<Output = Result<LastIndices, AppError>> + Send;
-    fn refresh(&self) -> impl Future<Output = Result<(), AppError>> + Send;
+    fn lookup(
+        &self,
+        repo_id: String,
+    ) -> impl Future<Output = Result<LastIndices, InternalError>> + Send;
+    fn refresh(&self) -> impl Future<Output = Result<(), InternalError>> + Send;
 }
 
 pub trait SyncerParams {
@@ -55,9 +57,9 @@ pub trait Syncer<T: SyncerParams> {
     fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Future<Output = impl Stream<Item = Result<T, AppError>> + Unpin + Send + 'static> + Send;
+    ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = T> + Unpin + Send + 'static;
 }
@@ -65,17 +67,7 @@ pub trait Syncer<T: SyncerParams> {
 pub trait Reconciler {
     fn target_filesystem_state(
         &self,
-    ) -> impl Stream<Item = Result<FilePathWithBlobId, AppError>> + Unpin + Send;
-}
-
-//#[deprecated]
-pub trait Deprecated {
-    //#[deprecated]
-    fn deprecated_missing_blobs(
-        &self,
-        source_repo_id: String,
-        target_repo_id: String,
-    ) -> impl Stream<Item = Result<BlobId, AppError>> + Unpin + Send;
+    ) -> impl Stream<Item = Result<FilePathWithBlobId, InternalError>> + Unpin + Send;
 }
 
 pub trait VirtualFilesystem {
@@ -94,9 +86,9 @@ pub trait VirtualFilesystem {
 }
 
 pub trait ConnectionManager {
-    async fn add(&self, connection: &Connection) -> Result<(), AppError>;
-    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, AppError>;
-    async fn list(&self) -> Result<Vec<Connection>, AppError>;
+    async fn add(&self, connection: &Connection) -> Result<(), InternalError>;
+    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, InternalError>;
+    async fn list(&self) -> Result<Vec<Connection>, InternalError>;
     async fn connect(
         &self,
         name: String,
@@ -104,7 +96,7 @@ pub trait ConnectionManager {
 }
 
 pub trait BlobSender {
-    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<(), AppError>> + Send
+    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static;
 }
@@ -115,11 +107,11 @@ pub trait BlobReceiver {
         transfer_id: u32,
         repo_id: String,
     ) -> impl Future<
-        Output = impl Stream<Item = Result<TransferItem, AppError>> + Unpin + Send + 'static,
+        Output = impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static,
     > + Send;
 
     fn finalise_transfer(
         &self,
         transfer_id: u32,
-    ) -> impl Future<Output = Result<(), AppError>> + Send;
+    ) -> impl Future<Output = Result<(), InternalError>> + Send;
 }

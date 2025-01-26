@@ -1,5 +1,5 @@
 use crate::repository::traits::{Syncer, SyncerParams};
-use crate::utils::app_error::AppError;
+use crate::utils::internal_error::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use log::debug;
 
@@ -17,14 +17,14 @@ where
     local
         .select(local_param)
         .await
-        .try_forward_into::<_, _, _, _, AppError>(|s| remote.merge(s))
+        .try_forward_into::<_, _, _, _, InternalError>(|s| remote.merge(s))
         .await?;
     debug!("remote: merged type: {}", std::any::type_name::<I>());
 
     remote
         .select(remote_param)
         .await
-        .try_forward_into::<_, _, _, _, AppError>(|s| local.merge(s))
+        .try_forward_into::<_, _, _, _, InternalError>(|s| local.merge(s))
         .await?;
     debug!("local: merged type: {}", std::any::type_name::<I>());
 
