@@ -2,7 +2,7 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::establish_connection;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobId, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
+    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, InsertBlob, Observation, Repository,
     TransferItem, VirtualFile,
 };
 use crate::repository::connection::ConnectedRepository;
@@ -10,10 +10,12 @@ use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, ConnectionManager, LastIndices, LastIndicesSyncer, Local,
     Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
-use crate::utils::internal_error::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::internal_error::InternalError;
+use crate::utils::pipe::TryForwardIntoExt;
+use crate::utils::sha256;
 use anyhow::{anyhow, Context};
-use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,7 @@ pub(crate) struct LocalRepository {
     root: PathBuf,
     repo_id: String,
     db: Database,
+    buffer_size: usize,
 }
 
 /// Recursively searches parent directories for the folder to determine the repository root.
@@ -93,6 +96,7 @@ impl LocalRepository {
             root,
             repo_id: repo.repo_id,
             db,
+            buffer_size: 100, // TODO: config
         })
     }
 
@@ -190,7 +194,7 @@ impl Adder for LocalRepository {
 
     async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send + Sync,
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
     }
@@ -352,12 +356,35 @@ impl BlobSender for LocalRepository {
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
-        // TODO: hardlink files to staging folder to the desired path (make sure it stays in the transfer folder)
-        // create path as part of event stream (flight: ok)
-        // let transfer_path = self.transfer_path(transfer_id); // needs to happen anyway since folders can be nested
-        // fs::create_dir_all(transfer_path)
-        //     .await
-        //     .context("unable to create transfer directory")?;
+        let concurrency = 100;
+        let stream = tokio_stream::StreamExt::map(s, |item: TransferItem| {
+            async move {
+                let blob_path = self.blob_path(item.blob_id);
+                let transfer_path = self.transfer_path(item.transfer_id).join(item.path); // TODO check in transfer path
+                if let Some(parent) = transfer_path.parent() {
+                    fs::create_dir_all(parent).await?;
+                }
+
+                fs::hard_link(blob_path, transfer_path).await?;
+                Result::<(), InternalError>::Ok(())
+            }
+        });
+
+        // Allow multiple hard link operations to run concurrently
+        let stream = futures::StreamExt::buffer_unordered(stream, concurrency);
+
+        //let stream = stream.try_all(|_| true).await? // TODO: express in more straightforward manner
+
+        pin_mut!(stream);
+        while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
+            match maybe_path {
+                Ok(()) => {}
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -381,15 +408,53 @@ impl BlobReceiver for LocalRepository {
     }
 
     async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
-        let missing_blobs = self.db.select_transfer(transfer_id).await;
+        self.db.select_transfer(transfer_id).await
+            .map_ok(|r| Item { path: r.path, expected_sh256: Some(r.blob_id) })
+            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
+                assimilate(self, transfer_id, s).await
+            })
+            .await?;
 
-        // TODO: use 'blob_adder' to assimilate/move all the blobs (flight: ok)
-        // save to
-        // 1. get hash
-        // 2. mv to self.blob_path(<blob_id>)
-        // then (stream down the line)
-        // 1. mv to blob
-
-        todo!()
+        Ok(())
     }
+}
+
+#[derive(Debug)]
+pub struct Item {
+    pub path: String,
+    pub expected_sh256: Option<String>,
+}
+
+
+async fn assimilate<S>(
+    local: &LocalRepository,
+    transfer_id: u32,
+    s: S,
+) -> Result<(), InternalError>
+where
+    S: Stream<Item = Item> + Unpin + Send + Sync + 'static,
+{
+    let repo_id = local.repo_id().await?;
+    s.map(move |i| {
+        let transfer_id_clone = transfer_id.clone();
+        let repo_id_clone = repo_id.clone();
+        async move {
+            let file_path = local.transfer_path(transfer_id_clone).join(i.path);
+            let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
+            // TODO: compare expected to actual
+            let target_path = local.blob_path(blob_id.clone());
+            fs::rename(file_path, target_path).await?; // TODO: check if exists (noop) + lock for parallel access
+
+            Ok::<InsertBlob, InternalError>(InsertBlob {
+                repo_id: repo_id_clone,
+                blob_id,
+                blob_size,
+                has_blob: true,
+                valid_from: chrono::Utc::now(),
+            })
+        }
+    })
+    .buffer_unordered(100) // TODO: constant via config
+    .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
+    .await
 }
