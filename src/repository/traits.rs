@@ -2,8 +2,8 @@ use crate::db::database::DBOutputStream;
 use crate::db::models::{
     BlobWithPaths, Connection, FilePathWithBlobId, Observation, TransferItem, VirtualFile,
 };
-use crate::utils::internal_error::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::errors::InternalError;
 use futures::Stream;
 use std::future::Future;
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ pub trait Adder {
 
     fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send + Sync;
+        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
 }
 
 #[derive(Debug)]

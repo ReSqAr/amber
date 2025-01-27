@@ -20,6 +20,8 @@ use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use crate::repository::logic::assimilate;
+use crate::repository::logic::assimilate::Item;
 
 const REPO_FOLDER_NAME: &str = ".amb";
 
@@ -408,10 +410,15 @@ impl BlobReceiver for LocalRepository {
     }
 
     async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
-        self.db.select_transfer(transfer_id).await
-            .map_ok(|r| Item { path: r.path, expected_sh256: Some(r.blob_id) })
+        self.db
+            .select_transfer(transfer_id)
+            .await
+            .map_ok(|r| Item {
+                path: r.path,
+                expected_blob_id: Some(r.blob_id),
+            })
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate(self, transfer_id, s).await
+                assimilate::assimilate(self, transfer_id, s).await
             })
             .await?;
 
@@ -419,42 +426,3 @@ impl BlobReceiver for LocalRepository {
     }
 }
 
-#[derive(Debug)]
-pub struct Item {
-    pub path: String,
-    pub expected_sh256: Option<String>,
-}
-
-
-async fn assimilate<S>(
-    local: &LocalRepository,
-    transfer_id: u32,
-    s: S,
-) -> Result<(), InternalError>
-where
-    S: Stream<Item = Item> + Unpin + Send + Sync + 'static,
-{
-    let repo_id = local.repo_id().await?;
-    s.map(move |i| {
-        let transfer_id_clone = transfer_id.clone();
-        let repo_id_clone = repo_id.clone();
-        async move {
-            let file_path = local.transfer_path(transfer_id_clone).join(i.path);
-            let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
-            // TODO: compare expected to actual
-            let target_path = local.blob_path(blob_id.clone());
-            fs::rename(file_path, target_path).await?; // TODO: check if exists (noop) + lock for parallel access
-
-            Ok::<InsertBlob, InternalError>(InsertBlob {
-                repo_id: repo_id_clone,
-                blob_id,
-                blob_size,
-                has_blob: true,
-                valid_from: chrono::Utc::now(),
-            })
-        }
-    })
-    .buffer_unordered(100) // TODO: constant via config
-    .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
-    .await
-}
