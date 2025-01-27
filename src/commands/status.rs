@@ -14,10 +14,10 @@ pub async fn status(details: bool) -> Result<(), Box<dyn std::error::Error>> {
     show_status(local_repository, details).await
 }
 pub async fn show_status(
-    local_repository: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Sync + Send + 'static,
+    local: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
     details: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (handle, mut stream) = state::state(local_repository, StateConfig::default()).await?;
+    let (handle, mut stream) = state::state(local, StateConfig::default()).await?;
     let mut count = HashMap::new();
 
     while let Some(file_result) = stream.next().await {

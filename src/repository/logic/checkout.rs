@@ -6,17 +6,17 @@ use log::debug;
 use tokio::fs;
 
 pub async fn checkout(
-    local_repository: &(impl Local + Reconciler + Send + Sync),
+    local: &(impl Local + Reconciler + Send),
 ) -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    let mut desired_state = local_repository.target_filesystem_state();
+    let mut desired_state = local.target_filesystem_state();
     while let Some(next) = desired_state.next().await {
         let FilePathWithBlobId {
             path: relative_path,
             blob_id,
         } = next?;
-        let object_path = local_repository.blob_path(blob_id);
+        let object_path = local.blob_path(blob_id);
 
-        let target_path = local_repository.root().join(relative_path);
+        let target_path = local.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);
 
         if let Some(parent) = target_path.parent() {

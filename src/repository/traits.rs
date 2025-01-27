@@ -24,6 +24,9 @@ pub trait Metadata {
 pub enum BufferType {
     Assimilate,
     TransferRcloneFilesWriter,
+    AddFilesBlobifyFutureFileBuffer,
+    AddFilesDBAddFiles,
+    AddFilesDBAddBlobs,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;
@@ -36,7 +39,7 @@ pub trait Missing {
 pub trait Adder {
     fn add_files<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
     where
-        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send + Sync;
+        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send;
 
     fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
     where

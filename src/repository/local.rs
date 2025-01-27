@@ -1,10 +1,10 @@
 use crate::db::database::{DBOutputStream, Database};
-use crate::db::establish_connection;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
     TransferItem, VirtualFile,
 };
+use crate::db::{establish_connection, models};
 use crate::repository::connection::ConnectedRepository;
 use crate::repository::logic::assimilate;
 use crate::repository::logic::assimilate::Item;
@@ -195,14 +195,14 @@ impl Missing for LocalRepository {
 impl Adder for LocalRepository {
     async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send + Sync,
+        S: Stream<Item = models::InsertFile> + Unpin + Send,
     {
         self.db.add_files(s).await
     }
 
     async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
     where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send,
+        S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
     }

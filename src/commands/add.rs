@@ -3,7 +3,7 @@ use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::state::{Error, StateConfig};
 use crate::repository::logic::{blobify, state};
-use crate::repository::traits::{Adder, Local, Metadata, VirtualFilesystem};
+use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
@@ -20,12 +20,18 @@ pub async fn add(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn add_files(
-    repository: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Sync + Send + 'static,
+    repository: impl Metadata
+        + Local
+        + Adder
+        + VirtualFilesystem
+        + Config
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let concurrency = 100; // TODO: config constant
-
-    let (file_tx, file_rx) = mpsc::channel(100);
+    let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
     let db_file_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -34,7 +40,7 @@ pub async fn add_files(
                 .await
         })
     };
-    let (blob_tx, blob_rx) = mpsc::channel(100); // TODO: constant
+    let (blob_tx, blob_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddBlobs));
     let db_blob_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -85,7 +91,10 @@ pub async fn add_files(
             });
 
         // Allow multiple blobify operations to run concurrently
-        let stream = futures::StreamExt::buffer_unordered(stream, concurrency);
+        let stream = futures::StreamExt::buffer_unordered(
+            stream,
+            repository.buffer_size(BufferType::AddFilesBlobifyFutureFileBuffer),
+        );
 
         let mut count = 0;
         pin_mut!(stream);
