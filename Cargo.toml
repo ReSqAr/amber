@@ -25,6 +25,8 @@ tokio = { version = "1.43", features = ["rt", "rt-multi-thread", "macros", "proc
 tokio-stream = "0.1.17"
 tonic = "0.12"
 uuid = { version = "1.12", features = ["v4", "v7"] }
+tempfile = "3.15.0"
+rand = "0.8.5"
 
 [build-dependencies]
 tonic-build = "0.12.3"
