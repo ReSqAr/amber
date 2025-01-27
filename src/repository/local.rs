@@ -2,26 +2,25 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::establish_connection;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, InsertBlob, Observation, Repository,
+    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
     TransferItem, VirtualFile,
 };
 use crate::repository::connection::ConnectedRepository;
+use crate::repository::logic::assimilate;
+use crate::repository::logic::assimilate::Item;
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, ConnectionManager, LastIndices, LastIndicesSyncer, Local,
     Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
+use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
-use crate::utils::errors::{AppError, InternalError};
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::sha256;
 use anyhow::{anyhow, Context};
 use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use crate::repository::logic::assimilate;
-use crate::repository::logic::assimilate::Item;
 
 const REPO_FOLDER_NAME: &str = ".amb";
 
@@ -425,4 +424,3 @@ impl BlobReceiver for LocalRepository {
         Ok(())
     }
 }
-

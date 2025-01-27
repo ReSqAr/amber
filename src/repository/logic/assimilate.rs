@@ -45,7 +45,7 @@ async fn assimilate_blob(
 }
 
 pub(crate) async fn assimilate<S>(
-    local: &((impl Local + Metadata + Adder + Send + Sync)),
+    local: &(impl Local + Metadata + Adder + Send + Sync),
     transfer_id: u32,
     stream: S,
 ) -> Result<(), InternalError>
@@ -54,7 +54,7 @@ where
 {
     let repo_id = local.repo_id().await?;
     stream
-        .map(move |i| assimilate_blob(local, repo_id.clone(), transfer_id.clone(), i))
+        .map(move |i| assimilate_blob(local, repo_id.clone(), transfer_id, i))
         .buffer_unordered(100) // TODO: constant via config
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
         .await
