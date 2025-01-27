@@ -8,13 +8,15 @@ use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
 fn write_rclone_files_clone(
     local: &(impl Local + Config + Sized),
     rclone_files_clone: PathBuf,
-) -> (JoinHandle<Result<(), InternalError>>, Sender<TransferItem>) {
+) -> (
+    JoinHandle<Result<(), InternalError>>,
+    mpsc::Sender<TransferItem>,
+) {
     let (tx, mut rx) =
         mpsc::channel::<TransferItem>(local.buffer_size(BufferType::TransferRcloneFilesWriter));
 
