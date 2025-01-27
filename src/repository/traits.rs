@@ -21,6 +21,14 @@ pub trait Metadata {
     fn repo_id(&self) -> impl Future<Output = Result<String, InternalError>> + Send;
 }
 
+pub enum BufferType {
+    Assimilate,
+    TransferRcloneFilesWriter,
+}
+pub trait Config {
+    fn buffer_size(&self, buffer: BufferType) -> usize;
+}
+
 pub trait Missing {
     fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send;
 }

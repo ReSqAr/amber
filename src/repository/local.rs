@@ -9,8 +9,9 @@ use crate::repository::connection::ConnectedRepository;
 use crate::repository::logic::assimilate;
 use crate::repository::logic::assimilate::Item;
 use crate::repository::traits::{
-    Adder, BlobReceiver, BlobSender, ConnectionManager, LastIndices, LastIndicesSyncer, Local,
-    Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
+    Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
+    LastIndicesSyncer, Local, Metadata, Missing, Reconciler, Syncer, SyncerParams,
+    VirtualFilesystem,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -170,6 +171,12 @@ impl Local for LocalRepository {
 
     fn transfer_path(&self, transfer_id: u32) -> PathBuf {
         self.staging_path().join(format!("t_{}", transfer_id))
+    }
+}
+
+impl Config for LocalRepository {
+    fn buffer_size(&self, buffer: BufferType) -> usize {
+        100
     }
 }
 
