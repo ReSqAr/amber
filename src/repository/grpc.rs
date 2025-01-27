@@ -11,7 +11,7 @@ use crate::grpc::server::grpc::{
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
 };
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};

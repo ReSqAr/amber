@@ -1,5 +1,5 @@
 use crate::repository::traits::{Syncer, SyncerParams};
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use log::debug;
 

@@ -1,5 +1,5 @@
 use crate::repository::traits::Metadata;
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 
 pub type RCloneClient = ();
 

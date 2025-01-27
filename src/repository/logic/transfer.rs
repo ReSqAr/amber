@@ -1,6 +1,6 @@
 use crate::db::models::TransferItem;
 use crate::repository::traits::{BlobReceiver, BlobSender, Local, Metadata};
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use futures::StreamExt;
 use rand::Rng;

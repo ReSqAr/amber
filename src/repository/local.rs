@@ -11,7 +11,7 @@ use crate::repository::traits::{
     Metadata, Missing, Reconciler, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::flow::{ExtFlow, Flow};
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::{AppError, InternalError};
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
 use anyhow::{anyhow, Context};

@@ -2,6 +2,12 @@ use thiserror::Error;
 use tonic::Status;
 
 #[derive(Error, Debug)]
+pub enum AppError {
+    #[error("blob failed to be verified: {0}")]
+    UnexpectedBlobId(String),
+}
+
+#[derive(Error, Debug)]
 pub enum InternalError {
     #[error("tonic error: {0}")]
     Status(#[from] Status),
@@ -11,6 +17,8 @@ pub enum InternalError {
     IO(#[from] std::io::Error),
     #[error("stream error: {0}")]
     Stream(String),
+    #[error("{0}")]
+    App(#[from] AppError),
 }
 
 // Implement conversion from AppError to Status

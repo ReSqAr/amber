@@ -3,3 +3,4 @@ pub(crate) mod checkout;
 pub(crate) mod state;
 pub(crate) mod sync;
 pub(crate) mod transfer;
+pub(crate) mod assimilate;

@@ -5,7 +5,7 @@ use crate::repository::rclone::RCloneClient;
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
 };
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 use futures::{Stream, StreamExt};
 use log::debug;
 

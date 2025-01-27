@@ -10,7 +10,7 @@ use crate::grpc::server::grpc::{
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
 };
-use crate::utils::internal_error::InternalError;
+use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
