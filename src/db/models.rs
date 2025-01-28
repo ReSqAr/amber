@@ -50,11 +50,6 @@ pub struct InsertBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
-pub struct BlobId {
-    pub blob_id: String,
-}
-
 #[derive(Debug)]
 pub struct BlobWithPaths {
     pub blob_id: String,
