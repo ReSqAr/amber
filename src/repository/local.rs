@@ -30,7 +30,6 @@ pub(crate) struct LocalRepository {
     root: PathBuf,
     repo_id: String,
     db: Database,
-    buffer_size: usize,
 }
 
 /// Recursively searches parent directories for the folder to determine the repository root.
@@ -94,7 +93,6 @@ impl LocalRepository {
             root,
             repo_id: repo.repo_id,
             db,
-            buffer_size: 100, // TODO: config
         })
     }
 
@@ -167,7 +165,7 @@ impl Local for LocalRepository {
 }
 
 impl Config for LocalRepository {
-    fn buffer_size(&self, buffer: BufferType) -> usize {
+    fn buffer_size(&self, _buffer: BufferType) -> usize {
         100
     }
 }
