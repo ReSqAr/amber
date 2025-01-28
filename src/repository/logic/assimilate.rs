@@ -28,12 +28,11 @@ async fn assimilate_blob(
     let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
     if let Some(expected_blob_id) = item.expected_blob_id {
         if expected_blob_id != blob_id {
-            return Err(AppError::UnexpectedBlobId(format!(
-                "path: {} expected: {} actual: {}",
-                file_path.display(),
-                expected_blob_id,
-                blob_id
-            ))
+            return Err(AppError::UnexpectedBlobId {
+                path: file_path.display().to_string(),
+                expected: expected_blob_id,
+                actual: blob_id,
+            }
             .into());
         }
     }

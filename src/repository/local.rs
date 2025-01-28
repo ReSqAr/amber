@@ -13,11 +13,10 @@ use crate::repository::traits::{
     LastIndicesSyncer, Local, Metadata, Missing, Reconciler, Syncer, SyncerParams,
     VirtualFilesystem,
 };
-use crate::utils::errors::InternalError;
+use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use anyhow::{anyhow, Context};
 use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
@@ -35,7 +34,7 @@ pub(crate) struct LocalRepository {
 }
 
 /// Recursively searches parent directories for the folder to determine the repository root.
-async fn find_repository_root(start_path: &Path) -> Result<PathBuf, anyhow::Error> {
+async fn find_repository_root(start_path: &Path) -> Result<PathBuf, InternalError> {
     let mut current = start_path.canonicalize()?;
 
     loop {
@@ -55,19 +54,15 @@ async fn find_repository_root(start_path: &Path) -> Result<PathBuf, anyhow::Erro
         }
     }
 
-    Err(anyhow::anyhow!(
-        "no `.inv` directory found in any parent directories"
-    ))
+    Err(AppError::RepositoryNotInitialised().into())
 }
 
 impl LocalRepository {
-    pub async fn new(maybe_root: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(maybe_root: Option<PathBuf>) -> Result<Self, InternalError> {
         let root = if let Some(root) = maybe_root {
             root
         } else {
-            find_repository_root(&std::env::current_dir()?)
-                .await
-                .context("could not find an invariant folder")?
+            find_repository_root(&std::env::current_dir()?).await?
         };
 
         let repository_path = root.join(REPO_FOLDER_NAME);
@@ -76,7 +71,7 @@ impl LocalRepository {
             .map(|m| m.is_dir())
             .unwrap_or(false)
         {
-            return Err(anyhow::anyhow!("repository is not initialised").into());
+            return Err(AppError::RepositoryNotInitialised().into());
         };
 
         let db_path = repository_path.join("db.sqlite");
@@ -103,7 +98,7 @@ impl LocalRepository {
         })
     }
 
-    pub async fn create(maybe_root: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn create(maybe_root: Option<PathBuf>) -> Result<Self, InternalError> {
         let root = if let Some(path) = maybe_root {
             path
         } else {
@@ -115,7 +110,7 @@ impl LocalRepository {
             .map(|m| m.is_dir())
             .unwrap_or(false)
         {
-            return Err(anyhow::anyhow!("repository is already initialised").into());
+            return Err(AppError::RepositoryAlreadyInitialised().into());
         };
 
         fs::create_dir(repository_path.as_path()).await?;
@@ -124,12 +119,8 @@ impl LocalRepository {
         fs::create_dir_all(blobs_path.as_path()).await?;
 
         let db_path = repository_path.join("db.sqlite");
-        let pool = establish_connection(db_path.to_str().unwrap())
-            .await
-            .context("failed to establish connection")?;
-        run_migrations(&pool)
-            .await
-            .context("failed to run migrations")?;
+        let pool = establish_connection(db_path.to_str().unwrap()).await?;
+        run_migrations(&pool).await?;
 
         let db = Database::new(pool.clone());
 
