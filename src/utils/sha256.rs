@@ -1,10 +1,12 @@
 use sha2::{Digest, Sha256};
 use std::io;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
-pub(crate) async fn compute_sha256_and_size(file_path: &PathBuf) -> io::Result<(String, i64)> {
+pub(crate) async fn compute_sha256_and_size(
+    file_path: impl AsRef<Path>,
+) -> io::Result<(String, i64)> {
     let mut file = File::open(file_path).await?;
     let mut hasher = Sha256::new();
     let mut buffer = [0; 8192]; // 8KB buffer

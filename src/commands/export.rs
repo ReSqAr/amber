@@ -19,7 +19,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
     fs::create_dir_all(&staging_path)
         .await
         .context("unable to create staging directory")?;
-    let temp_dir = TempDir::new_in::<&Path>(&staging_path)
+    let temp_dir = TempDir::new_in::<&Path>(&staging_path.abs())
         .await
         .context("unable to create temp directory")?;
     let temp_dir_path = temp_dir.dir_path();
@@ -44,7 +44,7 @@ pub async fn export(target_path: String) -> Result<(), Box<dyn std::error::Error
             .await
             .context("unable to hardlink files")?;
     }
-    debug!("prepared staging_path={:?}", staging_path);
+    debug!("prepared staging_path={}", staging_path.display());
 
     let mut cmd = Command::new("rclone")
         .arg("copy")

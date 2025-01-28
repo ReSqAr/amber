@@ -4,17 +4,17 @@ use crate::db::models::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::path::RepoPath;
 use futures::Stream;
 use std::future::Future;
-use std::path::PathBuf;
 
 pub trait Local {
-    fn root(&self) -> PathBuf;
-    fn repository_path(&self) -> PathBuf;
-    fn blobs_path(&self) -> PathBuf;
-    fn blob_path(&self, blob_id: String) -> PathBuf;
-    fn staging_path(&self) -> PathBuf;
-    fn transfer_path(&self, transfer_id: u32) -> PathBuf;
+    fn root(&self) -> RepoPath;
+    fn repository_path(&self) -> RepoPath;
+    fn blobs_path(&self) -> RepoPath;
+    fn blob_path(&self, blob_id: String) -> RepoPath;
+    fn staging_path(&self) -> RepoPath;
+    fn transfer_path(&self, transfer_id: u32) -> RepoPath;
 }
 
 pub trait Metadata {

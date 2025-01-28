@@ -137,7 +137,7 @@ pub async fn state(
     let (tx, rx) = mpsc::channel(config.buffer_size);
 
     // get the channel of the filesystem walker
-    let (walker_handle, mut walker_rx) = walk(root, config.walker).await?;
+    let (walker_handle, mut walker_rx) = walk(root.abs().clone(), config.walker).await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
     let db_output_stream = vfs.add_observations(ReceiverStream::new(obs_rx)).await;

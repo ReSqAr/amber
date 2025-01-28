@@ -19,7 +19,7 @@ pub async fn checkout(
         let target_path = local.root().join(relative_path);
         debug!("trying hardlinking {:?} -> {:?}", object_path, target_path);
 
-        if let Some(parent) = target_path.parent() {
+        if let Some(parent) = target_path.abs().parent() {
             fs::create_dir_all(parent).await?;
         }
 

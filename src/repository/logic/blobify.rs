@@ -1,13 +1,13 @@
 use crate::db::models::{InsertBlob, InsertFile};
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::fs::are_hardlinked;
+use crate::utils::path::RepoPath;
 use crate::utils::sha256;
 use async_lock::Mutex;
 use filetime::{set_file_times, FileTime};
 use log::debug;
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::{fs, task};
 use uuid::Uuid;
@@ -15,8 +15,8 @@ use uuid::Uuid;
 pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
 
 async fn create_hard_link_or_dry_run(
-    source: &Path,
-    destination: &Path,
+    source: &RepoPath,
+    destination: &RepoPath,
     dry_run: bool,
 ) -> Result<(), Box<dyn Error>> {
     if dry_run {
@@ -37,8 +37,8 @@ async fn create_hard_link_or_dry_run(
 }
 async fn force_hard_link_with_rename_or_dry_run(
     local: &impl Local,
-    source: &Path,
-    destination: &Path,
+    source: &RepoPath,
+    destination: &RepoPath,
     blob_id: &str,
     dry_run: bool,
 ) -> Result<(), Box<dyn Error>> {
@@ -74,8 +74,8 @@ async fn force_hard_link_with_rename_or_dry_run(
 
         let accessed_time = FileTime::from_last_access_time(&metadata);
         let modified_time = FileTime::from_last_modification_time(&metadata);
-        let staging_clone = staging_path.to_path_buf();
-        task::spawn_blocking(move || set_file_times(&staging_clone, accessed_time, modified_time))
+        let staging_path_clone = staging_path.clone();
+        task::spawn_blocking(move || set_file_times(&staging_path_clone, accessed_time, modified_time))
             .await??;
         debug!("set file times for {}", staging_path.display());
 

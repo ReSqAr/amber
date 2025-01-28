@@ -15,6 +15,7 @@ use crate::repository::traits::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use anyhow::{anyhow, Context};
 use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -149,27 +150,27 @@ impl LocalRepository {
 }
 
 impl Local for LocalRepository {
-    fn root(&self) -> PathBuf {
-        self.root.clone()
+    fn root(&self) -> RepoPath {
+        RepoPath::new(".".into(), self.root.clone())
     }
 
-    fn repository_path(&self) -> PathBuf {
+    fn repository_path(&self) -> RepoPath {
         self.root().join(REPO_FOLDER_NAME)
     }
 
-    fn blobs_path(&self) -> PathBuf {
+    fn blobs_path(&self) -> RepoPath {
         self.repository_path().join("blobs")
     }
 
-    fn blob_path(&self, blob_id: String) -> PathBuf {
+    fn blob_path(&self, blob_id: String) -> RepoPath {
         self.blobs_path().join(blob_id)
     }
 
-    fn staging_path(&self) -> PathBuf {
+    fn staging_path(&self) -> RepoPath {
         self.repository_path().join("staging")
     }
 
-    fn transfer_path(&self, transfer_id: u32) -> PathBuf {
+    fn transfer_path(&self, transfer_id: u32) -> RepoPath {
         self.staging_path().join(format!("t_{}", transfer_id))
     }
 }
@@ -364,12 +365,12 @@ impl BlobSender for LocalRepository {
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
-        let concurrency = 100;
+        let concurrency = 100; // TODO: config
         let stream = tokio_stream::StreamExt::map(s, |item: TransferItem| {
             async move {
                 let blob_path = self.blob_path(item.blob_id);
                 let transfer_path = self.transfer_path(item.transfer_id).join(item.path); // TODO check in transfer path
-                if let Some(parent) = transfer_path.parent() {
+                if let Some(parent) = transfer_path.abs().parent() {
                     fs::create_dir_all(parent).await?;
                 }
 
@@ -404,12 +405,16 @@ impl BlobReceiver for LocalRepository {
         repo_id: String,
     ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
         let transfer_path = self.transfer_path(transfer_id);
-        if let Err(e) = fs::create_dir_all(transfer_path).await {
+        if let Err(e) = fs::create_dir_all(transfer_path.abs()).await {
             return stream::iter(vec![Err(e.into())]).boxed();
         }
 
         self.db
-            .populate_missing_blobs_for_transfer(transfer_id, repo_id)
+            .populate_missing_blobs_for_transfer(
+                transfer_id,
+                repo_id,
+                transfer_path.rel().to_string_lossy().into(),
+            )
             .await
             .err_into()
             .boxed()
