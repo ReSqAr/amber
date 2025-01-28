@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use crate::utils::path::RepoPath;
 
 pub async fn add(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -72,10 +73,10 @@ pub async fn add_files(
                 let local_repository_clone = repository.clone();
                 let blob_locks_clone = blob_locks.clone();
                 async move {
-                    let path = file_result?.path;
+                    let path = local_repository_clone.root().join(file_result?.path);
                     let (insert_file, insert_blob) = blobify::blobify(
-                        &local_repository_clone,
-                        path.clone(),
+                        &local_repository_clone,&
+                        path,
                         dry_run,
                         blob_locks_clone,
                     )
@@ -86,7 +87,7 @@ pub async fn add_files(
                     if let Some(blob) = insert_blob {
                         blob_tx_clone.send(blob).await?;
                     }
-                    Ok::<String, Box<dyn std::error::Error>>(path)
+                    Ok::<RepoPath, Box<dyn std::error::Error>>(path)
                 }
             });
 
@@ -101,7 +102,7 @@ pub async fn add_files(
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
                 Ok(path) => {
-                    println!("added {}", path);
+                    println!("added {}", path.rel().display());
                     count += 1;
                 }
                 Err(e) => {

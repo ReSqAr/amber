@@ -20,11 +20,10 @@ pub struct Item {
 async fn assimilate_blob(
     local: &impl Local,
     repo_id: String,
-    transfer_id_clone: u32,
     item: Item,
     blob_locks: BlobLockMap,
 ) -> Result<InsertBlob, InternalError> {
-    let file_path = local.transfer_path(transfer_id_clone).join(item.path);
+    let file_path = local.root().join(item.path);
     let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
     if let Some(expected_blob_id) = item.expected_blob_id {
         if expected_blob_id != blob_id {
@@ -46,8 +45,7 @@ async fn assimilate_blob(
             .clone();
         drop(locks); // Release the lock map
 
-        let _lock_guard = blob_lock.lock().await; // Acquire the blob-specific lock
-
+        let _lock_guard = blob_lock.lock().await; // acquire the blob-specific lock
         if !fs::metadata(&blob_path)
             .await
             .map(|m| m.is_file())
@@ -55,7 +53,7 @@ async fn assimilate_blob(
         {
             fs::rename(file_path, blob_path).await?;
         }
-        // Lock is released here as `_lock_guard` goes out of scope
+        // lock is released here as `_lock_guard` goes out of scope
     }
 
     Ok::<InsertBlob, InternalError>(InsertBlob {
@@ -69,7 +67,6 @@ async fn assimilate_blob(
 
 pub(crate) async fn assimilate<S>(
     local: &(impl Local + Metadata + Adder + Send + Sync + Config),
-    transfer_id: u32,
     stream: S,
 ) -> Result<(), InternalError>
 where
@@ -78,7 +75,7 @@ where
     let blob_locks: BlobLockMap = Arc::new(Mutex::new(HashMap::new()));
     let repo_id = local.repo_id().await?;
     stream
-        .map(move |i| assimilate_blob(local, repo_id.clone(), transfer_id, i, blob_locks.clone()))
+        .map(move |i| assimilate_blob(local, repo_id.clone(), i, blob_locks.clone()))
         .buffer_unordered(local.buffer_size(BufferType::Assimilate))
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
         .await

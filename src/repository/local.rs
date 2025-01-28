@@ -351,11 +351,10 @@ impl BlobSender for LocalRepository {
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
-        let concurrency = 100; // TODO: config
         let stream = tokio_stream::StreamExt::map(s, |item: TransferItem| {
             async move {
                 let blob_path = self.blob_path(item.blob_id);
-                let transfer_path = self.transfer_path(item.transfer_id).join(item.path); // TODO check in transfer path
+                let transfer_path = self.root().join(item.path); // TODO check in transfer path
                 if let Some(parent) = transfer_path.abs().parent() {
                     fs::create_dir_all(parent).await?;
                 }
@@ -366,7 +365,10 @@ impl BlobSender for LocalRepository {
         });
 
         // Allow multiple hard link operations to run concurrently
-        let stream = futures::StreamExt::buffer_unordered(stream, concurrency);
+        let stream = futures::StreamExt::buffer_unordered(
+            stream,
+            self.buffer_size(BufferType::PrepareTransfer),
+        );
 
         //let stream = stream.try_all(|_| true).await? // TODO: express in more straightforward manner
 
@@ -415,7 +417,7 @@ impl BlobReceiver for LocalRepository {
                 expected_blob_id: Some(r.blob_id),
             })
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate::assimilate(self, transfer_id, s).await
+                assimilate::assimilate(self, s).await
             })
             .await?;
 

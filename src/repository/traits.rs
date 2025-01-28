@@ -27,6 +27,7 @@ pub enum BufferType {
     AddFilesBlobifyFutureFileBuffer,
     AddFilesDBAddFiles,
     AddFilesDBAddBlobs,
+    PrepareTransfer,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;

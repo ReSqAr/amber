@@ -94,19 +94,18 @@ async fn force_hard_link_with_rename_or_dry_run(
 
 pub(crate) async fn blobify(
     local: &(impl Local + Metadata),
-    path: String,
+    path: &RepoPath,
     dry_run: bool,
     blob_locks: BlobLockMap,
 ) -> Result<(Option<InsertFile>, Option<InsertBlob>), Box<dyn Error>> {
-    let file_path = local.root().join(&path);
-    let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
+    let (blob_id, blob_size) = sha256::compute_sha256_and_size(&path).await?;
     let blob_path = local.blob_path(blob_id.clone());
 
     let (file, blob) = if !dry_run {
         let valid_from = chrono::Utc::now();
         (
             Some(InsertFile {
-                path,
+                path: path.rel().to_string_lossy().to_string(),
                 blob_id: Some(blob_id.clone()),
                 valid_from,
             }),
@@ -139,21 +138,21 @@ pub(crate) async fn blobify(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            create_hard_link_or_dry_run(&file_path, &blob_path, dry_run).await?;
+            create_hard_link_or_dry_run(&path, &blob_path, dry_run).await?;
             return Ok((file, blob));
         }
         // Lock is released here as `_lock_guard` goes out of scope
     }
 
     // Scenario 2 & 3: blob_path exists
-    if !are_hardlinked(&blob_path, &file_path).await? {
-        force_hard_link_with_rename_or_dry_run(local, &blob_path, &file_path, &blob_id, dry_run)
+    if !are_hardlinked(&blob_path, &path).await? {
+        force_hard_link_with_rename_or_dry_run(local, &blob_path, &path, &blob_id, dry_run)
             .await?;
     } else {
         debug!(
             "{} and {} are already hard linked. No action needed.",
             blob_path.display(),
-            file_path.display()
+            path.display()
         );
     }
 
