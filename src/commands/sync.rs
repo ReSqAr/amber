@@ -1,6 +1,6 @@
 use crate::db::models::{Blob, File, Repository};
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::sync;
+use crate::repository::logic::{checkout, sync};
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Metadata, Syncer};
 use crate::utils::errors::AppError;
 use log::debug;
@@ -20,6 +20,8 @@ pub async fn sync(connection_name: String) -> Result<(), Box<dyn std::error::Err
     };
 
     sync_repositories(local, managed_remote).await?;
+
+    checkout::checkout(&local).await?;
 
     Ok(())
 }

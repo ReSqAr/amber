@@ -3,7 +3,6 @@
 - pull/push
     - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
-- sync should also 'checkout' files
 - fsck
 
 
