@@ -2,15 +2,24 @@ use crate::db::models::{Blob, File, Repository};
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::sync;
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Metadata, Syncer};
+use crate::utils::errors::AppError;
 use log::debug;
 
-pub async fn sync(name: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn sync(connection_name: String) -> Result<(), Box<dyn std::error::Error>> {
     let local = LocalRepository::new(None).await?;
-    let remote = local.connect(name).await?.repository;
+    let connection = local.connect(connection_name.clone()).await?;
+    let tracked_remote = match connection.repository.as_tracked() {
+        Some(tracked_remote) => tracked_remote,
+        None => {
+            return Err(AppError::UnsupportedRemote(format!(
+                "{} does not support sync",
+                connection_name
+            ))
+            .into());
+        }
+    };
 
-    if let Some(tracked_remote) = remote.as_tracked() {
-        sync_repositories(local, tracked_remote).await?;
-    }
+    sync_repositories(local, tracked_remote).await?;
 
     Ok(())
 }

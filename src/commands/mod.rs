@@ -3,6 +3,7 @@ pub(crate) mod export;
 pub(crate) mod init;
 pub(crate) mod missing;
 pub(crate) mod pull;
+pub(crate) mod push;
 pub(crate) mod remote;
 pub(crate) mod serve;
 pub(crate) mod status;

@@ -5,6 +5,8 @@ use tonic::Status;
 pub enum AppError {
     #[error("blob failed to be verified: {0}")]
     UnexpectedBlobId(String),
+    #[error("unsupported remote: {0}")]
+    UnsupportedRemote(String),
 }
 
 #[derive(Error, Debug)]

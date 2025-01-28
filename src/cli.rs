@@ -31,11 +31,13 @@ enum Commands {
         port: u16,
     },
     Sync {
-        remote_name: String,
+        connection_name: String,
     },
     Pull {
-        #[arg(default_value_t = 50001)]
-        port: u16,
+        connection_name: String,
+    },
+    Push {
+        connection_name: String,
     },
     Export {
         path: String,
@@ -100,13 +102,20 @@ pub async fn run() {
                 .await
                 .expect("Failed to run server");
         }
-        Commands::Sync { remote_name } => {
-            commands::sync::sync(remote_name)
+        Commands::Sync { connection_name } => {
+            commands::sync::sync(connection_name)
                 .await
                 .expect("Failed to sync");
         }
-        Commands::Pull { port } => {
-            commands::pull::pull(port).await.expect("Failed to pull");
+        Commands::Pull { connection_name } => {
+            commands::pull::pull(connection_name)
+                .await
+                .expect("Failed to pull");
+        }
+        Commands::Push { connection_name } => {
+            commands::push::push(connection_name)
+                .await
+                .expect("Failed to push");
         }
         Commands::Export { path } => {
             commands::export::export(path)
