@@ -75,8 +75,10 @@ async fn force_hard_link_with_rename_or_dry_run(
         let accessed_time = FileTime::from_last_access_time(&metadata);
         let modified_time = FileTime::from_last_modification_time(&metadata);
         let staging_path_clone = staging_path.clone();
-        task::spawn_blocking(move || set_file_times(&staging_path_clone, accessed_time, modified_time))
-            .await??;
+        task::spawn_blocking(move || {
+            set_file_times(&staging_path_clone, accessed_time, modified_time)
+        })
+        .await??;
         debug!("set file times for {}", staging_path.display());
 
         // Atomically move
