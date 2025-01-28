@@ -3,7 +3,9 @@ use crate::repository::connection::EstablishedConnection;
 use crate::repository::traits::{BlobReceiver, BlobSender, BufferType, Config, Local, Metadata};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::rclone::{run_rclone_operation, LocalConfig, RcloneEvent, RcloneTarget};
+use crate::utils::rclone::{
+    run_rclone_operation, LocalConfig, RcloneEvent, RcloneStats, RcloneTarget,
+};
 use futures::StreamExt;
 use log::debug;
 use rand::Rng;
@@ -64,15 +66,31 @@ async fn execute_rclone(
     let callback = |event: RcloneEvent| match event {
         RcloneEvent::Message(msg) => println!("[message] {}", msg),
         RcloneEvent::Error(err) => eprintln!("[error] {}", err),
-        RcloneEvent::Progress(progress) => {
+        RcloneEvent::Stats(RcloneStats {
+            bytes,
+            elapsed_time,
+            errors,
+            eta,
+            fatal_error,
+            retry_error,
+            speed,
+            total_bytes,
+            total_transfers,
+            transfer_time,
+            transfers,
+            ..
+        }) => {
             println!(
-                "[progress] name={}, percentage={:.2}%, speed={:.2} B/s",
-                progress.name, progress.percentage, progress.speed
+                "[stats] {elapsed_time}/{eta:?}/{transfer_time} {bytes}B/{total_bytes}B {transfers}/{total_transfers} {speed} B/s (E:{errors} R: {retry_error} F: {fatal_error})",
             );
         }
     };
 
-    debug!("copying files from/to {0}", connection.name);
+    let from_or_to = match direction {
+        Direction::Upload => "to",
+        Direction::Download => "to",
+    };
+    debug!("copying files {from_or_to} {0}", connection.name);
     run_rclone_operation(
         &connection.local.transfer_path(transfer_id).abs(),
         &rclone_path,
@@ -136,7 +154,7 @@ pub async fn transfer(
 
     destination.finalise_transfer(transfer_id).await?;
 
-    // TODO: cleanup DB + staging folder
+    // TODO: cleanup DB + staging folder - local + remote
 
     Ok(())
 }

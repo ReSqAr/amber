@@ -712,7 +712,7 @@ impl Database {
                 local_blobs AS (
                     SELECT blob_id
                     FROM latest_available_blobs
-                    INNER JOIN current_repository ON (repo_id)
+                    INNER JOIN current_repository USING (repo_id)
                 ),
                 remote_blobs AS (
                     SELECT blob_id
@@ -744,7 +744,8 @@ impl Database {
         transfer_id: u32,
     ) -> DBOutputStream<'static, TransferItem> {
         self.stream(
-            query("SELECT blob_id, path FROM transfers WHERE transfer_id = ?;").bind(transfer_id),
+            query("SELECT transfer_id, blob_id, path FROM transfers WHERE transfer_id = ?;")
+                .bind(transfer_id),
         )
     }
 }

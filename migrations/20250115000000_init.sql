@@ -65,7 +65,7 @@ CREATE TABLE connections
 CREATE TABLE transfers
 (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    transfer_id      TEXT NOT NULL,
-    blob_id          TEXT NOT NULL,
-    path             TEXT NOT NULL
+    transfer_id      INTEGER NOT NULL,
+    blob_id          TEXT    NOT NULL,
+    path             TEXT    NOT NULL
 );

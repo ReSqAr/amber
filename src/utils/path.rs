@@ -9,7 +9,7 @@ pub struct RepoPath {
 impl RepoPath {
     pub fn from_root(root: PathBuf) -> Self {
         Self {
-            relative: ".".into(),
+            relative: "".into(),
             absolute: root,
         }
     }

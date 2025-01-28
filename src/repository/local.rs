@@ -160,7 +160,7 @@ impl Local for LocalRepository {
     }
 
     fn transfer_path(&self, transfer_id: u32) -> RepoPath {
-        self.staging_path().join(format!("t_{}", transfer_id))
+        self.staging_path().join(format!("t{}", transfer_id))
     }
 }
 

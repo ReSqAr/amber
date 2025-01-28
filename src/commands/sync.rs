@@ -55,8 +55,8 @@ where
         local_repo_id, remote_repo_id
     );
 
-    let remote_last_indices = remote.lookup(local_repo_id).await?;
-    let local_last_indices = local.lookup(remote_repo_id).await?;
+    let local_last_indices = remote.lookup(local_repo_id).await?;
+    let remote_last_indices = local.lookup(remote_repo_id).await?;
     debug!(
         "remote_last_indices - local: {:?} remote: {:?}",
         local_last_indices, remote_last_indices

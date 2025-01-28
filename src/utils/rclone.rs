@@ -71,22 +71,40 @@ impl RcloneTarget {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RcloneProgress {
+#[serde(rename_all = "camelCase")]
+pub struct RcloneStats {
     #[serde(default)]
-    pub percentage: f64,
+    pub bytes: u64,
 
     #[serde(default)]
-    pub speed: f64,
+    pub elapsed_time: f64,
 
     #[serde(default)]
-    pub name: String,
-}
+    pub errors: u64,
 
-#[derive(Debug)]
-pub enum RcloneEvent {
-    Message(String),
-    Error(String),
-    Progress(RcloneProgress),
+    #[serde(default)]
+    pub eta: Option<String>,
+
+    #[serde(default)]
+    pub fatal_error: bool,
+
+    #[serde(default)]
+    pub retry_error: bool,
+
+    #[serde(default)]
+    pub speed: u64,
+
+    #[serde(default)]
+    pub total_bytes: u64,
+
+    #[serde(default)]
+    pub total_transfers: u64,
+
+    #[serde(default)]
+    pub transfer_time: f64,
+
+    #[serde(default)]
+    pub transfers: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,7 +113,14 @@ struct RcloneJsonLog {
     msg: String,
 
     #[serde(default)]
-    progress: Option<RcloneProgress>,
+    stats: Option<RcloneStats>,
+}
+
+#[derive(Debug)]
+pub enum RcloneEvent {
+    Message(String),
+    Error(String),
+    Stats(RcloneStats),
 }
 
 pub async fn run_rclone_operation<F>(
@@ -143,6 +168,8 @@ where
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    debug!("rclone command: {:?}", command);
+
     let mut child = command.spawn()?;
 
     if let Some(stdout) = child.stdout.take() {
@@ -152,9 +179,10 @@ where
             debug!("rclone stdout: {line}");
             match serde_json::from_str::<RcloneJsonLog>(&line) {
                 Ok(json_log) => {
-                    let event = match (json_log.level.as_str(), json_log.progress) {
+                    debug!("rclone json log: {json_log:?}");
+                    let event = match (json_log.level.as_str(), json_log.stats) {
                         ("error", _) => RcloneEvent::Error(json_log.msg),
-                        (_, Some(progress)) => RcloneEvent::Progress(progress),
+                        (_, Some(stats)) => RcloneEvent::Stats(stats),
                         (_, None) => RcloneEvent::Message(json_log.msg),
                     };
                     callback(event);
