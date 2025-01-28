@@ -7,6 +7,7 @@ use async_lock::Mutex;
 use futures::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::debug;
 use tokio::fs;
 
 pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
@@ -52,6 +53,8 @@ async fn assimilate_blob(
             .unwrap_or(false)
         {
             fs::rename(file_path, blob_path).await?;
+        } else {
+            debug!("blob {blob_id} already exists, skipping");
         }
         // lock is released here as `_lock_guard` goes out of scope
     }
