@@ -3,9 +3,13 @@ use crate::repository::logic::transfer::transfer;
 use crate::repository::traits::ConnectionManager;
 use crate::utils::errors::AppError;
 use anyhow::Result;
+use std::path::PathBuf;
 
-pub async fn push(connection_name: String) -> Result<(), Box<dyn std::error::Error>> {
-    let local = LocalRepository::new(None).await?;
+pub async fn push(
+    maybe_root: Option<PathBuf>,
+    connection_name: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local = LocalRepository::new(maybe_root).await?;
     let connection = local.connect(connection_name.clone()).await?;
     let managed_remote = match connection.remote.as_managed() {
         Some(tracked_remote) => tracked_remote,

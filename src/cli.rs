@@ -1,5 +1,6 @@
 use crate::{commands, db};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "amber")]
@@ -7,6 +8,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(version = "1.0")]
 #[command(about = "distribute blobs", long_about = None)]
 struct Cli {
+    #[arg(long)]
+    path: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -75,42 +79,42 @@ pub async fn run() {
 
     match cli.command {
         Commands::Init {} => {
-            commands::init::init_repository()
+            commands::init::init_repository(cli.path)
                 .await
                 .expect("Failed to initialize repository");
         }
         Commands::Add { dry_run } => {
-            commands::add::add(dry_run)
+            commands::add::add(cli.path, dry_run)
                 .await
                 .expect("Failed to add file");
         }
         Commands::Status { details } => {
-            commands::status::status(details)
+            commands::status::status(cli.path, details)
                 .await
                 .expect("Failed to get status");
         }
         Commands::Missing { files_only } => {
-            commands::missing::missing(files_only)
+            commands::missing::missing(cli.path, files_only)
                 .await
                 .expect("Failed to get missing");
         }
         Commands::Serve { port } => {
-            commands::serve::serve(port)
+            commands::serve::serve(cli.path, port)
                 .await
                 .expect("Failed to run server");
         }
         Commands::Sync { connection_name } => {
-            commands::sync::sync(connection_name)
+            commands::sync::sync(cli.path, connection_name)
                 .await
                 .expect("Failed to sync");
         }
         Commands::Pull { connection_name } => {
-            commands::pull::pull(connection_name)
+            commands::pull::pull(cli.path, connection_name)
                 .await
                 .expect("Failed to pull");
         }
         Commands::Push { connection_name } => {
-            commands::push::push(connection_name)
+            commands::push::push(cli.path, connection_name)
                 .await
                 .expect("Failed to push");
         }
@@ -120,12 +124,12 @@ pub async fn run() {
                 connection_type,
                 parameter,
             } => {
-                commands::remote::add(name, connection_type.into(), parameter)
+                commands::remote::add(cli.path, name, connection_type.into(), parameter)
                     .await
                     .expect("Failed to add remote");
             }
             RemoteCommands::List {} => {
-                commands::remote::list()
+                commands::remote::list(cli.path)
                     .await
                     .expect("Failed to list remotes");
             }

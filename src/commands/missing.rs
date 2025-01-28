@@ -1,10 +1,14 @@
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::Missing;
 use log::error;
+use std::path::PathBuf;
 use tokio_stream::StreamExt;
 
-pub async fn missing(files_only: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let local_repository = LocalRepository::new(None).await?;
+pub async fn missing(
+    maybe_root: Option<PathBuf>,
+    files_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_repository = LocalRepository::new(maybe_root).await?;
 
     list_missing_blobs(local_repository, files_only).await
 }

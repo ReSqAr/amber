@@ -4,9 +4,13 @@ use crate::repository::logic::{checkout, sync};
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Metadata, Syncer};
 use crate::utils::errors::AppError;
 use log::debug;
+use std::path::PathBuf;
 
-pub async fn sync(connection_name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let local = LocalRepository::new(None).await?;
+pub async fn sync(
+    maybe_root: Option<PathBuf>,
+    connection_name: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local = LocalRepository::new(maybe_root).await?;
 
     if let Some(connection_name) = connection_name {
         let connection = local.connect(connection_name.clone()).await?;

@@ -1,15 +1,18 @@
-use crate::repository::local::LocalRepository;
-use log::error;
-use std::collections::HashMap;
-
 use crate::db::models::VirtualFileState;
+use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
 use crate::repository::logic::state::StateConfig;
 use crate::repository::traits::{Adder, Local, Metadata, VirtualFilesystem};
 use futures::StreamExt;
+use log::error;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-pub async fn status(details: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let local_repository = LocalRepository::new(None).await?;
+pub async fn status(
+    maybe_root: Option<PathBuf>,
+    details: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_repository = LocalRepository::new(maybe_root).await?;
 
     show_status(local_repository, details).await
 }

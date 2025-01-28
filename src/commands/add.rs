@@ -9,13 +9,17 @@ use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub async fn add(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let local_repository = LocalRepository::new(None).await?;
+pub async fn add(
+    maybe_root: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_repository = LocalRepository::new(maybe_root).await?;
 
     add_files(local_repository, dry_run).await
 }
