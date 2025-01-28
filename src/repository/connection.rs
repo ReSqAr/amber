@@ -1,49 +1,15 @@
 use crate::db::models::ConnectionType;
 use crate::repository::local::LocalRepository;
+use crate::repository::logic::connect;
 use crate::repository::traits::Metadata;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone;
 use log::debug;
 
-#[derive(Clone, Debug)]
-pub struct LocalConfig {
-    root: String,
-}
-
-impl LocalConfig {
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
-        rclone::RcloneTarget::Local(rclone::LocalConfig {
-            path: self.root.clone().into(),
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ConnectionConfig {
-    Local(LocalConfig),
-}
-
-impl ConnectionConfig {
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
-        match self {
-            ConnectionConfig::Local(local_config) => local_config.as_rclone_target(),
-        }
-    }
-}
-
-fn parse_config(
-    connection_type: ConnectionType,
-    parameter: String,
-) -> Result<ConnectionConfig, InternalError> {
-    match connection_type {
-        ConnectionType::Local => Ok(ConnectionConfig::Local(LocalConfig { root: parameter })),
-    }
-}
-
 pub struct EstablishedConnection {
     pub name: String,
-    pub config: ConnectionConfig,
+    pub config: connect::ConnectionConfig,
     pub local: LocalRepository,
     pub remote: WrappedRepository,
 }
@@ -55,20 +21,16 @@ impl EstablishedConnection {
         connection_type: ConnectionType,
         parameter: String,
     ) -> Result<Self, InternalError> {
-        let config = parse_config(connection_type, parameter)?;
-        match config.clone() {
-            ConnectionConfig::Local(LocalConfig { root }) => {
-                let repository = LocalRepository::new(Some(root.clone().into())).await?;
-                let repo_id = repository.repo_id().await?;
-                debug!("connected to local database {name} at {root}: {repo_id}");
-                Ok(Self {
-                    local,
-                    name,
-                    config,
-                    remote: WrappedRepository::Local(repository),
-                })
-            }
-        }
+        let config = connect::parse_config(connection_type, parameter)?;
+        let remote = connect::connect(&config).await?;
+        let repo_id = remote.repo_id().await?;
+        debug!("connected to repository via {name}: {repo_id}");
+        Ok(Self {
+            local,
+            name,
+            config,
+            remote,
+        })
     }
 
     pub(crate) fn remote_rclone_target(&self) -> rclone::RcloneTarget {
