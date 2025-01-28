@@ -4,6 +4,7 @@ use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::state::{Error, StateConfig};
 use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::path::RepoPath;
 use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
@@ -12,7 +13,6 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use crate::utils::path::RepoPath;
 
 pub async fn add(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(None).await?;
@@ -74,13 +74,9 @@ pub async fn add_files(
                 let blob_locks_clone = blob_locks.clone();
                 async move {
                     let path = local_repository_clone.root().join(file_result?.path);
-                    let (insert_file, insert_blob) = blobify::blobify(
-                        &local_repository_clone,&
-                        path,
-                        dry_run,
-                        blob_locks_clone,
-                    )
-                    .await?;
+                    let (insert_file, insert_blob) =
+                        blobify::blobify(&local_repository_clone, &path, dry_run, blob_locks_clone)
+                            .await?;
                     if let Some(file) = insert_file {
                         file_tx_clone.send(file).await?;
                     }

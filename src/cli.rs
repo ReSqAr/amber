@@ -39,9 +39,6 @@ enum Commands {
     Push {
         connection_name: String,
     },
-    Export {
-        path: String,
-    },
     Remote {
         #[command(subcommand)]
         command: RemoteCommands,
@@ -116,11 +113,6 @@ pub async fn run() {
             commands::push::push(connection_name)
                 .await
                 .expect("Failed to push");
-        }
-        Commands::Export { path } => {
-            commands::export::export(path)
-                .await
-                .expect("Failed to export");
         }
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
