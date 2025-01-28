@@ -151,7 +151,7 @@ impl LocalRepository {
 
 impl Local for LocalRepository {
     fn root(&self) -> RepoPath {
-        RepoPath::new(".".into(), self.root.clone())
+        RepoPath::from_root(self.root.clone())
     }
 
     fn repository_path(&self) -> RepoPath {
