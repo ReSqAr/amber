@@ -1,9 +1,12 @@
 # PROJECT MANAGEMENT
-- drop staging at the end of local repo - create it in the beginning
+- drop staging at the start of local repo after it got exclusive ownership
 - pull/push
     - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
+- multi sync & push
 - fsck
+- smarter errors
+- amazing user feedback
 
 
 # Pull & Push
