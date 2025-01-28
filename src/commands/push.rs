@@ -7,7 +7,7 @@ use anyhow::Result;
 pub async fn push(connection_name: String) -> Result<(), Box<dyn std::error::Error>> {
     let local = LocalRepository::new(None).await?;
     let connection = local.connect(connection_name.clone()).await?;
-    let tracked_remote = match connection.repository.as_tracked() {
+    let managed_remote = match connection.repository.as_managed() {
         Some(tracked_remote) => tracked_remote,
         None => {
             return Err(AppError::UnsupportedRemote(format!(
@@ -18,7 +18,7 @@ pub async fn push(connection_name: String) -> Result<(), Box<dyn std::error::Err
         }
     };
 
-    transfer(&local, &local, &tracked_remote, connection).await?;
+    transfer(&local, &local, &managed_remote, connection).await?;
 
     Ok(())
 }
