@@ -167,42 +167,86 @@ where
         .arg(&dest_arg)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-
-    debug!("rclone command: {:?}", command);
+    debug!("rclone command: {command:?}");
 
     let mut child = command.spawn()?;
 
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = BufReader::new(stdout).lines();
+    // Take ownership of stdout and stderr
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
 
-        while let Some(line) = reader.next_line().await? {
-            debug!("rclone stdout: {line}");
-            match serde_json::from_str::<RcloneJsonLog>(&line) {
-                Ok(json_log) => {
-                    debug!("rclone json log: {json_log:?}");
-                    let event = match (json_log.level.as_str(), json_log.stats) {
-                        ("error", _) => RcloneEvent::Error(json_log.msg),
-                        (_, Some(stats)) => RcloneEvent::Stats(stats),
-                        (_, None) => RcloneEvent::Message(json_log.msg),
-                    };
-                    callback(event);
-                }
-                Err(_parse_err) => {
-                    // TODO: debug stmt
-                    // If parsing fails, skip or log it. We won't call the callback for unknown lines.
-                }
+    // Create BufReaders for stdout and stderr
+    let mut stdout_reader = match stdout {
+        Some(out) => BufReader::new(out).lines(),
+        None => {
+            return Err(InternalError::Stream(
+                "could not read stdout of rclone".to_string(),
+            ));
+        }
+    };
+
+    let mut stderr_reader = match stderr {
+        Some(err) => BufReader::new(err).lines(),
+        None => {
+            return Err(InternalError::Stream(
+                "could not read stderr of rclone".to_string(),
+            ));
+        }
+    };
+
+    let parse_and_callback = |channel: &str, line: String, callback: &mut F| {
+        debug!("rclone {channel}: {line}");
+        match serde_json::from_str::<RcloneJsonLog>(&line) {
+            Ok(json_log) => {
+                debug!("rclone json log {channel}: {json_log:?}");
+                let event = match (json_log.level.as_str(), json_log.stats) {
+                    ("error", _) => RcloneEvent::Error(json_log.msg),
+                    (_, Some(stats)) => RcloneEvent::Stats(stats),
+                    (_, None) => RcloneEvent::Message(json_log.msg),
+                };
+                callback(event);
+            }
+            Err(parse_err) => {
+                debug!("Failed to parse rclone {channel} JSON: {parse_err}");
+                callback(RcloneEvent::Message(line));
             }
         }
-    }
+    };
 
-    //
-    // 6. Handle stderr lines // TODO: if stderr is not buffered, this might hang; but in general, better to have that last
-    //
-    if let Some(stderr) = child.stderr.take() {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Some(line) = reader.next_line().await? {
-            // We treat stderr lines as messages, but you could treat them differently
-            callback(RcloneEvent::Message(format!("[stderr] {line}")));
+    loop {
+        tokio::select! {
+            // Read a line from stdout
+            stdout_line = stdout_reader.next_line() => {
+                match stdout_line {
+                    Ok(Some(line)) => {
+                        parse_and_callback("stdout", line, &mut callback);
+                    },
+                    Ok(None) => {
+                        break;
+                    },
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                }
+            },
+
+            stderr_line = stderr_reader.next_line() => {
+                match stderr_line {
+                    Ok(Some(line)) => {
+                        parse_and_callback("stderr", line, &mut callback);
+                    },
+                    Ok(None) => {
+                        break;
+                    },
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                }
+            },
+
+            else => {
+                break;
+            }
         }
     }
 
