@@ -138,7 +138,7 @@ pub(crate) async fn blobify(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            create_hard_link_or_dry_run(&path, &blob_path, dry_run).await?;
+            create_hard_link_or_dry_run(path, &blob_path, dry_run).await?;
             return Ok((file, blob));
         }
         // Lock is released here as `_lock_guard` goes out of scope
@@ -146,7 +146,7 @@ pub(crate) async fn blobify(
 
     // Scenario 2 & 3: blob_path exists
     if !are_hardlinked(&blob_path, &path).await? {
-        force_hard_link_with_rename_or_dry_run(local, &blob_path, &path, &blob_id, dry_run).await?;
+        force_hard_link_with_rename_or_dry_run(local, &blob_path, path, &blob_id, dry_run).await?;
     } else {
         debug!(
             "{} and {} are already hard linked. No action needed.",
