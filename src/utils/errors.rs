@@ -33,6 +33,8 @@ pub enum InternalError {
     Stream(String),
     #[error("{0}")]
     App(#[from] AppError),
+    #[error("rclone error: exit code: {0}")]
+    RClone(i32),
 }
 
 // Implement conversion from AppError to Status
