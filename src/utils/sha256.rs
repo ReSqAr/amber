@@ -9,7 +9,7 @@ pub(crate) async fn compute_sha256_and_size(
 ) -> io::Result<(String, i64)> {
     let mut file = File::open(file_path).await?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0; 1024 * 1024]; // 1MB buffer
+    let mut buffer = vec![0u8; 1024 * 1024]; // 1MB buffer
     let mut size = 0i64;
 
     loop {
