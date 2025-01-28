@@ -4,9 +4,9 @@ use crate::utils::pipe::TryForwardIntoExt;
 use log::debug;
 
 pub async fn sync_table<I, L, R>(
-    local: L,
+    local: &L,
     local_param: I::Params,
-    remote: R,
+    remote: &R,
     remote_param: I::Params,
 ) -> anyhow::Result<(), Box<dyn std::error::Error>>
 where

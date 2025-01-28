@@ -19,14 +19,17 @@ pub async fn sync(connection_name: String) -> Result<(), Box<dyn std::error::Err
         }
     };
 
-    sync_repositories(local, managed_remote).await?;
+    sync_repositories(&local, &managed_remote).await?;
 
     checkout::checkout(&local).await?;
 
     Ok(())
 }
 
-pub async fn sync_repositories<S, T>(local: S, remote: T) -> Result<(), Box<dyn std::error::Error>>
+pub async fn sync_repositories<S, T>(
+    local: &S,
+    remote: &T,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     S: Metadata
         + LastIndicesSyncer
@@ -60,16 +63,16 @@ where
     );
 
     sync::sync_table::<File, _, _>(
-        local.clone(),
+        local,
         local_last_indices.file,
-        remote.clone(),
+        remote,
         remote_last_indices.file,
     )
     .await?;
     sync::sync_table::<Blob, _, _>(
-        local.clone(),
+        local,
         local_last_indices.blob,
-        remote.clone(),
+        remote,
         remote_last_indices.blob,
     )
     .await?;
