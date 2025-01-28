@@ -11,10 +11,10 @@ pub async fn pull(connection_name: String) -> Result<(), Box<dyn std::error::Err
     let managed_remote = match connection.remote.as_managed() {
         Some(tracked_remote) => tracked_remote,
         None => {
-            return Err(AppError::UnsupportedRemote(format!(
-                "{} does not support pull",
-                connection_name
-            ))
+            return Err(AppError::UnsupportedRemote {
+                connection_name,
+                operation: "sync".into(),
+            }
             .into());
         }
     };

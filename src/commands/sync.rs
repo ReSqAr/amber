@@ -5,21 +5,24 @@ use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Metadata, 
 use crate::utils::errors::AppError;
 use log::debug;
 
-pub async fn sync(connection_name: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn sync(connection_name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let local = LocalRepository::new(None).await?;
-    let connection = local.connect(connection_name.clone()).await?;
-    let managed_remote = match connection.remote.as_managed() {
-        Some(tracked_remote) => tracked_remote,
-        None => {
-            return Err(AppError::UnsupportedRemote(format!(
-                "{} does not support sync",
-                connection_name
-            ))
-            .into());
-        }
-    };
 
-    sync_repositories(&local, &managed_remote).await?;
+    if let Some(connection_name) = connection_name {
+        let connection = local.connect(connection_name.clone()).await?;
+        let managed_remote = match connection.remote.as_managed() {
+            Some(tracked_remote) => tracked_remote,
+            None => {
+                return Err(AppError::UnsupportedRemote {
+                    connection_name,
+                    operation: "sync".into(),
+                }
+                .into());
+            }
+        };
+
+        sync_repositories(&local, &managed_remote).await?;
+    }
 
     checkout::checkout(&local).await?;
 

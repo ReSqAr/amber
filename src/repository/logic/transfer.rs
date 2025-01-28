@@ -10,11 +10,13 @@ use futures::StreamExt;
 use log::debug;
 use rand::Rng;
 use std::path::PathBuf;
+use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+#[derive(Debug)]
 enum Direction {
     Upload,
     Download,
@@ -22,7 +24,7 @@ enum Direction {
 
 fn write_rclone_files_clone(
     local: &(impl Local + Config + Sized),
-    rclone_files_clone: PathBuf,
+    rclone_files: PathBuf,
 ) -> (
     JoinHandle<Result<(), InternalError>>,
     mpsc::Sender<TransferItem>,
@@ -31,7 +33,13 @@ fn write_rclone_files_clone(
         mpsc::channel::<TransferItem>(local.buffer_size(BufferType::TransferRcloneFilesWriter));
 
     let writing_task = tokio::spawn(async move {
-        let file = File::create(rclone_files_clone).await?;
+        let file = match File::create(rclone_files).await {
+            Ok(file) => file,
+            Err(err) => {
+                debug!("error creating file: {}", err);
+                return Err(err.into());
+            }
+        };
         let mut writer = BufWriter::new(file);
 
         while let Some(TransferItem { path, .. }) = rx.recv().await {
@@ -114,15 +122,16 @@ pub async fn transfer(
     debug!("current transfer_id={transfer_id}");
 
     let transfer_path = local.transfer_path(transfer_id);
+    fs::create_dir_all(&transfer_path).await?;
     let rclone_files = transfer_path.join("rclone.files");
 
     let local_repo_id = local.repo_id().await?;
     let source_repo_id = source.repo_id().await?;
-
     let direction = match local_repo_id == source_repo_id {
         true => Direction::Upload,
         false => Direction::Download,
     };
+    debug!("local={local_repo_id} source={source_repo_id} -> {direction:?}");
 
     let stream = destination
         .create_transfer_request(transfer_id, source_repo_id)
@@ -137,7 +146,9 @@ pub async fn transfer(
                 async move {
                     if let Ok(ref item) = t {
                         tx.send(item.clone()).await.map_err(|err| {
-                            InternalError::Stream(format!("failed to send to writer: {err}"))
+                            InternalError::Stream(format!(
+                                "failed to send to rclone.files writer: {err}"
+                            ))
                         })?;
                     }
                     t
@@ -149,8 +160,13 @@ pub async fn transfer(
 
         writing_task.await??;
     }
+    debug!(
+        "rclone.files has been written to {}",
+        rclone_files.display()
+    );
 
     execute_rclone(connection, transfer_id, direction, rclone_files.abs()).await?;
+    debug!("rclone has copied the files");
 
     destination.finalise_transfer(transfer_id).await?;
 

@@ -31,7 +31,7 @@ enum Commands {
         port: u16,
     },
     Sync {
-        connection_name: String,
+        connection_name: Option<String>,
     },
     Pull {
         connection_name: String,
