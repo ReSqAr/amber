@@ -1,166 +1,77 @@
-use crate::db::models::{ConnectionType, TransferItem};
-use crate::repository::grpc::GRPCClient;
+use crate::db::models::ConnectionType;
 use crate::repository::local::LocalRepository;
-use crate::repository::rclone::RCloneClient;
-use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
-};
+use crate::repository::repository::Repository;
+use crate::repository::traits::Metadata;
 use crate::utils::errors::InternalError;
-use futures::{Stream, StreamExt};
+use crate::utils::rclone;
 use log::debug;
 
-#[derive(Clone)]
-pub enum Repository {
-    Local(LocalRepository),
-    Grpc(GRPCClient),
-    RCloneExporter(RCloneClient),
+#[derive(Clone, Debug)]
+struct LocalConfig {
+    root: String,
 }
 
-impl Repository {
-    pub(crate) fn as_tracked(&self) -> Option<TrackingRepository> {
+impl LocalConfig {
+    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
+        rclone::RcloneTarget::Local(rclone::LocalConfig {
+            path: self.root.clone().into(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ConnectionConfig {
+    Local(LocalConfig),
+}
+
+impl ConnectionConfig {
+    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
         match self {
-            Repository::Local(local) => Some(TrackingRepository::Local(local.clone())),
-            Repository::Grpc(grpc) => Some(TrackingRepository::Grpc(grpc.clone())),
-            Repository::RCloneExporter(_) => None,
+            ConnectionConfig::Local(local_config) => local_config.as_rclone_target(),
         }
     }
 }
 
-impl Metadata for Repository {
-    async fn repo_id(&self) -> Result<String, InternalError> {
-        match self {
-            Repository::Local(local) => local.repo_id().await,
-            Repository::Grpc(grpc) => grpc.repo_id().await,
-            Repository::RCloneExporter(rclone) => rclone.repo_id().await,
-        }
+fn parse_config(
+    connection_type: ConnectionType,
+    parameter: String,
+) -> Result<ConnectionConfig, InternalError> {
+    match connection_type {
+        ConnectionType::Local => Ok(ConnectionConfig::Local(LocalConfig { root: parameter })),
     }
 }
 
-#[derive(Clone)]
-pub enum TrackingRepository {
-    Local(LocalRepository),
-    Grpc(GRPCClient),
+pub struct EstablishedConnection {
+    pub name: String,
+    pub config: ConnectionConfig,
+    pub local: LocalRepository,
+    pub remote: Repository,
 }
 
-impl Metadata for TrackingRepository {
-    async fn repo_id(&self) -> Result<String, InternalError> {
-        match self {
-            TrackingRepository::Local(local) => local.repo_id().await,
-            TrackingRepository::Grpc(grpc) => grpc.repo_id().await,
-        }
-    }
-}
-
-impl LastIndicesSyncer for TrackingRepository {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
-        match self {
-            TrackingRepository::Local(local) => local.lookup(repo_id).await,
-            TrackingRepository::Grpc(grpc) => grpc.lookup(repo_id).await,
-        }
-    }
-
-    async fn refresh(&self) -> Result<(), InternalError> {
-        match self {
-            TrackingRepository::Local(local) => local.refresh().await,
-            TrackingRepository::Grpc(grpc) => grpc.refresh().await,
-        }
-    }
-}
-
-impl<T: SyncerParams + 'static> Syncer<T> for TrackingRepository
-where
-    LocalRepository: Syncer<T>,
-    GRPCClient: Syncer<T>,
-    <T as SyncerParams>::Params: Send,
-{
-    async fn select(
-        &self,
-        params: <T as SyncerParams>::Params,
-    ) -> impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static {
-        match self {
-            TrackingRepository::Local(local) => {
-                <LocalRepository as Syncer<T>>::select(local, params)
-                    .await
-                    .boxed()
-            }
-            TrackingRepository::Grpc(grpc) => <GRPCClient as Syncer<T>>::select(grpc, params)
-                .await
-                .boxed(),
-        }
-    }
-
-    async fn merge<S>(&self, s: S) -> Result<(), InternalError>
-    where
-        S: Stream<Item = T> + Unpin + Send + 'static,
-    {
-        match self {
-            TrackingRepository::Local(local) => local.merge(s).await,
-            TrackingRepository::Grpc(grpc) => grpc.merge(s).await,
-        }
-    }
-}
-
-impl BlobSender for TrackingRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<(), InternalError>
-    where
-        S: Stream<Item = TransferItem> + Unpin + Send + 'static,
-    {
-        match self {
-            TrackingRepository::Local(local) => local.prepare_transfer(s).await,
-            TrackingRepository::Grpc(grpc) => grpc.prepare_transfer(s).await,
-        }
-    }
-}
-
-impl BlobReceiver for TrackingRepository {
-    async fn create_transfer_request(
-        &self,
-        transfer_id: u32,
-        repo_id: String,
-    ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
-        match self {
-            TrackingRepository::Local(local) => local
-                .create_transfer_request(transfer_id, repo_id)
-                .await
-                .boxed(),
-            TrackingRepository::Grpc(grpc) => grpc
-                .create_transfer_request(transfer_id, repo_id)
-                .await
-                .boxed(),
-        }
-    }
-
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
-        match self {
-            TrackingRepository::Local(local) => local.finalise_transfer(transfer_id).await,
-            TrackingRepository::Grpc(grpc) => grpc.finalise_transfer(transfer_id).await,
-        }
-    }
-}
-
-pub struct ConnectedRepository {
-    pub repository: Repository,
-}
-
-impl ConnectedRepository {
+impl EstablishedConnection {
     pub async fn connect(
+        local: LocalRepository,
         name: String,
         connection_type: ConnectionType,
         parameter: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        match connection_type {
-            ConnectionType::Local => {
-                let root = parameter;
-                let repository = LocalRepository::new(Some(root.parse()?)).await?;
+    ) -> Result<Self, InternalError> {
+        let config = parse_config(connection_type, parameter)?;
+        match config.clone() {
+            ConnectionConfig::Local(LocalConfig { root }) => {
+                let repository = LocalRepository::new(Some(root.clone().into())).await?;
                 let repo_id = repository.repo_id().await?;
-                debug!(
-                    "connecting to local database {} at {}: {}",
-                    name, root, repo_id
-                );
+                debug!("connected to local database {name} at {root}: {repo_id}");
                 Ok(Self {
-                    repository: Repository::Local(repository),
+                    local,
+                    name,
+                    config,
+                    remote: Repository::Local(repository),
                 })
             }
         }
+    }
+
+    pub(crate) fn remote_rclone_target(&self) -> rclone::RcloneTarget {
+        self.config.as_rclone_target()
     }
 }

@@ -5,7 +5,7 @@ use crate::db::models::{
     TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
-use crate::repository::connection::ConnectedRepository;
+use crate::repository::connection::EstablishedConnection;
 use crate::repository::logic::assimilate;
 use crate::repository::logic::assimilate::Item;
 use crate::repository::traits::{
@@ -334,19 +334,16 @@ impl ConnectionManager for LocalRepository {
         self.db.list_all_connections().await.map_err(Into::into)
     }
 
-    async fn connect(
-        &self,
-        name: String,
-    ) -> Result<ConnectedRepository, Box<dyn std::error::Error>> {
+    async fn connect(&self, name: String) -> Result<EstablishedConnection, InternalError> {
         if let Ok(Some(Connection {
             connection_type,
             parameter,
             ..
         })) = self.lookup_by_name(&name).await
         {
-            ConnectedRepository::connect(name, connection_type, parameter).await
+            EstablishedConnection::connect(self.clone(), name, connection_type, parameter).await
         } else {
-            Err(anyhow!("unable to find the connection '{}'", name).into())
+            Err(AppError::ConnectionNotFound(name).into())
         }
     }
 }
