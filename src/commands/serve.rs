@@ -1,21 +1,52 @@
 use crate::grpc::server::{grpc, GRPCServer};
 use crate::repository::local::LocalRepository;
-use log::info;
+use log::debug;
+use rand::distributions::Alphanumeric;
+use rand::Rng;
+use serde::Serialize;
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use tonic::transport::Server;
 
-pub async fn serve(
-    maybe_root: Option<PathBuf>,
+#[derive(Serialize)]
+struct ServeReport {
     port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+    auth_key: String,
+}
+
+pub fn generate_auth_key() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(128)
+        .map(char::from)
+        .collect()
+}
+
+async fn find_available_port() -> Result<u16, Box<dyn std::error::Error>> {
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    Ok(listener.local_addr()?.port())
+}
+
+pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
+    let auth_key = generate_auth_key();
+    let port = find_available_port().await?;
+
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+    let report = ServeReport {
+        port,
+        auth_key: auth_key.clone(),
+    };
+    let json = serde_json::to_string(&report)?;
+    println!("{}", json);
+    std::io::stdout().flush()?;
+
+    debug!("listening on {}", addr);
+
     let server = GRPCServer::new(local_repository);
-
-    info!("listening on {}", addr);
-
     Server::builder()
         .add_service(grpc::grpc_server::GrpcServer::new(server))
         .serve(addr)

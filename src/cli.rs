@@ -30,10 +30,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         files_only: bool,
     },
-    Serve {
-        #[arg(default_value_t = 50001)]
-        port: u16,
-    },
+    Serve {},
     Sync {
         connection_name: Option<String>,
     },
@@ -98,8 +95,8 @@ pub async fn run() {
                 .await
                 .expect("Failed to get missing");
         }
-        Commands::Serve { port } => {
-            commands::serve::serve(cli.path, port)
+        Commands::Serve {} => {
+            commands::serve::serve(cli.path)
                 .await
                 .expect("Failed to run server");
         }
