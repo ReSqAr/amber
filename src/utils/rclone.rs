@@ -103,7 +103,6 @@ pub async fn run_rclone_operation<F>(
     file_list_path: &Path,
     source: RcloneTarget,
     destination: RcloneTarget,
-    extra_args: Vec<String>,
     mut callback: F,
 ) -> Result<(), InternalError>
 where
@@ -141,7 +140,6 @@ where
         .arg("INFO")
         .arg(&source_arg)
         .arg(&dest_arg)
-        .args(&extra_args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
