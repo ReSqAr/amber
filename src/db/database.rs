@@ -702,6 +702,7 @@ impl Database {
         &self,
         transfer_id: u32,
         remote_repo_id: String,
+        transfer_staging_path: String,
     ) -> DBOutputStream<'static, TransferItem> {
         self.stream(
             query(
@@ -727,13 +728,14 @@ impl Database {
             SELECT
                 ? AS transfer_id,
                 m.blob_id,
-                m.blob_id AS path
+                (? || '/' || m.blob_id) AS path
             FROM missing_blob_ids m
             INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
             RETURNING transfer_id, blob_id, path;",
             )
             .bind(remote_repo_id)
-            .bind(transfer_id),
+            .bind(transfer_id)
+            .bind(transfer_staging_path),
         )
     }
 

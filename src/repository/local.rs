@@ -413,7 +413,7 @@ impl BlobReceiver for LocalRepository {
             .populate_missing_blobs_for_transfer(
                 transfer_id,
                 repo_id,
-                transfer_path.rel().to_string_lossy().into(),
+                transfer_path.join("files").rel().to_string_lossy().into(),
             )
             .await
             .err_into()
