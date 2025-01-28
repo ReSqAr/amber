@@ -1,13 +1,13 @@
 use crate::db::models::ConnectionType;
 use crate::repository::local::LocalRepository;
-use crate::repository::repository::Repository;
 use crate::repository::traits::Metadata;
+use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone;
 use log::debug;
 
 #[derive(Clone, Debug)]
-struct LocalConfig {
+pub struct LocalConfig {
     root: String,
 }
 
@@ -45,7 +45,7 @@ pub struct EstablishedConnection {
     pub name: String,
     pub config: ConnectionConfig,
     pub local: LocalRepository,
-    pub remote: Repository,
+    pub remote: WrappedRepository,
 }
 
 impl EstablishedConnection {
@@ -65,7 +65,7 @@ impl EstablishedConnection {
                     local,
                     name,
                     config,
-                    remote: Repository::Local(repository),
+                    remote: WrappedRepository::Local(repository),
                 })
             }
         }

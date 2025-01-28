@@ -9,28 +9,28 @@ use crate::utils::errors::InternalError;
 use futures::{Stream, StreamExt};
 
 #[derive(Clone)]
-pub enum Repository {
+pub enum WrappedRepository {
     Local(LocalRepository),
     Grpc(GRPCClient),
     RCloneExporter(RCloneClient),
 }
 
-impl Metadata for Repository {
+impl Metadata for WrappedRepository {
     async fn repo_id(&self) -> Result<String, InternalError> {
         match self {
-            Repository::Local(local) => local.repo_id().await,
-            Repository::Grpc(grpc) => grpc.repo_id().await,
-            Repository::RCloneExporter(rclone) => rclone.repo_id().await,
+            WrappedRepository::Local(local) => local.repo_id().await,
+            WrappedRepository::Grpc(grpc) => grpc.repo_id().await,
+            WrappedRepository::RCloneExporter(rclone) => rclone.repo_id().await,
         }
     }
 }
 
-impl Repository {
+impl WrappedRepository {
     pub(crate) fn as_managed(&self) -> Option<ManagedRepository> {
         match self {
-            Repository::Local(local) => Some(ManagedRepository::Local(local.clone())),
-            Repository::Grpc(grpc) => Some(ManagedRepository::Grpc(grpc.clone())),
-            Repository::RCloneExporter(_) => None,
+            WrappedRepository::Local(local) => Some(ManagedRepository::Local(local.clone())),
+            WrappedRepository::Grpc(grpc) => Some(ManagedRepository::Grpc(grpc.clone())),
+            WrappedRepository::RCloneExporter(_) => None,
         }
     }
 }
