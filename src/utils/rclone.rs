@@ -114,36 +114,31 @@ impl RcloneTarget {
 pub struct RcloneStats {
     #[serde(default)]
     pub bytes: u64,
-
-    #[serde(default)]
     pub elapsed_time: f64,
-
-    #[serde(default)]
     pub errors: u64,
-
-    #[serde(default)]
-    pub eta: Option<String>,
-
-    #[serde(default)]
+    pub eta: Option<f64>,
     pub fatal_error: bool,
-
-    #[serde(default)]
     pub retry_error: bool,
-
-    #[serde(default)]
-    pub speed: u64,
-
-    #[serde(default)]
+    pub speed: f64,
     pub total_bytes: u64,
-
-    #[serde(default)]
     pub total_transfers: u64,
-
-    #[serde(default)]
     pub transfer_time: f64,
-
-    #[serde(default)]
     pub transfers: u64,
+    #[serde(default)]
+    pub transferring: Vec<TransferProgress>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferProgress {
+    pub bytes: u64,
+    pub eta: u64,
+    pub group: String,
+    pub name: String,
+    pub percentage: u64,
+    pub size: u64,
+    pub speed: f64,
+    pub speed_avg: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,6 +195,8 @@ where
         .arg("--files-from")
         .arg(file_list_path.display().to_string())
         .arg("--use-json-log")
+        .arg("--stats")
+        .arg("1s")
         .arg("--log-level")
         .arg("INFO")
         .arg(&source_arg)

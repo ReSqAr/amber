@@ -86,10 +86,11 @@ async fn execute_rclone(
             total_transfers,
             transfer_time,
             transfers,
+            transferring,
             ..
         }) => {
             println!(
-                "[stats] {elapsed_time}/{eta:?}/{transfer_time} {bytes}B/{total_bytes}B {transfers}/{total_transfers} {speed} B/s (E:{errors} R: {retry_error} F: {fatal_error})",
+                "[stats] {elapsed_time}/{eta:?}/{transfer_time} {bytes}B/{total_bytes}B {transfers}/{total_transfers} {speed} B/s (E:{errors} R: {retry_error} F: {fatal_error}) transferring={transferring:?}",
             );
         }
     };
