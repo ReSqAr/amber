@@ -1,12 +1,23 @@
 # PROJECT MANAGEMENT
 - drop staging at the start of local repo after it got exclusive ownership
 - pull/push
-    - SSHRepository: ssh + call + GRPC
     - BlobRepository: rclone
 - multi sync & push
 - fsck
-- smarter errors
 - amazing user feedback
+  - smarter errors <- only InternalError, no dyn
+  - good info/debug levels
+  - dedicated system for user messages
+    - mirrored into file? session.<>.txt
+- deadlock in state 
+- hide serve in help
+- make all files read-only
+- use auth key in GRPC
+
+features:
+- `--immutable` - no del to hard link multiple copies
+- `--statistics` - print stats
+
 
 
 # Pull & Push

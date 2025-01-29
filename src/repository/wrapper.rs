@@ -8,7 +8,6 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use futures::{Stream, StreamExt};
 
-#[derive(Clone)]
 pub enum WrappedRepository {
     Local(LocalRepository),
     Grpc(GRPCClient),

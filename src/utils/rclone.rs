@@ -1,4 +1,6 @@
 use crate::utils::errors::InternalError;
+use aes::cipher::{KeyIvInit, StreamCipher};
+use base64::Engine;
 use log::debug;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -23,28 +25,65 @@ impl LocalConfig {
 #[derive(Debug, Clone)]
 pub struct SshConfig {
     pub remote_name: String,
-    pub user: String,
     pub host: String,
-    pub remote_path: PathBuf,
     pub port: Option<u16>,
+    pub user: String,
+    pub password: Option<String>,
+    pub remote_path: PathBuf,
+}
+
+const RCLONE_KEY: [u8; 32] = [
+    0x9c, 0x93, 0x5b, 0x48, 0x73, 0x0a, 0x55, 0x4d, 0x6b, 0xfd, 0x7c, 0x63, 0xc8, 0x86, 0xa9, 0x2b,
+    0xd3, 0x90, 0x19, 0x8e, 0xb8, 0x12, 0x8a, 0xfb, 0xf4, 0xde, 0x16, 0x2b, 0x8b, 0x95, 0xf6, 0x38,
+];
+
+type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
+
+fn rclone_obscure_password(input: &str) -> String {
+    if input.is_empty() {
+        return "".to_string();
+    }
+    let iv = [0u8; 16];
+    let mut buffer = Vec::with_capacity(iv.len() + input.len());
+    buffer.extend_from_slice(&iv);
+    buffer.extend_from_slice(input.as_bytes());
+    let mut cipher = Aes256Ctr::new(&RCLONE_KEY.into(), &iv.into());
+    cipher.apply_keystream(&mut buffer[16..]);
+    let engine = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::general_purpose::NO_PAD,
+    );
+    engine.encode(&buffer)
 }
 
 impl SshConfig {
     fn to_rclone_arg(&self) -> String {
         format!("{}:{}", self.remote_name, self.remote_path.display())
     }
+
     fn to_config_section(&self) -> Option<String> {
-        let mut section = format!(
-            "[{}]\n\
-                     type = sftp\n\
-                     host = {}\n\
-                     user = {}\n",
-            self.remote_name, self.host, self.user
-        );
-        if let Some(port) = self.port {
-            section.push_str(&format!("port = {}\n", port));
+        let SshConfig {
+            remote_name,
+            host,
+            port,
+            user,
+            password,
+            ..
+        } = self;
+        let mut lines = vec![
+            format!("[{remote_name}]"),
+            "type = sftp".into(),
+            format!("host = {host}"),
+            format!("user = {user}"),
+        ];
+        if let Some(port) = port {
+            lines.push(format!("port = {port}"));
         }
-        Some(section)
+        if let Some(password) = password {
+            lines.push(format!("pass = {}", rclone_obscure_password(password)));
+        }
+        lines.push("".into());
+        Some(lines.join("\n"))
     }
 }
 

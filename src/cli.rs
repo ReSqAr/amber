@@ -61,12 +61,14 @@ enum RemoteCommands {
 #[derive(Clone, Debug, ValueEnum)]
 enum ConnectionType {
     Local,
+    Ssh,
 }
 
 impl From<ConnectionType> for db::models::ConnectionType {
     fn from(val: ConnectionType) -> Self {
         match val {
             ConnectionType::Local => db::models::ConnectionType::Local,
+            ConnectionType::Ssh => db::models::ConnectionType::Ssh,
         }
     }
 }

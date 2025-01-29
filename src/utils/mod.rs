@@ -5,4 +5,5 @@ pub(crate) mod path;
 pub(crate) mod pipe;
 pub(crate) mod rclone;
 pub(crate) mod sha256;
+pub(crate) mod ssh;
 pub(crate) mod walker;

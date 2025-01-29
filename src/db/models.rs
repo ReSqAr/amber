@@ -143,12 +143,14 @@ pub struct InsertVirtualFile {
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum ConnectionType {
     Local,
+    Ssh,
 }
 
 impl Display for ConnectionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ConnectionType::Local => write!(f, "local"),
+            ConnectionType::Ssh => write!(f, "ssh"),
         }
     }
 }

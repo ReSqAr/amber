@@ -1,5 +1,4 @@
 use thiserror::Error;
-use tonic::Status;
 
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -20,12 +19,16 @@ pub enum AppError {
     RepositoryAlreadyInitialised(),
     #[error("connection {0} not found")]
     ConnectionNotFound(String),
+    #[error("unable to parse '{raw}': {message}")]
+    Parse { message: String, raw: String },
 }
 
 #[derive(Error, Debug)]
 pub enum InternalError {
     #[error("tonic error: {0}")]
-    Status(#[from] Status),
+    Status(#[from] tonic::Status),
+    #[error("tonic transport error: {0}")]
+    Tonic(#[from] tonic::transport::Error),
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("DB migration error: {0}")]
@@ -38,14 +41,16 @@ pub enum InternalError {
     App(#[from] AppError),
     #[error("rclone error: exit code: {0}")]
     RClone(i32),
+    #[error("ssh connection error: {0}")]
+    Ssh(String),
 }
 
 // Implement conversion from AppError to Status
-impl From<InternalError> for Status {
+impl From<InternalError> for tonic::Status {
     fn from(error: InternalError) -> Self {
         match error {
             InternalError::Status(e) => e,
-            _ => Status::from_error(Box::new(error)),
+            _ => tonic::Status::from_error(Box::new(error)),
         }
     }
 }
