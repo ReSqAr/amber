@@ -134,7 +134,7 @@ pub async fn walk(
                 WalkState::Continue
             })
         });
-        drop(tx); // TODO: check that no messages get lost
+        drop(tx);
     });
 
     Ok((handle, rx))

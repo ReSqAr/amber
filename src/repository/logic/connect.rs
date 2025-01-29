@@ -99,23 +99,19 @@ impl SshConfig {
     }
 
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
-        // Create a channel for communication between threads
         let (tx, rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>();
-
-        // Clone necessary fields for the thread
         let ssh_config = self.clone();
+        let local_port = find_available_port().await?;
 
-        // Spawn a dedicated thread for SSH operations
+        // dedicated thread for SSH operations
         thread::spawn(move || {
-            let result = setup_app_via_ssh(ssh_config);
+            let result = setup_app_via_ssh(ssh_config, local_port);
             debug!("result to be sent: {:?}", result);
             if let Err(e) = tx.send(result) {
                 eprintln!("Failed to send ThreadResponse: {}", e);
-                // Optionally handle the error further if needed
             }
         });
 
-        // Wait for the ThreadResponse from the channel
         let thread_response = match rx.recv() {
             Ok(Ok(info)) => info,
             Ok(Err(e)) => return Err(e),
@@ -155,13 +151,18 @@ struct ThreadResponse {
     auth_key: String,
 }
 
-fn setup_app_via_ssh(ssh_config: SshConfig) -> Result<ThreadResponse, InternalError> {
+fn setup_app_via_ssh(
+    ssh_config: SshConfig,
+    local_port: u16,
+) -> Result<ThreadResponse, InternalError> {
     let tcp_addr = format!("{}:{}", ssh_config.host, ssh_config.port.unwrap_or(22));
     let tcp = TcpStream::connect(&tcp_addr)
         .map_err(|e| InternalError::Ssh(format!("failed to connect: {}", e)))?;
 
     let mut session = Session::new()
         .map_err(|e| InternalError::Ssh(format!("failed to create session: {}", e)))?;
+
+    session.set_keepalive(true, 5);
 
     session.set_tcp_stream(tcp.try_clone()?);
     session
@@ -209,11 +210,6 @@ fn setup_app_via_ssh(ssh_config: SshConfig) -> Result<ThreadResponse, InternalEr
     debug!("ServeResponse: {:?}", serve_response);
 
     // Prepare the ThreadResponse
-    let local_port = 4242; // TODO
-    let thread_response = ThreadResponse {
-        port: local_port,
-        auth_key: serve_response.auth_key.clone(),
-    };
 
     // Create the tunnel
     thread::spawn(move || {
@@ -231,7 +227,10 @@ fn setup_app_via_ssh(ssh_config: SshConfig) -> Result<ThreadResponse, InternalEr
     });
     debug!("finishing setup");
 
-    Ok(thread_response)
+    Ok(ThreadResponse {
+        port: local_port,
+        auth_key: serve_response.auth_key.clone(),
+    })
 }
 
 #[derive(Clone, Debug)]
