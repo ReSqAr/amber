@@ -13,6 +13,7 @@
 - hide serve in help
 - make all files read-only
 - use auth key in GRPC
+- close server properly
 
 features:
 - `--immutable` - no del to hard link multiple copies

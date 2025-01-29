@@ -126,7 +126,7 @@ pub async fn walk(
             Box::new(move |result| {
                 let obs = match result {
                     Ok(entry) => observe_dir_entry(&root, entry),
-                    Err(e) => Some(Err(Error::Observer(format!("Walk error: {}", e)))),
+                    Err(e) => Some(Err(Error::Observer(format!("Walk error: {e}")))),
                 };
                 if let Some(observation) = obs {
                     let _ = tx.blocking_send(observation);

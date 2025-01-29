@@ -61,7 +61,7 @@ impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
         let blob_id: String = row.try_get("blob_id")?;
         let paths_json: String = row.try_get("paths")?;
         let paths: Vec<String> = serde_json::from_str(&paths_json)
-            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {}", e).into()))?;
+            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
         Ok(BlobWithPaths { blob_id, paths })
     }
 }

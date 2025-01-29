@@ -44,7 +44,7 @@ pub async fn show_status(
                 }
             }
             Err(e) => {
-                error!("error during traversal: {}", e);
+                error!("error during traversal: {e}");
             }
         }
     }

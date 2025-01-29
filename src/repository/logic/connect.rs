@@ -108,7 +108,7 @@ impl SshConfig {
             let result = setup_app_via_ssh(ssh_config, local_port);
             debug!("result to be sent: {:?}", result);
             if let Err(e) = tx.send(result) {
-                eprintln!("Failed to send ThreadResponse: {}", e);
+                eprintln!("Failed to send ThreadResponse: {e}");
             }
         });
 
@@ -127,7 +127,7 @@ impl SshConfig {
         let addr = format!("http://127.0.0.1:{}", thread_response.port);
         let repository = GRPCClient::connect(addr)
             .await
-            .map_err(|e| InternalError::Ssh(format!("gRPC connection failed: {}", e)))?;
+            .map_err(|e| InternalError::Ssh(format!("gRPC connection failed: {e}")))?;
 
         Ok(WrappedRepository::Grpc(repository))
     }
@@ -157,23 +157,23 @@ fn setup_app_via_ssh(
 ) -> Result<ThreadResponse, InternalError> {
     let tcp_addr = format!("{}:{}", ssh_config.host, ssh_config.port.unwrap_or(22));
     let tcp = TcpStream::connect(&tcp_addr)
-        .map_err(|e| InternalError::Ssh(format!("failed to connect: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to connect: {e}")))?;
 
-    let mut session = Session::new()
-        .map_err(|e| InternalError::Ssh(format!("failed to create session: {}", e)))?;
+    let mut session =
+        Session::new().map_err(|e| InternalError::Ssh(format!("failed to create session: {e}")))?;
 
     session.set_keepalive(true, 5);
 
     session.set_tcp_stream(tcp.try_clone()?);
     session
         .handshake()
-        .map_err(|e| InternalError::Ssh(format!("SSH handshake failed: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("SSH handshake failed: {e}")))?;
 
     // Authenticate
     if let Some(pwd) = ssh_config.password {
         session
             .userauth_password(&ssh_config.user, &pwd)
-            .map_err(|e| InternalError::Ssh(format!("SSH authentication failed: {}", e)))?;
+            .map_err(|e| InternalError::Ssh(format!("SSH authentication failed: {e}")))?;
     }
 
     if !session.authenticated() {
@@ -185,7 +185,7 @@ fn setup_app_via_ssh(
     // Run remote "serve" command
     let mut channel = session
         .channel_session()
-        .map_err(|e| InternalError::Ssh(format!("failed to open channel: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to open channel: {e}")))?;
 
     let remote_command = format!(
         "{} --path \"{}\" serve",
@@ -194,7 +194,7 @@ fn setup_app_via_ssh(
 
     channel
         .exec(&remote_command) // TODO: cleanup after exit
-        .map_err(|e| InternalError::Ssh(format!("failed to exec remote command: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to exec remote command: {e}")))?;
 
     let mut stdout = channel.stream(0);
     let mut reader = BufReader::new(&mut stdout);
@@ -202,10 +202,10 @@ fn setup_app_via_ssh(
 
     reader
         .read_line(&mut line)
-        .map_err(|e| InternalError::Ssh(format!("failed to read line: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to read line: {e}")))?;
 
     let serve_response: ServeResponse = serde_json::from_str(&line)
-        .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {}", e)))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {e}")))?;
 
     debug!("ServeResponse: {:?}", serve_response);
 
@@ -222,7 +222,7 @@ fn setup_app_via_ssh(
             "127.0.0.1".into(),
             serve_response.port,
         )
-        .map_err(|e| InternalError::Ssh(format!("Failed to create tunnel: {}", e)))
+        .map_err(|e| InternalError::Ssh(format!("Failed to create tunnel: {e}")))
         .expect("no error");
     });
     debug!("finishing setup");

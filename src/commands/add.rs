@@ -106,7 +106,7 @@ pub async fn add_files(
                     count += 1;
                 }
                 Err(e) => {
-                    println!("error: {}", e);
+                    println!("error: {e}");
                 }
             }
         }

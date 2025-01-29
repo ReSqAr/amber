@@ -38,7 +38,7 @@ pub async fn list_missing_blobs(
                 }
             }
             Err(e) => {
-                error!("error during traversal: {}", e);
+                error!("error during traversal: {e}");
             }
         }
     }

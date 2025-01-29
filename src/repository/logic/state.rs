@@ -91,7 +91,7 @@ async fn close(
         match r {
             Ok(vf) => {
                 if let Err(e) = tx.send(Ok(vf)).await {
-                    panic!("failed to send element to output stream: {}", e);
+                    panic!("failed to send element to output stream: {e}");
                 }
             }
             Err(e) => {
@@ -176,7 +176,7 @@ pub async fn state(
 
         // close the channels once the stream is exhausted.
         if let Err(e) = obs_tx_clone.send(Flow::Shutdown).await {
-            panic!("failed to send error to output stream: {}", e);
+            panic!("failed to send error to output stream: {e}");
         }
     });
 
@@ -202,7 +202,7 @@ pub async fn state(
                             | Some(VirtualFileState::Deleted) => {
                                 debug!("state -> splitter: {:?} ready for output", vf.path);
                                 if let Err(e) = tx_clone.send(Ok(vf)).await {
-                                    panic!("failed to send error to output stream: {}", e);
+                                    panic!("failed to send error to output stream: {e}");
                                 }
                             }
                             Some(VirtualFileState::NeedsCheck) | None => {
@@ -228,7 +228,7 @@ pub async fn state(
             }
             if has_shutdown {
                 if let Err(e) = needs_check_tx_clone.send(Flow::Shutdown).await {
-                    panic!("failed to send shutdown to needs check stream: {}", e);
+                    panic!("failed to send shutdown to needs check stream: {e}");
                 }
             }
         }
@@ -299,8 +299,8 @@ pub async fn state(
                 Ok(())
             }
             Err(e) => {
-                error!("error in task execution: {}", e);
-                Err(Error::TaskFailure(format!("task execution failed: {}", e)))
+                error!("error in task execution: {e}");
+                Err(Error::TaskFailure(format!("task execution failed: {e}")))
             }
         }
     });
