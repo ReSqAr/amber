@@ -1,11 +1,11 @@
 # PROJECT MANAGEMENT
 - drop staging at the start of local repo after it got exclusive ownership
 - pull/push
-    - BlobRepository: rclone
+  - BlobRepository: rclone
 - multi sync & push
 - fsck
 - amazing user feedback
-  - smarter errors <- only InternalError, no dyn
+  - smarter errors
   - good info/debug levels
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
@@ -14,8 +14,6 @@
 features:
 - `--immutable` - no del to hard link multiple copies
 - `--statistics` - print stats
-
-
 
 # Pull & Push
 
