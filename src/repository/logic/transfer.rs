@@ -117,7 +117,7 @@ pub async fn transfer(
     source: &(impl Metadata + BlobSender + Send + Sync + Clone + 'static),
     destination: &(impl BlobReceiver + Send + Sync + Clone + 'static),
     connection: EstablishedConnection,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), InternalError> {
     let mut rng = rand::rng();
     let transfer_id: u32 = rng.random();
     debug!("current transfer_id={transfer_id}");

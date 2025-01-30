@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+use crate::utils::errors::InternalError;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use std::path::PathBuf;
@@ -95,13 +96,14 @@ pub async fn walk(
     root_path: PathBuf,
     config: WalkerConfig,
     buffer_size: usize,
-) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>>
-{
+) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), InternalError> {
     let root = root_path.to_path_buf();
 
     let mut override_builder = OverrideBuilder::new(&root);
     for pattern in config.patterns {
-        override_builder.add(pattern.as_str())?;
+        override_builder
+            .add(pattern.as_str())
+            .map_err(Into::<InternalError>::into)?;
     }
 
     let mut walk_builder = WalkBuilder::new(&root);
@@ -111,7 +113,11 @@ pub async fn walk(
         .follow_links(false)
         .same_file_system(true)
         .max_depth(None)
-        .overrides(override_builder.build()?);
+        .overrides(
+            override_builder
+                .build()
+                .map_err(Into::<InternalError>::into)?,
+        );
 
     let walker = walk_builder.build_parallel();
     let (tx, rx) = mpsc::channel(buffer_size);

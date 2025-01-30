@@ -1,13 +1,13 @@
 use crate::db::models::FilePathWithBlobId;
 use crate::repository::traits::{Local, Reconciler};
-use anyhow::Context;
+use crate::utils::errors::InternalError;
 use futures::StreamExt;
 use log::debug;
 use tokio::fs;
 
 pub async fn checkout(
     local: &(impl Local + Reconciler + Send),
-) -> anyhow::Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<(), InternalError> {
     let mut desired_state = local.target_filesystem_state();
     while let Some(next) = desired_state.next().await {
         let FilePathWithBlobId {
@@ -28,9 +28,7 @@ pub async fn checkout(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            fs::hard_link(&object_path, &target_path)
-                .await
-                .context("unable to hardlink files")?;
+            fs::hard_link(&object_path, &target_path).await?;
             debug!("hardlinked {:?} -> {:?}", object_path, target_path);
         } else {
             debug!("skipped hardlinked {:?} -> {:?}", object_path, target_path);

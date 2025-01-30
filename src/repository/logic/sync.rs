@@ -8,7 +8,7 @@ pub async fn sync_table<I, L, R>(
     local_param: I::Params,
     remote: &R,
     remote_param: I::Params,
-) -> anyhow::Result<(), Box<dyn std::error::Error>>
+) -> anyhow::Result<(), InternalError>
 where
     I: Send + Sync + 'static + SyncerParams,
     L: Syncer<I> + Send + Sync,

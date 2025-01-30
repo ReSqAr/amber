@@ -37,8 +37,12 @@ pub enum InternalError {
     IO(#[from] std::io::Error),
     #[error("stream error: {0}")]
     Stream(String),
+    #[error("async error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
     #[error("{0}")]
     App(#[from] AppError),
+    #[error("ignore error: {0}")]
+    Ignore(#[from] ignore::Error),
     #[error("rclone error: exit code: {0}")]
     RClone(i32),
     #[error("ssh connection error: {0}")]
