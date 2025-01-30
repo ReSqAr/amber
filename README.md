@@ -9,6 +9,7 @@
   - good info/debug levels
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
+- forward stderr from server
 - make all files read-only <- disable via --immutable
 
 features:
