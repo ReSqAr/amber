@@ -30,6 +30,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         files_only: bool,
     },
+    #[command(hide = true)]
     Serve {},
     Sync {
         connection_name: Option<String>,

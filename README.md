@@ -10,7 +10,6 @@
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
 - deadlock in state 
-- hide serve in help
 - make all files read-only <- disable via --immutable
 - use auth key in GRPC
 
