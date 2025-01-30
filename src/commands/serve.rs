@@ -1,3 +1,4 @@
+use crate::grpc::auth::ServerAuth;
 use crate::grpc::definitions;
 use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
@@ -9,12 +10,10 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{signal, SignalKind};
 use tonic::transport::Server;
-use tonic::{Request, Status};
 
 #[derive(Serialize)]
 struct ServeReport {
@@ -28,39 +27,6 @@ pub fn generate_auth_key() -> String {
         .take(128)
         .map(char::from)
         .collect()
-}
-
-#[derive(Clone)]
-pub struct AuthInterceptor {
-    auth_key: Arc<String>,
-}
-
-impl AuthInterceptor {
-    pub fn new(auth_key: String) -> Self {
-        Self {
-            auth_key: Arc::new(auth_key),
-        }
-    }
-}
-
-impl tonic::service::Interceptor for AuthInterceptor {
-    fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-        match request.metadata().get("authorization") {
-            Some(auth_token) => match auth_token.to_str() {
-                Ok(token) => {
-                    if token == self.auth_key.as_str() {
-                        Ok(request)
-                    } else {
-                        Err(Status::unauthenticated("Invalid authorization token"))
-                    }
-                }
-                Err(_) => Err(Status::unauthenticated(
-                    "Invalid authorization token format",
-                )),
-            },
-            None => Err(Status::unauthenticated("Missing authorization token")),
-        }
-    }
 }
 
 pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
@@ -97,7 +63,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error
     };
 
     debug!("listening on {}", addr);
-    let auth_interceptor = AuthInterceptor::new(auth_key);
+    let auth_interceptor = ServerAuth::new(auth_key);
     let service = Service::new(local_repository);
     let service = definitions::grpc_server::GrpcServer::with_interceptor(service, auth_interceptor);
     let server = Server::builder()

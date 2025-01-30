@@ -2,6 +2,7 @@ use crate::db::models::Blob as DbBlob;
 use crate::db::models::File as DbFile;
 use crate::db::models::Repository as DbRepository;
 use crate::db::models::TransferItem as DbTransferItem;
+use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
     Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, LookupLastIndicesRequest,
@@ -17,41 +18,18 @@ use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};
 use log::debug;
 use std::error::Error;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::codegen::InterceptedService;
-use tonic::service::Interceptor;
 use tonic::transport::Channel;
-use tonic::{Request, Status};
 
-#[derive(Clone)]
-pub struct AuthInterceptor {
-    auth_header: tonic::metadata::MetadataValue<tonic::metadata::Ascii>,
-}
-
-impl AuthInterceptor {
-    pub fn new(auth_key: &str) -> Result<Self, tonic::metadata::errors::InvalidMetadataValue> {
-        Ok(Self {
-            auth_header: tonic::metadata::MetadataValue::from_str(auth_key)?,
-        })
-    }
-}
-
-impl Interceptor for AuthInterceptor {
-    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
-        req.metadata_mut()
-            .insert("authorization", self.auth_header.clone());
-        Ok(req)
-    }
-}
 #[derive(Clone)]
 pub(crate) struct GRPCClient {
-    client: Arc<RwLock<GrpcClient<InterceptedService<Channel, AuthInterceptor>>>>,
+    client: Arc<RwLock<GrpcClient<InterceptedService<Channel, ClientAuth>>>>,
 }
 
 impl GRPCClient {
-    pub fn new(client: GrpcClient<InterceptedService<Channel, AuthInterceptor>>) -> Self {
+    pub fn new(client: GrpcClient<InterceptedService<Channel, ClientAuth>>) -> Self {
         Self {
             client: Arc::new(client.into()),
         }
@@ -64,7 +42,7 @@ impl GRPCClient {
             .connect()
             .await?;
 
-        let interceptor = AuthInterceptor::new(&auth_key)?;
+        let interceptor = ClientAuth::new(&auth_key)?;
         let client = GrpcClient::with_interceptor(channel, interceptor);
 
         debug!("connected to {}", &addr);
