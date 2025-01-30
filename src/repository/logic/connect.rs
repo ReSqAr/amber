@@ -3,13 +3,14 @@ use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use crate::utils::{rclone, ssh};
-use log::debug;
+use crate::utils::rclone;
+use log::{debug, error, warn};
+use russh::client::AuthResult;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
-use std::net::TcpStream;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct LocalConfig {
@@ -98,28 +99,27 @@ impl SshConfig {
     }
 
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
-        let (tx, rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>();
+        let (tx, mut rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>(100);
         let ssh_config = self.clone();
         let local_port = find_available_port().await?;
         debug!("local_port: {local_port}");
 
         // dedicated thread for SSH operations
-        thread::spawn(move || {
-            let result = setup_app_via_ssh(ssh_config, local_port);
+        tokio::spawn(async move {
+            let result = setup_app_via_ssh(ssh_config, local_port).await;
             debug!("result to be sent: {:?}", result);
-            if let Err(e) = tx.send(result) {
+            if let Err(e) = tx.send(result).await {
                 eprintln!("Failed to send ThreadResponse: {e}");
             }
         });
 
-        let ThreadResponse { port, auth_key } = match rx.recv() {
-            Ok(Ok(info)) => info,
-            Ok(Err(e)) => return Err(e),
-            Err(e) => {
-                return Err(InternalError::Ssh(format!(
-                    "Failed to receive ServeInfo: {}",
-                    e
-                )))
+        let ThreadResponse { port, auth_key } = match rx.recv().await {
+            Some(Ok(info)) => info,
+            Some(Err(e)) => return Err(e),
+            None => {
+                return Err(InternalError::Ssh(
+                    "Failed to receive ServeInfo".to_string(),
+                ))
             }
         };
         debug!("thread_response: port={port} auth_key={auth_key}");
@@ -165,88 +165,144 @@ struct ThreadResponse {
     auth_key: String,
 }
 
-fn setup_app_via_ssh(
+struct Client;
+
+impl russh::client::Handler for Client {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+async fn setup_app_via_ssh(
     ssh_config: SshConfig,
     local_port: u16,
 ) -> Result<ThreadResponse, InternalError> {
-    let tcp_addr = format!("{}:{}", ssh_config.host, ssh_config.port.unwrap_or(22));
-    let tcp = TcpStream::connect(&tcp_addr)
-        .map_err(|e| InternalError::Ssh(format!("failed to connect: {e}")))?;
+    let config = Arc::new(russh::client::Config::default());
+    let mut session = russh::client::connect(
+        config,
+        (ssh_config.host, ssh_config.port.unwrap_or(22)),
+        Client,
+    )
+    .await
+    .map_err(|e| InternalError::Ssh(format!("Connection failed: {}", e)))?;
 
-    let mut session = ssh2::Session::new()
-        .map_err(|e| InternalError::Ssh(format!("failed to create session: {e}")))?;
+    if let Some(pwd) = ssh_config.password.clone() {
+        let auth_result = session
+            .authenticate_password(&ssh_config.user, &pwd)
+            .await
+            .map_err(|e| InternalError::Ssh(format!("Authentication failed: {}", e)))?;
 
-    session.set_keepalive(true, 5);
-
-    session.set_tcp_stream(tcp.try_clone()?);
-    session
-        .handshake()
-        .map_err(|e| InternalError::Ssh(format!("SSH handshake failed: {e}")))?;
-
-    // Authenticate
-    if let Some(pwd) = ssh_config.password {
-        session
-            .userauth_password(&ssh_config.user, &pwd)
-            .map_err(|e| InternalError::Ssh(format!("SSH authentication failed: {e}")))?;
-    }
-
-    if !session.authenticated() {
+        if auth_result != AuthResult::Success {
+            return Err(InternalError::Ssh("Authentication failed.".into()));
+        }
+    } else {
         return Err(InternalError::Ssh(
-            "SSH authentication not completed.".into(),
+            "No authentication method provided.".into(),
         ));
     }
-
-    // Run remote "serve" command
-    let mut channel = session
-        .channel_session()
-        .map_err(|e| InternalError::Ssh(format!("failed to open channel: {e}")))?;
 
     let remote_command = format!(
         "{} --path \"{}\" serve",
         ssh_config.application, ssh_config.remote_path
     );
-    debug!("remote_command={remote_command}");
+    debug!("executing remote command: {}", remote_command);
+
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| InternalError::Ssh(format!("Channel open failed: {}", e)))?;
 
     channel
-        .exec(&remote_command)
-        .map_err(|e| InternalError::Ssh(format!("failed to exec remote command: {e}")))?;
+        .exec(false, remote_command.as_bytes())
+        .await
+        .map_err(|e| InternalError::Ssh(format!("Command execution failed: {}", e)))?;
 
-    let mut stdout = channel.stream(0);
-    let mut reader = BufReader::new(&mut stdout);
-    let mut line = String::new();
-
+    let mut reader = BufReader::new(channel.into_stream());
+    let mut buffer = String::new();
     reader
-        .read_line(&mut line)
-        .map_err(|e| InternalError::Ssh(format!("failed to read line: {e}")))?;
+        .read_line(&mut buffer)
+        .await
+        .map_err(|e| InternalError::Ssh(format!("Failed to read from channel: {}", e)))?;
 
-    let serve_result: ServeResult = serde_json::from_str(&line)
-        .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {e} (line: '{line}')")))?;
+    let output = String::from_utf8(buffer.into())
+        .map_err(|e| InternalError::Ssh(format!("UTF8 error: {}", e)))?;
+    debug!("received output: {}", output);
 
-    debug!("ServeResult: {:?}", serve_result);
+    let serve_response: ServeResult = serde_json::from_str(&output)
+        .map_err(|e| InternalError::Ssh(format!("JSON parse error: {}", e)))?;
 
-    let serve_response = match serve_result {
-        ServeResult::Success(serve_response) => serve_response,
+    let serve_result = match serve_response {
+        ServeResult::Success(resp) => resp,
         ServeResult::Error(e) => return Err(InternalError::Ssh(e.error)),
     };
 
-    thread::spawn(move || {
-        let _channel = channel;
-        ssh::port_forward(
-            Arc::new(Mutex::new(session)),
-            tcp.into(),
-            "127.0.0.1".into(),
-            local_port,
-            "127.0.0.1".into(),
-            serve_response.port,
-        )
-        .map_err(|e| InternalError::Ssh(format!("Failed to create tunnel: {e}")))
-        .expect("no error");
+    debug!("parsed ServeResponse: {:?}", serve_result);
+    let auth_key = serve_result.auth_key;
+    let remote_port = serve_result.port;
+
+    tokio::spawn(async move {
+        loop {
+            let mut buffer = String::new();
+            if let Err(e) = reader.read_line(&mut buffer).await {
+                error!("Failed to read from remote channel: {}", e);
+                break;
+            }
+            debug!("[remote] {buffer}");
+        }
     });
-    debug!("finishing setup");
+
+    // port forwarding in new asynchronous task
+    tokio::spawn(async move {
+        let listener = match TcpListener::bind(format!("127.0.0.1:{local_port}")).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!("TcpListener::bind: {e}");
+                return;
+            }
+        };
+
+        loop {
+            let (mut local_stream, _) = match listener.accept().await {
+                Ok(local_stream) => local_stream,
+                Err(e) => {
+                    error!("listener.accept(): {e}");
+                    break;
+                }
+            };
+            let channel = match session
+                .channel_open_direct_tcpip(
+                    "127.0.0.1",
+                    remote_port.into(),
+                    "127.0.0.1",
+                    local_port.into(),
+                )
+                .await
+            {
+                Ok(channel) => channel,
+                Err(e) => {
+                    error!("session.channel_open_direct_tcpip(): {e}");
+                    break;
+                }
+            };
+
+            tokio::spawn(async move {
+                let mut remote_stream = channel.into_stream();
+                match tokio::io::copy_bidirectional(&mut local_stream, &mut remote_stream).await {
+                    Ok((u, d)) => debug!("up: {u} bytes down: {d} bytes"),
+                    Err(e) => warn!("tokio::io::copy_bidirectional: {e}"),
+                };
+            });
+        }
+    });
 
     Ok(ThreadResponse {
         port: local_port,
-        auth_key: serve_response.auth_key.clone(),
+        auth_key,
     })
 }
 
