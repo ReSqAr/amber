@@ -3,11 +3,11 @@ use crate::grpc::definitions;
 use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::connect;
+use crate::repository::logic::connect::{ServeError, ServeResponse, ServeResult};
 use crate::utils::errors::InternalError;
 use log::debug;
 use rand::distr::Alphanumeric;
 use rand::Rng;
-use serde::Serialize;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -15,12 +15,6 @@ use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{signal, SignalKind};
 use tonic::transport::Server;
-
-#[derive(Serialize, Debug)]
-struct ServeReport {
-    port: u16,
-    auth_key: String,
-}
 
 pub fn generate_auth_key() -> String {
     rand::rng()
@@ -31,16 +25,30 @@ pub fn generate_auth_key() -> String {
 }
 
 pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root).await?;
+    let local_repository = match LocalRepository::new(maybe_root).await {
+        Ok(local_repository) => local_repository,
+        Err(e) => {
+            let error = ServeResult::Error(ServeError {
+                error: e.to_string(),
+            });
+            let json =
+                serde_json::to_string(&error).map_err(|e| InternalError::SerialisationError {
+                    object: format!("{error:?}"),
+                    e: e.to_string(),
+                })?;
+            println!("{}", json);
+            return Err(e);
+        }
+    };
 
     let auth_key = generate_auth_key();
     let port = connect::find_available_port().await?;
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-    let report = ServeReport {
+    let report = ServeResult::Success(ServeResponse {
         port,
         auth_key: auth_key.clone(),
-    };
+    });
     let json = serde_json::to_string(&report).map_err(|e| InternalError::SerialisationError {
         object: format!("{report:?}"),
         e: e.to_string(),

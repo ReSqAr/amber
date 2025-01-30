@@ -42,7 +42,7 @@ impl GRPCClient {
             .await?;
 
         let interceptor = ClientAuth::new(&auth_key).map_err(|e| {
-            InternalError::GRPC(format!("unable to create authentication method: {e}"))
+            InternalError::Grpc(format!("unable to create authentication method: {e}"))
         })?;
         let client = GrpcClient::with_interceptor(channel, interceptor);
 

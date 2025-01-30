@@ -32,7 +32,7 @@ pub enum InternalError {
     #[error("tonic transport error: {0}")]
     Tonic(#[from] tonic::transport::Error),
     #[error("grpc error: {0}")]
-    GRPC(String),
+    Grpc(String),
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("DB migration error: {0}")]

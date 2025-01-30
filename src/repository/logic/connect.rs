@@ -5,7 +5,7 @@ use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::{rclone, ssh};
 use log::debug;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::sync::{mpsc, Arc, Mutex};
@@ -139,10 +139,24 @@ pub(crate) async fn find_available_port() -> Result<u16, InternalError> {
     Ok(listener.local_addr()?.port())
 }
 
-#[derive(Deserialize, Debug, Clone)]
-struct ServeResponse {
-    port: u16,
-    auth_key: String,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct ServeResponse {
+    pub(crate) port: u16,
+    pub(crate) auth_key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ServeError {
+    pub(crate) error: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")] // Uses a "type" field to distinguish variants
+pub(crate) enum ServeResult {
+    #[serde(rename = "success")]
+    Success(ServeResponse),
+    #[serde(rename = "error")]
+    Error(ServeError),
 }
 
 #[derive(Debug, Clone)]
@@ -205,10 +219,15 @@ fn setup_app_via_ssh(
         .read_line(&mut line)
         .map_err(|e| InternalError::Ssh(format!("failed to read line: {e}")))?;
 
-    let serve_response: ServeResponse = serde_json::from_str(&line)
+    let serve_result: ServeResult = serde_json::from_str(&line)
         .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {e} (line: '{line}')")))?;
 
-    debug!("ServeResponse: {:?}", serve_response);
+    debug!("ServeResult: {:?}", serve_result);
+
+    let serve_response = match serve_result {
+        ServeResult::Success(serve_response) => serve_response,
+        ServeResult::Error(e) => return Err(InternalError::Ssh(e.error)),
+    };
 
     thread::spawn(move || {
         let _channel = channel;

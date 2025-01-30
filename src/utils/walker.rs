@@ -22,7 +22,7 @@ impl Default for WalkerConfig {
 }
 
 #[derive(Error, Debug)]
-pub(crate) enum Error {
+pub enum Error {
     #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
     #[error("walker error: {0}")]
