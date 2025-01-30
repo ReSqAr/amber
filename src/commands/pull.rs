@@ -1,10 +1,11 @@
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::checkout;
 use crate::repository::logic::transfer::transfer;
-use crate::repository::traits::ConnectionManager;
+use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::{AppError, InternalError};
 use anyhow::Result;
 use std::path::PathBuf;
+use tokio::fs;
 
 pub async fn pull(
     maybe_root: Option<PathBuf>,
@@ -26,6 +27,12 @@ pub async fn pull(
     transfer(&local, &managed_remote, &local, connection).await?;
 
     checkout::checkout(&local).await?;
+
+    match fs::remove_dir_all(local.staging_path()).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    };
 
     Ok(())
 }

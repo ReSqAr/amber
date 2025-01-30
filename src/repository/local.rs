@@ -91,6 +91,12 @@ impl LocalRepository {
         let lock_path = repository_path.join(".lock");
         let lock = acquire_exclusive_lock(lock_path).await?;
 
+        match fs::remove_dir_all(repository_path.join("staging")).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        };
+
         let db_path = repository_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
             .await
@@ -107,7 +113,7 @@ impl LocalRepository {
 
         debug!("db connected");
 
-        Ok(LocalRepository {
+        Ok(Self {
             root,
             repo_id: repo.repo_id,
             db,
