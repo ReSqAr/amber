@@ -15,7 +15,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
-    chunk_size: usize,
+    max_variable_number: usize,
 }
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
@@ -24,7 +24,7 @@ impl Database {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            chunk_size: 10000,
+            max_variable_number: 32000, // 32766 - actually: https://sqlite.org/limits.html
         }
     }
 
@@ -77,7 +77,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -124,7 +124,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 6);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -203,7 +203,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -253,7 +253,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -299,7 +299,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.chunks(self.chunk_size);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 6);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -534,7 +534,7 @@ impl Database {
     ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
     {
         let pool = self.pool.clone();
-        input_stream.ready_chunks(self.chunk_size).then(move |chunk: Vec<Flow<Observation>>| {
+        input_stream.ready_chunks(self.max_variable_number / 7).then(move |chunk: Vec<Flow<Observation>>| {
             let pool = pool.clone();
             Box::pin(async move {
                 let shutting_down = chunk.iter().any(
