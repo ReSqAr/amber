@@ -1,7 +1,7 @@
 use crate::db::models::{
     Blob as DbBlob, File as DbFile, Repository as DbRepository, TransferItem as DbTransferItem,
 };
-use crate::grpc::server::grpc::{Blob, File, Repository, TransferItem};
+use crate::grpc::definitions::{Blob, File, Repository, TransferItem};
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 

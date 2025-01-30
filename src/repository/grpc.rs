@@ -2,8 +2,8 @@ use crate::db::models::Blob as DbBlob;
 use crate::db::models::File as DbFile;
 use crate::db::models::Repository as DbRepository;
 use crate::db::models::TransferItem as DbTransferItem;
-use crate::grpc::server::grpc::grpc_client::GrpcClient;
-use crate::grpc::server::grpc::{
+use crate::grpc::definitions::grpc_client::GrpcClient;
+use crate::grpc::definitions::{
     Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, LookupLastIndicesRequest,
     LookupLastIndicesResponse, Repository, RepositoryIdRequest, SelectBlobsRequest,
     SelectFilesRequest, SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest,

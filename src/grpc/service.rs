@@ -1,11 +1,10 @@
 use crate::db;
-use crate::db::models::TransferItem as DbTransferItem;
-use crate::grpc::server::grpc::{
-    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
-    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
-    MergeRepositoriesResponse, PrepareTransferResponse, Repository, SelectBlobsRequest,
-    SelectFilesRequest, SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest,
-    UpdateLastIndicesResponse,
+use crate::grpc::definitions::{
+    grpc_server, Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest,
+    FinaliseTransferResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse, PrepareTransferResponse,
+    Repository, RepositoryIdRequest, RepositoryIdResponse, SelectBlobsRequest, SelectFilesRequest,
+    SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest, UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
@@ -15,29 +14,24 @@ use crate::utils::pipe::TryForwardIntoExt;
 use db::models::Blob as DbBlob;
 use db::models::File as DbFile;
 use db::models::Repository as DbRepository;
+use db::models::TransferItem as DbTransferItem;
 use futures::Stream;
 use futures::TryStreamExt;
-use grpc::grpc_server::Grpc;
-use grpc::{RepositoryIdRequest, RepositoryIdResponse};
 use std::pin::Pin;
 use tonic::{Request, Response, Status, Streaming};
 
-pub mod grpc {
-    tonic::include_proto!("grpc");
-}
-
-pub struct GRPCServer<T> {
+pub struct Service<T> {
     repository: T,
 }
 
-impl<T> GRPCServer<T> {
+impl<T> Service<T> {
     pub fn new(repository: T) -> Self {
         Self { repository }
     }
 }
 
 #[tonic::async_trait]
-impl<T> Grpc for GRPCServer<T>
+impl<T> grpc_server::Grpc for Service<T>
 where
     T: Metadata
         + Local

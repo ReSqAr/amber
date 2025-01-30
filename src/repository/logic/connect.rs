@@ -211,7 +211,6 @@ fn setup_app_via_ssh(
 
     debug!("ServeResponse: {:?}", serve_response);
 
-
     thread::spawn(move || {
         let _channel = channel;
         ssh::port_forward(

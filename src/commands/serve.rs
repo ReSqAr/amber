@@ -1,4 +1,5 @@
-use crate::grpc::server::{grpc, GRPCServer};
+use crate::grpc::definitions;
+use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::connect;
 use log::debug;
@@ -41,11 +42,11 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error
 
     debug!("listening on {}", addr);
 
-    let server = GRPCServer::new(local_repository);
-    Server::builder()
-        .add_service(grpc::grpc_server::GrpcServer::new(server))
-        .serve(addr)
-        .await?;
+    let service = Service::new(local_repository);
+    let server = Server::builder()
+        .add_service(definitions::grpc_server::GrpcServer::new(service))
+        .serve(addr);
+    server.await?;
 
     Ok(())
 }
