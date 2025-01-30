@@ -11,6 +11,7 @@ use futures::{Stream, StreamExt};
 pub enum WrappedRepository {
     Local(LocalRepository),
     Grpc(GRPCClient),
+    #[allow(dead_code)] // TODO
     RCloneExporter(RCloneClient),
 }
 

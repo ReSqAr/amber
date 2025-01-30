@@ -131,13 +131,21 @@ pub struct RcloneStats {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
+    #[allow(dead_code)] // TODO
     pub bytes: u64,
+    #[allow(dead_code)] // TODO
     pub eta: u64,
+    #[allow(dead_code)] // TODO
     pub group: String,
+    #[allow(dead_code)] // TODO
     pub name: String,
+    #[allow(dead_code)] // TODO
     pub percentage: u64,
+    #[allow(dead_code)] // TODO
     pub size: u64,
+    #[allow(dead_code)] // TODO
     pub speed: f64,
+    #[allow(dead_code)] // TODO
     pub speed_avg: f64,
 }
 
