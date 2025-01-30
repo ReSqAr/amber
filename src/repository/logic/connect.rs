@@ -102,6 +102,7 @@ impl SshConfig {
         let (tx, rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>();
         let ssh_config = self.clone();
         let local_port = find_available_port().await?;
+        debug!("local_port: {local_port}");
 
         // dedicated thread for SSH operations
         thread::spawn(move || {
@@ -191,6 +192,7 @@ fn setup_app_via_ssh(
         "{} --path \"{}\" serve",
         ssh_config.application, ssh_config.remote_path
     );
+    debug!("remote_command={remote_command}");
 
     channel
         .exec(&remote_command) // TODO: cleanup after exit
@@ -205,13 +207,11 @@ fn setup_app_via_ssh(
         .map_err(|e| InternalError::Ssh(format!("failed to read line: {e}")))?;
 
     let serve_response: ServeResponse = serde_json::from_str(&line)
-        .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {e}")))?;
+        .map_err(|e| InternalError::Ssh(format!("failed to parse JSON: {e} (line: '{line}')")))?;
 
     debug!("ServeResponse: {:?}", serve_response);
 
-    // Prepare the ThreadResponse
 
-    // Create the tunnel
     thread::spawn(move || {
         let _channel = channel;
         ssh::port_forward(
