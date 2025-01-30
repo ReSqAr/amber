@@ -17,11 +17,13 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
+use fs2::FileExt;
 use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use std::sync::Arc;
+use tokio::{fs, task};
 
 const REPO_FOLDER_NAME: &str = ".amb";
 
@@ -30,6 +32,7 @@ pub(crate) struct LocalRepository {
     root: PathBuf,
     repo_id: String,
     db: Database,
+    _lock: Arc<std::fs::File>,
 }
 
 /// Recursively searches parent directories for the folder to determine the repository root.
@@ -56,6 +59,18 @@ async fn find_repository_root(start_path: &Path) -> Result<PathBuf, InternalErro
     Err(AppError::RepositoryNotInitialised().into())
 }
 
+async fn acquire_exclusive_lock<P: AsRef<Path>>(path: P) -> Result<std::fs::File, InternalError> {
+    let path = path.as_ref().to_owned();
+    task::spawn_blocking(move || {
+        let file = std::fs::File::create(&path)?;
+        match file.try_lock_exclusive() {
+            Ok(_) => Ok(file),
+            Err(_) => Err(InternalError::SharedAccess),
+        }
+    })
+    .await?
+}
+
 impl LocalRepository {
     pub async fn new(maybe_root: Option<PathBuf>) -> Result<Self, InternalError> {
         let root = if let Some(root) = maybe_root {
@@ -72,6 +87,9 @@ impl LocalRepository {
         {
             return Err(AppError::RepositoryNotInitialised().into());
         };
+
+        let lock_path = repository_path.join(".lock");
+        let lock = acquire_exclusive_lock(lock_path).await?;
 
         let db_path = repository_path.join("db.sqlite");
         let pool = establish_connection(db_path.to_str().unwrap())
@@ -93,6 +111,7 @@ impl LocalRepository {
             root,
             repo_id: repo.repo_id,
             db,
+            _lock: Arc::new(lock),
         })
     }
 

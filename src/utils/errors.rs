@@ -59,6 +59,8 @@ pub enum InternalError {
     Ssh(String),
     #[error("serialisation error: {e} (object: {object})")]
     SerialisationError { object: String, e: String },
+    #[error("unable to get exclusive lock on repository")]
+    SharedAccess,
 }
 
 impl<T> From<SendError<T>> for InternalError {
