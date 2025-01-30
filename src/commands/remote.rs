@@ -2,9 +2,10 @@ use crate::db::models::{Connection, ConnectionType};
 use crate::repository::connection::EstablishedConnection;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::ConnectionManager;
+use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
-pub async fn list(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn list(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     for connection in local_repository.list().await? {
@@ -18,7 +19,7 @@ pub async fn add(
     name: String,
     connection_type: ConnectionType,
     parameter: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     EstablishedConnection::connect(

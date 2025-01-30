@@ -1,40 +1,18 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
+use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
-use crate::utils::walker;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{future, Stream, StreamExt};
 use log::{debug, error};
-use thiserror::Error;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use utils::fs::are_hardlinked;
-
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("I/O error: {0}")]
-    IO(#[from] std::io::Error),
-    #[error("sqlx error: {0}")]
-    Sqlx(#[from] sqlx::Error),
-    #[error("fs walker error: {0}")]
-    Walker(#[from] walker::Error),
-    #[error("observation send error: {0}")]
-    Send(String),
-    #[error("task execution failed: {0}")]
-    TaskFailure(String),
-}
-
-impl<T> From<SendError<T>> for Error {
-    fn from(value: SendError<T>) -> Self {
-        Error::Send(value.to_string())
-    }
-}
 
 fn current_timestamp() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,7 +22,7 @@ fn current_timestamp() -> i64 {
         .as_secs() as i64
 }
 
-async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> {
+async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, InternalError> {
     let last_result = match vf.blob_id {
         None => false,
         Some(blob_id) => {
@@ -60,10 +38,10 @@ async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, Error> 
 }
 
 async fn close(
-    tx: Sender<Result<VirtualFile, Error>>,
+    tx: Sender<Result<VirtualFile, InternalError>>,
     vfs: impl VirtualFilesystem + Local + Send + Sync + Clone,
     last_seen_id: i64,
-) -> Result<(), Error> {
+) -> Result<(), InternalError> {
     debug!("close: closing virtual filesystem");
 
     let start_time = Instant::now();
@@ -100,10 +78,10 @@ pub async fn state(
     config: WalkerConfig,
 ) -> Result<
     (
-        JoinHandle<Result<(), Error>>,
-        impl Stream<Item = Result<VirtualFile, Error>>,
+        JoinHandle<Result<(), InternalError>>,
+        impl Stream<Item = Result<VirtualFile, InternalError>>,
     ),
-    Box<dyn std::error::Error>,
+    InternalError,
 > {
     let root = vfs.root();
     let last_seen_id = current_timestamp();
@@ -307,7 +285,9 @@ pub async fn state(
             }
             Err(e) => {
                 error!("error in task execution: {e}");
-                Err(Error::TaskFailure(format!("task execution failed: {e}")))
+                Err(InternalError::TaskFailure(format!(
+                    "task execution failed: {e}"
+                )))
             }
         }
     });

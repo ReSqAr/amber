@@ -1,12 +1,11 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
-use crate::repository::logic::state::Error;
 use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
-use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
 use std::collections::HashMap;
@@ -16,10 +15,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub async fn add(
-    maybe_root: Option<PathBuf>,
-    dry_run: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     add_files(local_repository, dry_run).await
@@ -36,7 +32,7 @@ pub async fn add_files(
         + Sync
         + 'static,
     dry_run: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), InternalError> {
     let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
     let db_file_handle = {
         let local_repository = repository.clone();
@@ -56,9 +52,7 @@ pub async fn add_files(
         })
     };
 
-    fs::create_dir_all(&repository.staging_path())
-        .await
-        .context("unable to create staging directory")?;
+    fs::create_dir_all(&repository.staging_path()).await?;
     let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
 
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
@@ -71,8 +65,9 @@ pub async fn add_files(
         let blob_locks: BlobLockMap = Arc::new(Mutex::new(HashMap::new()));
         let file_tx_clone = file_tx.clone();
         let blob_tx_clone = blob_tx.clone();
-        let stream =
-            tokio_stream::StreamExt::map(stream, |file_result: Result<VirtualFile, Error>| {
+        let stream = tokio_stream::StreamExt::map(
+            stream,
+            |file_result: Result<VirtualFile, InternalError>| {
                 let file_tx_clone = file_tx_clone.clone();
                 let blob_tx_clone = blob_tx_clone.clone();
                 let local_repository_clone = repository.clone();
@@ -88,9 +83,10 @@ pub async fn add_files(
                     if let Some(blob) = insert_blob {
                         blob_tx_clone.send(blob).await?;
                     }
-                    Ok::<RepoPath, Box<dyn std::error::Error>>(path)
+                    Ok::<RepoPath, InternalError>(path)
                 }
-            });
+            },
+        );
 
         // Allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(

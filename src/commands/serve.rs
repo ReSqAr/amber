@@ -3,6 +3,7 @@ use crate::grpc::definitions;
 use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::connect;
+use crate::utils::errors::InternalError;
 use log::debug;
 use rand::distr::Alphanumeric;
 use rand::Rng;
@@ -15,7 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{signal, SignalKind};
 use tonic::transport::Server;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct ServeReport {
     port: u16,
     auth_key: String,
@@ -29,7 +30,7 @@ pub fn generate_auth_key() -> String {
         .collect()
 }
 
-pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     let auth_key = generate_auth_key();
@@ -40,7 +41,10 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error
         port,
         auth_key: auth_key.clone(),
     };
-    let json = serde_json::to_string(&report)?;
+    let json = serde_json::to_string(&report).map_err(|e| InternalError::SerialisationError {
+        object: format!("{report:?}"),
+        e: e.to_string(),
+    })?;
     println!("{}", json);
     std::io::stdout().flush()?;
 
@@ -57,7 +61,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), Box<dyn std::error
             _ = sigterm.recv() => debug!("received SIGTERM"),
             _ = sigint.recv() => debug!("received SIGINT"),
             _ = stdin.read(&mut eof_buffer) => debug!("stdin closed"),
-        };
+        }
 
         debug!("initiating graceful shutdown");
     };

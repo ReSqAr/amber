@@ -2,16 +2,14 @@ use crate::db::models::VirtualFileState;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
 use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
 use futures::StreamExt;
 use log::error;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub async fn status(
-    maybe_root: Option<PathBuf>,
-    details: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn status(maybe_root: Option<PathBuf>, details: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     show_status(local_repository, details).await
@@ -19,7 +17,7 @@ pub async fn status(
 pub async fn show_status(
     local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
     details: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), InternalError> {
     let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
     let mut count = HashMap::new();
 

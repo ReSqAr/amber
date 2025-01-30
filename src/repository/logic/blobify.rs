@@ -1,5 +1,6 @@
 use crate::db::models::{InsertBlob, InsertFile};
 use crate::repository::traits::{Local, Metadata};
+use crate::utils::errors::InternalError;
 use crate::utils::fs::are_hardlinked;
 use crate::utils::path::RepoPath;
 use crate::utils::sha256;
@@ -7,7 +8,6 @@ use async_lock::Mutex;
 use filetime::{set_file_times, FileTime};
 use log::debug;
 use std::collections::HashMap;
-use std::error::Error;
 use std::sync::Arc;
 use tokio::{fs, task};
 use uuid::Uuid;
@@ -18,7 +18,7 @@ async fn create_hard_link_or_dry_run(
     source: &RepoPath,
     destination: &RepoPath,
     dry_run: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), InternalError> {
     if dry_run {
         debug!(
             "dry-run: would hard link {} to {}",
@@ -41,7 +41,7 @@ async fn force_hard_link_with_rename_or_dry_run(
     destination: &RepoPath,
     blob_id: &str,
     dry_run: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), InternalError> {
     if dry_run {
         debug!(
             "dry-run: would hard link {} to staging path",
@@ -97,7 +97,7 @@ pub(crate) async fn blobify(
     path: &RepoPath,
     dry_run: bool,
     blob_locks: BlobLockMap,
-) -> Result<(Option<InsertFile>, Option<InsertBlob>), Box<dyn Error>> {
+) -> Result<(Option<InsertFile>, Option<InsertBlob>), InternalError> {
     let (blob_id, blob_size) = sha256::compute_sha256_and_size(&path).await?;
     let blob_path = local.blob_path(blob_id.clone());
 

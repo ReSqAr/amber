@@ -1,4 +1,6 @@
+use crate::utils::walker;
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
 
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -29,6 +31,8 @@ pub enum InternalError {
     Status(#[from] tonic::Status),
     #[error("tonic transport error: {0}")]
     Tonic(#[from] tonic::transport::Error),
+    #[error("grpc error: {0}")]
+    GRPC(String),
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("DB migration error: {0}")]
@@ -37,6 +41,12 @@ pub enum InternalError {
     IO(#[from] std::io::Error),
     #[error("stream error: {0}")]
     Stream(String),
+    #[error("task execution failed: {0}")]
+    TaskFailure(String),
+    #[error("observation send error: {0}")]
+    Send(String),
+    #[error("fs walker error: {0}")]
+    Walker(#[from] walker::Error),
     #[error("async error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
     #[error("{0}")]
@@ -47,6 +57,14 @@ pub enum InternalError {
     RClone(i32),
     #[error("ssh connection error: {0}")]
     Ssh(String),
+    #[error("serialisation error: {e} (object: {object})")]
+    SerialisationError { object: String, e: String },
+}
+
+impl<T> From<SendError<T>> for InternalError {
+    fn from(value: SendError<T>) -> Self {
+        InternalError::Send(value.to_string())
+    }
 }
 
 // Implement conversion from AppError to Status

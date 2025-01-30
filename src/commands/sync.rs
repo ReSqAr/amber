@@ -2,14 +2,14 @@ use crate::db::models::{Blob, File, Repository};
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::{checkout, sync};
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Metadata, Syncer};
-use crate::utils::errors::AppError;
+use crate::utils::errors::{AppError, InternalError};
 use log::debug;
 use std::path::PathBuf;
 
 pub async fn sync(
     maybe_root: Option<PathBuf>,
     connection_name: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
 
     if let Some(connection_name) = connection_name {
@@ -33,10 +33,7 @@ pub async fn sync(
     Ok(())
 }
 
-pub async fn sync_repositories<S, T>(
-    local: &S,
-    remote: &T,
-) -> Result<(), Box<dyn std::error::Error>>
+pub async fn sync_repositories<S, T>(local: &S, remote: &T) -> Result<(), InternalError>
 where
     S: Metadata
         + LastIndicesSyncer

@@ -17,7 +17,6 @@ use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};
 use log::debug;
-use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::codegen::InterceptedService;
@@ -35,14 +34,16 @@ impl GRPCClient {
         }
     }
 
-    pub async fn connect(addr: String, auth_key: String) -> Result<Self, Box<dyn Error>> {
+    pub async fn connect(addr: String, auth_key: String) -> Result<Self, InternalError> {
         debug!("connecting to {}", &addr);
 
         let channel = tonic::transport::Endpoint::from_shared(addr.clone())?
             .connect()
             .await?;
 
-        let interceptor = ClientAuth::new(&auth_key)?;
+        let interceptor = ClientAuth::new(&auth_key).map_err(|e| {
+            InternalError::GRPC(format!("unable to create authentication method: {e}"))
+        })?;
         let client = GrpcClient::with_interceptor(channel, interceptor);
 
         debug!("connected to {}", &addr);
