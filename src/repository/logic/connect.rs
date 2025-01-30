@@ -112,7 +112,7 @@ impl SshConfig {
             }
         });
 
-        let thread_response = match rx.recv() {
+        let ThreadResponse { port, auth_key } = match rx.recv() {
             Ok(Ok(info)) => info,
             Ok(Err(e)) => return Err(e),
             Err(e) => {
@@ -122,10 +122,10 @@ impl SshConfig {
                 )))
             }
         };
-        debug!("thread_response={:?}", thread_response);
+        debug!("thread_response: port={port} auth_key={auth_key}");
 
-        let addr = format!("http://127.0.0.1:{}", thread_response.port);
-        let repository = GRPCClient::connect(addr)
+        let addr = format!("http://127.0.0.1:{}", port);
+        let repository = GRPCClient::connect(addr, auth_key)
             .await
             .map_err(|e| InternalError::Ssh(format!("gRPC connection failed: {e}")))?;
 
@@ -194,7 +194,7 @@ fn setup_app_via_ssh(
     debug!("remote_command={remote_command}");
 
     channel
-        .exec(&remote_command) // TODO: cleanup after exit
+        .exec(&remote_command)
         .map_err(|e| InternalError::Ssh(format!("failed to exec remote command: {e}")))?;
 
     let mut stdout = channel.stream(0);

@@ -3,8 +3,11 @@ use log::{debug, error, info};
 use ssh2::{ErrorCode, Session};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::os::raw::c_int;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+const ERR_WOULD_BLOCK: c_int = -37;
 
 // A select-based forwarder that listens on `local_addr` and forwards data to `remote_addr`
 // over an existing SSH session. We also require the underlying TCP socket (`session_socket`).
@@ -68,7 +71,7 @@ fn forward_connection(
         let sess = session.lock().unwrap();
         match sess.channel_direct_tcpip(remote_host, remote_port, None) {
             Ok(ch) => break ch,
-            Err(e) if e.code() == ErrorCode::Session(-37) => {
+            Err(e) if e.code() == ErrorCode::Session(ERR_WOULD_BLOCK) => {
                 thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
@@ -178,17 +181,14 @@ fn forward_connection(
     loop {
         match channel.close() {
             Ok(_) => break,
-            Err(e) if e.code() == ErrorCode::Session(-37) => {
+            Err(e) if e.code() == ErrorCode::Session(ERR_WOULD_BLOCK) => {
                 thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
             Err(e) => return Err(InternalError::Ssh(format!("channel.close(): {e}"))),
         }
     }
-    channel
-        .wait_close()
-        .map_err(|e| InternalError::Ssh(format!("channel.wait_close(): {e}")))?;
-    debug!("channel closed and waited");
+    debug!("channel closed");
 
     Ok(())
 }

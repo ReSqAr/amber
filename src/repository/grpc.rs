@@ -16,26 +16,58 @@ use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};
 use log::debug;
+use std::error::Error;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tonic::codegen::InterceptedService;
+use tonic::service::Interceptor;
+use tonic::transport::Channel;
+use tonic::{Request, Status};
 
 #[derive(Clone)]
+pub struct AuthInterceptor {
+    auth_header: tonic::metadata::MetadataValue<tonic::metadata::Ascii>,
+}
+
+impl AuthInterceptor {
+    pub fn new(auth_key: &str) -> Result<Self, tonic::metadata::errors::InvalidMetadataValue> {
+        Ok(Self {
+            auth_header: tonic::metadata::MetadataValue::from_str(auth_key)?,
+        })
+    }
+}
+
+impl Interceptor for AuthInterceptor {
+    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
+        req.metadata_mut()
+            .insert("authorization", self.auth_header.clone());
+        Ok(req)
+    }
+}
+#[derive(Clone)]
 pub(crate) struct GRPCClient {
-    client: Arc<RwLock<GrpcClient<tonic::transport::Channel>>>,
+    client: Arc<RwLock<GrpcClient<InterceptedService<Channel, AuthInterceptor>>>>,
 }
 
 impl GRPCClient {
-    pub fn new(client: GrpcClient<tonic::transport::Channel>) -> Self {
+    pub fn new(client: GrpcClient<InterceptedService<Channel, AuthInterceptor>>) -> Self {
         Self {
             client: Arc::new(client.into()),
         }
     }
 
-    pub async fn connect(addr: String) -> Result<Self, tonic::transport::Error> {
+    pub async fn connect(addr: String, auth_key: String) -> Result<Self, Box<dyn Error>> {
         debug!("connecting to {}", &addr);
-        let client = GrpcClient::connect(addr.clone()).await?;
-        debug!("connected to {}", &addr);
 
+        let channel = tonic::transport::Endpoint::from_shared(addr.clone())?
+            .connect()
+            .await?;
+
+        let interceptor = AuthInterceptor::new(&auth_key)?;
+        let client = GrpcClient::with_interceptor(channel, interceptor);
+
+        debug!("connected to {}", &addr);
         Ok(Self::new(client))
     }
 }

@@ -10,7 +10,6 @@
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
 - make all files read-only <- disable via --immutable
-- use auth key in GRPC
 
 features:
 - `--immutable` - no del to hard link multiple copies
