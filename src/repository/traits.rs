@@ -28,6 +28,9 @@ pub enum BufferType {
     AddFilesDBAddFiles,
     AddFilesDBAddBlobs,
     PrepareTransfer,
+    State,
+    Walker,
+    StateChecker,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;

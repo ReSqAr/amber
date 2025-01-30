@@ -1,10 +1,11 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
-use crate::repository::logic::state::{Error, StateConfig};
+use crate::repository::logic::state::Error;
 use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::path::RepoPath;
+use crate::utils::walker::WalkerConfig;
 use anyhow::Context;
 use async_lock::Mutex;
 use futures::pin_mut;
@@ -58,7 +59,7 @@ pub async fn add_files(
     fs::create_dir_all(&repository.staging_path())
         .await
         .context("unable to create staging directory")?;
-    let (state_handle, stream) = state::state(repository.clone(), StateConfig::default()).await?;
+    let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
 
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
         let state = file_result.state.clone();

@@ -1,5 +1,5 @@
 use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
-use crate::repository::traits::{Local, VirtualFilesystem};
+use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::walker;
@@ -11,23 +11,10 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
+use tokio::time;
 use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use utils::fs::are_hardlinked;
-
-pub struct StateConfig {
-    buffer_size: usize,
-    walker: WalkerConfig,
-}
-
-impl Default for StateConfig {
-    fn default() -> Self {
-        Self {
-            buffer_size: 10000,
-            walker: WalkerConfig::default(),
-        }
-    }
-}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -109,8 +96,8 @@ async fn close(
 }
 
 pub async fn state(
-    vfs: impl VirtualFilesystem + Local + Send + Sync + Clone + 'static,
-    config: StateConfig,
+    vfs: impl VirtualFilesystem + Local + Config + Send + Sync + Clone + 'static,
+    config: WalkerConfig,
 ) -> Result<
     (
         JoinHandle<Result<(), Error>>,
@@ -132,12 +119,19 @@ pub async fn state(
        - needs_check: files which need to be looked at
        - output channel
     */
-    let (obs_tx, obs_rx) = mpsc::channel(config.buffer_size);
-    let (needs_check_tx, needs_check_rx) = mpsc::channel(config.buffer_size);
-    let (tx, rx) = mpsc::channel(config.buffer_size);
+    let buffer_size = vfs.buffer_size(BufferType::State);
+    let checker_buffer_size = vfs.buffer_size(BufferType::StateChecker);
+    let (obs_tx, obs_rx) = mpsc::channel(buffer_size);
+    let (needs_check_tx, needs_check_rx) = mpsc::channel(buffer_size);
+    let (tx, rx) = mpsc::channel(buffer_size);
 
     // get the channel of the filesystem walker
-    let (walker_handle, mut walker_rx) = walk(root.abs().clone(), config.walker).await?;
+    let (walker_handle, mut walker_rx) = walk(
+        root.abs().clone(),
+        config,
+        vfs.buffer_size(BufferType::Walker),
+    )
+    .await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
     let db_output_stream = vfs.add_observations(ReceiverStream::new(obs_rx)).await;
@@ -160,6 +154,19 @@ pub async fn state(
                         last_modified_dttm: last_modified,
                         size,
                     });
+
+                    // we have a loop in the streams, this gives the checker observations priority
+                    // otherwise we run into deadlocks
+                    let max_delay = time::Duration::from_millis(100);
+                    let mut current_delay = time::Duration::from_millis(1);
+                    loop {
+                        if obs_tx_clone.capacity() > obs_tx_clone.max_capacity() / 2 {
+                            break;
+                        }
+                        time::sleep(current_delay).await;
+                        current_delay = std::cmp::min(current_delay * 2, max_delay);
+                    }
+
                     if let Err(e) = obs_tx_clone.send(observation.into()).await {
                         if let Err(e_send) = tx_clone.send(Err(e.into())).await {
                             panic!("failed to send error to output stream: {}", e_send);
@@ -260,7 +267,7 @@ pub async fn state(
                     }
                 }
             })
-            .buffer_unordered(config.buffer_size)
+            .buffer_unordered(checker_buffer_size)
             .for_each(|result| async {
                 match result {
                     Ok(observation) => {

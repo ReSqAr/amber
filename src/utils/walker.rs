@@ -9,16 +9,12 @@ use tokio::sync::mpsc::{self, Receiver};
 use tokio::task::JoinHandle;
 
 pub struct WalkerConfig {
-    pub threads: usize,
-    pub max_buffer_size: usize,
     pub patterns: Vec<String>,
 }
 
 impl Default for WalkerConfig {
     fn default() -> Self {
         Self {
-            threads: 0,
-            max_buffer_size: 10000,
             patterns: vec!["!.amb/".into(), "!.git/".into()],
         }
     }
@@ -98,6 +94,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
 pub async fn walk(
     root_path: PathBuf,
     config: WalkerConfig,
+    buffer_size: usize,
 ) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), Box<dyn std::error::Error>>
 {
     let root = root_path.to_path_buf();
@@ -114,11 +111,10 @@ pub async fn walk(
         .follow_links(false)
         .same_file_system(true)
         .max_depth(None)
-        .threads(config.threads)
         .overrides(override_builder.build()?);
 
     let walker = walk_builder.build_parallel();
-    let (tx, rx) = mpsc::channel(config.max_buffer_size);
+    let (tx, rx) = mpsc::channel(buffer_size);
     let handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
         walker.run(|| {
             let root = root.clone();

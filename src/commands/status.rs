@@ -1,8 +1,8 @@
 use crate::db::models::VirtualFileState;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
-use crate::repository::logic::state::StateConfig;
-use crate::repository::traits::{Adder, Local, Metadata, VirtualFilesystem};
+use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::walker::WalkerConfig;
 use futures::StreamExt;
 use log::error;
 use std::collections::HashMap;
@@ -17,10 +17,10 @@ pub async fn status(
     show_status(local_repository, details).await
 }
 pub async fn show_status(
-    local: impl Metadata + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
+    local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
     details: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (handle, mut stream) = state::state(local, StateConfig::default()).await?;
+    let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
     let mut count = HashMap::new();
 
     while let Some(file_result) = stream.next().await {
