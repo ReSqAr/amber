@@ -6,7 +6,6 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::{rclone, ssh};
 use log::debug;
 use serde::Deserialize;
-use ssh2::Session;
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::sync::{mpsc, Arc, Mutex};
@@ -160,8 +159,8 @@ fn setup_app_via_ssh(
     let tcp = TcpStream::connect(&tcp_addr)
         .map_err(|e| InternalError::Ssh(format!("failed to connect: {e}")))?;
 
-    let mut session =
-        Session::new().map_err(|e| InternalError::Ssh(format!("failed to create session: {e}")))?;
+    let mut session = ssh2::Session::new()
+        .map_err(|e| InternalError::Ssh(format!("failed to create session: {e}")))?;
 
     session.set_keepalive(true, 5);
 
