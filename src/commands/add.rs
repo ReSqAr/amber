@@ -112,8 +112,8 @@ pub async fn add_files(
         state_handle.await??;
     }
 
-    drop(file_tx); // TODO: check that no messages get lost
-    drop(blob_tx); // TODO: check that no messages get lost
+    drop(file_tx);
+    drop(blob_tx);
     db_file_handle.await??;
     db_blob_handle.await??;
 
