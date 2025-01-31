@@ -4,15 +4,17 @@
 - multi sync & push
 - fsck
 - amazing user feedback
-  - smarter errors
   - good info/debug levels
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
+    - nice to look at: colour = log level
+    - proper progress tracking as in rclone transfers
+    - map out which messages are produced per command and their level
 - make all files read-only <- disable via --immutable
 - amber add breaks if blob exists but is not available locally [checker] 
 
 features:
-- `--immutable` - no del to hard link multiple copies
+- `--immutable` - no del to hard link multiple copies & not read only
 - `--statistics` - print stats
 
 # Pull & Push
