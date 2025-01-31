@@ -9,7 +9,7 @@ use crate::utils::rclone::{
 use futures::StreamExt;
 use log::debug;
 use rand::Rng;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -59,10 +59,10 @@ async fn execute_rclone(
     connection: EstablishedConnection,
     transfer_id: u32,
     direction: Direction,
-    rclone_path: PathBuf,
+    rclone_path: &Path,
 ) -> Result<(), InternalError> {
     let local_target = RcloneTarget::Local(LocalConfig {
-        path: connection.local.root().abs(),
+        path: connection.local.root().abs().clone(),
     });
     let remote_target = connection.remote_rclone_target();
 
@@ -101,8 +101,8 @@ async fn execute_rclone(
     };
     debug!("copying files {from_or_to} {0}", connection.name);
     run_rclone_operation(
-        &connection.local.transfer_path(transfer_id).abs(),
-        &rclone_path,
+        connection.local.transfer_path(transfer_id).abs(),
+        rclone_path,
         source,
         destination,
         callback,

@@ -14,12 +14,12 @@ impl RepoPath {
         }
     }
 
-    pub fn rel(&self) -> PathBuf {
-        self.relative.clone()
+    pub fn rel(&self) -> &PathBuf {
+        &self.relative
     }
 
-    pub fn abs(&self) -> PathBuf {
-        self.absolute.clone()
+    pub fn abs(&self) -> &PathBuf {
+        &self.absolute
     }
 
     pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
