@@ -9,6 +9,7 @@
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
 - make all files read-only <- disable via --immutable
+- amber add breaks if blob exists but is not available locally [checker] 
 
 features:
 - `--immutable` - no del to hard link multiple copies
