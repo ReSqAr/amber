@@ -3,6 +3,7 @@
   - BlobRepository: rclone
 - multi sync & push
 - fsck
+- edit & deletion
 - amazing user feedback
   - good info/debug levels
   - dedicated system for user messages
