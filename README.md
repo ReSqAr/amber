@@ -14,6 +14,7 @@
 - make all files read-only <- disable via --immutable
 - amber add breaks if blob exists but is not available locally [checker] 
 - cleanup table transfers in the DB
+- repo name table like blob/file + sync + set at init
 
 - features:
 - `--immutable` - no del to hard link multiple copies & not read only
