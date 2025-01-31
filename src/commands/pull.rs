@@ -4,6 +4,7 @@ use crate::repository::logic::transfer::transfer;
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::{AppError, InternalError};
 use anyhow::Result;
+use log::debug;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -28,11 +29,13 @@ pub async fn pull(
 
     checkout::checkout(&local).await?;
 
-    match fs::remove_dir_all(local.staging_path()).await {
+    let staging_path = local.staging_path();
+    match fs::remove_dir_all(&staging_path).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     };
+    debug!("deleted staging {}", staging_path.display());
 
     Ok(())
 }

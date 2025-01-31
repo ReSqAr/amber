@@ -1,5 +1,4 @@
 # PROJECT MANAGEMENT
-- drop staging at the start of local repo after it got exclusive ownership
 - pull/push
   - BlobRepository: rclone
 - multi sync & push
