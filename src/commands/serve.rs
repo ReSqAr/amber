@@ -4,6 +4,7 @@ use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::connect;
 use crate::repository::logic::connect::{ServeError, ServeResponse, ServeResult};
+use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use log::debug;
 use rand::distr::Alphanumeric;
@@ -11,9 +12,9 @@ use rand::Rng;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::{fs, io};
 use tonic::transport::Server;
 
 pub fn generate_auth_key() -> String {
@@ -40,6 +41,8 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
             return Err(e);
         }
     };
+
+    let staging_path = local_repository.staging_path();
 
     let auth_key = generate_auth_key();
     let port = connect::find_available_port().await?;
@@ -83,6 +86,13 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
         .serve_with_shutdown(addr, shutdown_signal);
 
     server.await?;
+
+    match fs::remove_dir_all(&staging_path).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    };
+    debug!("deleted staging {}", staging_path.display());
 
     Ok(())
 }

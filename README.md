@@ -13,8 +13,9 @@
     - map out which messages are produced per command and their level
 - make all files read-only <- disable via --immutable
 - amber add breaks if blob exists but is not available locally [checker] 
+- cleanup table transfers in the DB
 
-features:
+- features:
 - `--immutable` - no del to hard link multiple copies & not read only
 - `--statistics` - print stats
 
