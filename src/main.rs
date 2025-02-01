@@ -1,7 +1,7 @@
+mod cli;
 mod commands;
 mod db;
-
-mod cli;
+mod flightdeck;
 mod grpc;
 mod repository;
 mod utils;
