@@ -38,6 +38,8 @@ pub trait LayoutItemBuilder {
     /// The type key (e.g. "download") used for routing.
     fn type_key(&self) -> &str;
 
+    fn set_depth(&mut self, depth: usize);
+
     /// The maximum number of visible items, or None if unlimited.
     fn visible_limit(&self) -> Option<usize>;
 

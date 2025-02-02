@@ -44,13 +44,15 @@ impl ProgressManager {
 
         // Helper to do DFS insertion
         fn insert_builder_dfs(
-            b: Box<dyn LayoutItemBuilder + Send + Sync>,
+            mut b: Box<dyn LayoutItemBuilder + Send + Sync>,
             map: &mut IndexMap<String, Box<dyn LayoutItemBuilder + Send + Sync>>,
             items: &mut HashMap<
                 String,
                 IndexMap<Option<String>, Box<dyn LayoutItem + Send + Sync>>,
             >,
+            depth: usize,
         ) {
+            b.set_depth(depth);
             let children = b.children();
             let tkey = b.type_key().to_owned();
             if !map.contains_key(&tkey) {
@@ -58,12 +60,12 @@ impl ProgressManager {
                 items.insert(tkey.clone(), IndexMap::new());
             }
             for child in children {
-                insert_builder_dfs(child, map, items);
+                insert_builder_dfs(child, map, items, depth + 1);
             }
         }
 
         for b in root_builders {
-            insert_builder_dfs(b, &mut builders, &mut items);
+            insert_builder_dfs(b, &mut builders, &mut items, 0);
         }
 
         Self {
