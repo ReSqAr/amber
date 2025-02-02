@@ -19,7 +19,7 @@ pub trait LayoutItem {
     /// Return the type key (e.g. "download", "upload").
     fn type_key(&self) -> &str;
     /// Return the optional ID, if any.
-    fn id(&self) -> Option<&String>;
+    fn id(&self) -> Option<String>;
 
     /// Update internal state from the observation, returning how the manager should proceed.
     fn update(&mut self, obs: &Observation) -> UpdateAction;

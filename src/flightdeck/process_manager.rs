@@ -102,11 +102,11 @@ impl ProgressManager {
                         if let Some(pb) = pb {
                             self.multi.remove(pb);
                         }
-                        if let Some(map) = self.items.get_mut(&type_key) {
-                            map.shift_remove(&id); // TODO: slow!?
-                        }
+                        let map = self.items.get_mut(&type_key).unwrap();
+                        map.shift_remove(&id); // TODO: slow!?
+
                         // Freed a slot => unhide if possible
-                        self.maybe_show_bar(&type_key, &id);
+                        self.maybe_show_bar(&type_key);
                     }
                     UpdateAction::FinishedKeep => { /* keep the item & bar */ }
                     UpdateAction::Continue => { /* do nothing */ }
@@ -117,14 +117,14 @@ impl ProgressManager {
                 let new_item = builder.build_item(&obs);
                 let _ = vac.insert(new_item);
                 // Possibly attach bar if there's room
-                self.maybe_show_bar(&type_key, &id);
+                self.maybe_show_bar(&type_key);
             }
         }
     }
 
     /// If a new item was created, we check if we can attach a bar
     /// for items that lack one, up to the visible limit.
-    fn maybe_show_bar(&mut self, type_key: &str, id: &Option<String>) {
+    fn maybe_show_bar(&mut self, type_key: &str) {
         let builder = self.builders.get(type_key).unwrap();
         let map = self.items.get_mut(type_key).unwrap();
 
@@ -138,6 +138,7 @@ impl ProgressManager {
                 if item.get_bar().is_none() {
                     let bar = ProgressBar::hidden();
                     item.set_bar(bar.clone());
+                    let id = item.id().clone();
                     self.attach_to_multi_progress(type_key, id, bar.clone());
                     break; // attach only for one new item
                 }
@@ -151,7 +152,7 @@ impl ProgressManager {
     fn attach_to_multi_progress(
         &self,
         type_key: &str,
-        id: &Option<String>,
+        id: Option<String>,
         new_bar: indicatif::ProgressBar,
     ) {
         // find index in self.builders
@@ -169,7 +170,7 @@ impl ProgressManager {
             let (k, _) = self.builders.get_index(i).unwrap();
             if let Some(map) = self.items.get(k) {
                 for (_id, it) in map.iter() {
-                    if !(it.type_key() == type_key && it.id() == id.as_ref()) {
+                    if !(it.type_key() == type_key && it.id() == id) {
                         if let Some(pb) = it.get_bar() {
                             candidate = Some(pb);
                         }
