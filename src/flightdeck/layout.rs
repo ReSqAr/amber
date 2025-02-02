@@ -7,7 +7,7 @@ pub enum UpdateAction {
     Continue,
     /// The item is finished and does not have a final message => remove it from the manager.
     /// Returns the associated ProgressBar so that the manager can remove it from MultiProgress.
-    FinishedRemove(Option<indicatif::ProgressBar>),
+    FinishedRemove,
     /// The item is finished but the progress bar should remain visible (e.g. final message).
     FinishedKeep,
 }
@@ -24,9 +24,8 @@ pub trait LayoutItem {
     /// Update internal state from the observation, returning how the manager should proceed.
     fn update(&mut self, obs: &Observation) -> UpdateAction;
 
-    /// Create a new `ProgressBar` internally, store it, and apply styling/message as needed.
-    /// Return a reference to the newly created bar so the manager can insert it in MultiProgress.
-    fn create_and_store_bar(&mut self) -> indicatif::ProgressBar;
+    /// Set the current `ProgressBar`.
+    fn set_bar(&mut self, bar: indicatif::ProgressBar);
 
     /// Return the current `ProgressBar`, if any.
     fn get_bar(&self) -> Option<&indicatif::ProgressBar>;

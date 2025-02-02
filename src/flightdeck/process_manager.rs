@@ -3,6 +3,7 @@ use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
 use indexmap::map::Entry;
 use indexmap::IndexMap;
+use indicatif::ProgressBar;
 use std::collections::HashMap;
 
 /// ============ 3. ProgressManager ============
@@ -96,9 +97,10 @@ impl ProgressManager {
                 let item = entry.get_mut();
                 let action = item.update(&obs);
                 match action {
-                    UpdateAction::FinishedRemove(pb) => {
+                    UpdateAction::FinishedRemove => {
+                        let pb = item.get_bar();
                         if let Some(pb) = pb {
-                            self.multi.remove(&pb);
+                            self.multi.remove(pb);
                         }
                         if let Some(map) = self.items.get_mut(&type_key) {
                             map.shift_remove(&id); // TODO: slow!?
@@ -134,7 +136,8 @@ impl ProgressManager {
         if can_add {
             for (_k, item) in map.iter_mut() {
                 if item.get_bar().is_none() {
-                    let bar = item.create_and_store_bar();
+                    let bar = ProgressBar::hidden();
+                    item.set_bar(bar.clone());
                     self.attach_to_multi_progress(type_key, id, bar.clone());
                     break; // attach only for one new item
                 }

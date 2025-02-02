@@ -22,7 +22,6 @@ pub trait Observable {
     fn default_error_state(&self) -> Option<Self::State> {
         None
     }
-
 }
 
 pub struct Observer<T: Observable> {
@@ -31,14 +30,15 @@ pub struct Observer<T: Observable> {
 
 impl<T: Observable> Drop for Observer<T> {
     fn drop(&mut self) {
-        if !self.inner.state().is_terminal() && self.inner.default_terminal_state().is_some(){
-            self.observe(log::Level::Debug, self.inner.default_terminal_state(), None);
+        if !self.inner.state().is_terminal() && self.inner.default_terminal_state().is_some() {
+            self.observe(log::Level::Trace, self.inner.default_terminal_state(), None);
         }
     }
 }
 
 impl<T: Observable> Observer<T> {
     pub fn new(inner: T) -> Self {
+        global::send(log::Level::Trace, inner.generate_observation());
         Self { inner }
     }
 
