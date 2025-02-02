@@ -1,36 +1,28 @@
 use crate::flightdeck::global;
 use crate::flightdeck::observation::Observation;
-use std::fmt::Display;
-
-pub trait State {
-    fn is_terminal(&self) -> bool;
-}
 
 pub trait Observable {
-    type State: State + Clone;
+    type Observation: Clone;
 
     // mutation
-    fn update(&mut self, state: Option<Self::State>, message: Option<String>) -> &Self;
+    fn update(&mut self, observation: Self::Observation) -> &Self;
 
     // getter
     fn generate_observation(&self) -> Observation;
-    fn state(&self) -> &Self::State;
+
+    fn is_in_terminal_state(&self) -> bool;
 }
 
 pub struct Observer<T: Observable> {
     inner: T,
-    default_terminal_state: Option<T::State>,
+    default_terminal_log: Option<(log::Level, T::Observation)>,
 }
 
 impl<T: Observable> Drop for Observer<T> {
     fn drop(&mut self) {
-        if let Some(default_terminal_state) = &self.default_terminal_state {
-            if !self.inner.state().is_terminal() {
-                self.observe(
-                    log::Level::Trace,
-                    Some(default_terminal_state.clone()),
-                    None,
-                );
+        if let Some((level, observation)) = self.default_terminal_log.clone() {
+            if !self.inner.is_in_terminal_state() {
+                self.observe(level, observation);
             }
         }
     }
@@ -41,30 +33,34 @@ impl<T: Observable> Observer<T> {
         global::send(log::Level::Trace, inner.generate_observation());
         Self {
             inner,
-            default_terminal_state: None,
+            default_terminal_log: None,
         }
     }
 
-    pub fn with_terminal_state(inner: T, default_terminal_state: T::State) -> Self {
+    pub fn with_terminal_state(
+        inner: T,
+        level: log::Level,
+        default_terminal_observation: T::Observation,
+    ) -> Self {
         global::send(log::Level::Trace, inner.generate_observation());
         Self {
             inner,
-            default_terminal_state: Some(default_terminal_state),
+            default_terminal_log: Some((level, default_terminal_observation)),
         }
     }
 
-    pub fn observe(&mut self, level: log::Level, state: Option<T::State>, message: Option<String>) {
-        let observation = self.inner.update(state, message).generate_observation();
+    pub fn observe(&mut self, level: log::Level, observation: T::Observation) {
+        let observation = self.inner.update(observation).generate_observation();
         global::send(level, observation)
     }
 
-    pub fn observe_error<E: Display>(
-        &mut self,
-        error_state: T::State,
-    ) -> impl FnOnce(E) -> E + use<'_, E, T> {
+    pub fn observe_error<E, U>(&mut self, map: U) -> impl FnOnce(E) -> E + use<'_, E, T, U>
+    where
+        U: FnOnce(&E) -> T::Observation,
+    {
         |e| {
-            self.observe(log::Level::Error, Some(error_state), Some(e.to_string()));
-            e // the idea is: this is used can cheaply hijack `?` by replacing it with: `.map_err(obs.observe_error(State::Error))?`
+            self.observe(log::Level::Error, map(&e));
+            e // the idea is: this is used can cheaply hijack `?` by replacing it with: `.map_err(obs.observe_error(|e| State::Error(e)))?`
         }
     }
 }

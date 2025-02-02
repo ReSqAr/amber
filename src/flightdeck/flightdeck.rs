@@ -1,7 +1,7 @@
 use crate::flightdeck::global::GLOBAL_LOGGER;
 use crate::flightdeck::layout::LayoutItemBuilder;
 use crate::flightdeck::observation::{Message, Observation};
-use crate::flightdeck::process_manager::ProgressManager;
+use crate::flightdeck::progress_manager::ProgressManager;
 
 pub trait Manager {
     fn observe(&mut self, level: log::Level, obs: Observation);
