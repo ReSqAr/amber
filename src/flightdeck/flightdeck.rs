@@ -7,13 +7,14 @@ pub trait Manager {
     fn observe(&mut self, level: log::Level, obs: Observation);
 }
 
+#[derive(Default)]
 pub struct FlightDeck {
     manager: Vec<Box<dyn Manager + Send + Sync>>,
 }
 
 impl FlightDeck {
     pub fn new() -> Self {
-        Self { manager: vec![] }
+        Self::default()
     }
 
     pub fn with_progress(

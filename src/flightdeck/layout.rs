@@ -13,7 +13,7 @@ pub enum UpdateAction {
 }
 
 /// ============ 2. LayoutItem & LayoutItemBuilder Traits ============
-
+///
 /// A single displayable item, e.g. a task or sub-task.
 pub trait LayoutItem {
     /// Return the type key (e.g. "download", "upload").
