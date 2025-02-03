@@ -15,7 +15,7 @@ pub enum UpdateAction {
 /// ============ 2. LayoutItem & LayoutItemBuilder Traits ============
 ///
 /// A single displayable item, e.g. a task or sub-task.
-pub trait LayoutItem {
+pub trait LayoutItem: Send + Sync {
     /// Return the type key (e.g. "download", "upload").
     fn type_key(&self) -> &str;
     /// Return the optional ID, if any.
@@ -33,7 +33,7 @@ pub trait LayoutItem {
 
 /// A builder that can create LayoutItems of a particular `type_key`.
 /// It also has a `visible_limit`, controlling how many items of this type can show at once.
-pub trait LayoutItemBuilder {
+pub trait LayoutItemBuilder: Send + Sync {
     /// The type key (e.g. "download") used for routing.
     fn type_key(&self) -> &str;
 
@@ -43,10 +43,8 @@ pub trait LayoutItemBuilder {
     fn visible_limit(&self) -> Option<usize>;
 
     /// Build a new item from an observation if no matching item was found.
-    fn build_item(&self, obs: &Observation) -> Box<dyn LayoutItem + Send + Sync>;
+    fn build_item(&self, obs: &Observation) -> Box<dyn LayoutItem>;
 
     /// Child builders, for a depth-first builder structure.
-    fn children(&self) -> Vec<Box<dyn LayoutItemBuilder + Send + Sync>> {
-        Vec::new()
-    }
+    fn children(&self) -> Vec<Box<dyn LayoutItemBuilder>>;
 }
