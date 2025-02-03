@@ -1,14 +1,11 @@
 use crate::flightdeck::global;
 use crate::flightdeck::observation::Observation;
 
-pub trait Observable {
+pub trait Observable: Send + Sync {
     type Observation: Clone;
 
     // mutation
-    fn update(&mut self, observation: Self::Observation) -> &Self;
-
-    // getter
-    fn generate_observation(&self) -> Observation;
+    fn generate_observation(&mut self, observation: Option<Self::Observation>) -> Observation;
 
     fn is_in_terminal_state(&self) -> bool;
 }
@@ -29,12 +26,19 @@ impl<T: Observable> Drop for Observer<T> {
 }
 
 impl<T: Observable> Observer<T> {
-    pub fn new(inner: T) -> Self {
-        global::send(log::Level::Trace, inner.generate_observation());
+    pub(crate) fn with(
+        mut inner: T,
+        default_terminal_log: Option<(log::Level, T::Observation)>,
+    ) -> Self {
+        global::send(log::Level::Trace, inner.generate_observation(None));
         Self {
             inner,
-            default_terminal_log: None,
+            default_terminal_log,
         }
+    }
+
+    pub fn new(inner: T) -> Self {
+        Self::with(inner, None)
     }
 
     pub fn with_terminal_state(
@@ -42,16 +46,13 @@ impl<T: Observable> Observer<T> {
         level: log::Level,
         default_terminal_observation: T::Observation,
     ) -> Self {
-        global::send(log::Level::Trace, inner.generate_observation());
-        Self {
-            inner,
-            default_terminal_log: Some((level, default_terminal_observation)),
-        }
+        Self::with(inner, Some((level, default_terminal_observation)))
     }
 
-    pub fn observe(&mut self, level: log::Level, observation: T::Observation) {
-        let observation = self.inner.update(observation).generate_observation();
-        global::send(level, observation)
+    pub fn observe(&mut self, level: log::Level, observation: T::Observation) -> &mut Observer<T> {
+        let observation = self.inner.generate_observation(Some(observation));
+        global::send(level, observation);
+        self
     }
 
     pub fn observe_error<E, U>(&mut self, map: U) -> impl FnOnce(E) -> E + use<'_, E, T, U>
