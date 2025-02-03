@@ -23,7 +23,7 @@ pub struct ProgressManager {
 
     /// Builders, in DFS order. Each entry is `(type_key -> builder)`.
     /// The insertion order in the IndexMap determines the type ordering.
-    builders: IndexMap<String, Box<dyn LayoutItemBuilder + Send + Sync>>,
+    builders: IndexMap<String, Box<dyn LayoutItemBuilder>>,
 
     /// Per-type ordered map of items, keyed by optional ID.
     items: HashMap<String, IndexMap<Option<String>, Box<dyn LayoutItem + Send + Sync>>>,
@@ -35,30 +35,67 @@ impl Manager for ProgressManager {
     }
 }
 
+pub struct LayoutItemBuilderNode {
+    pub(crate) builder: Box<dyn LayoutItemBuilder>,
+    pub(crate) children: Vec<LayoutItemBuilderNode>,
+}
+
+impl LayoutItemBuilderNode {
+    pub fn with_children<I>(self, children: I) -> Self
+    where
+        I: IntoIterator<Item = LayoutItemBuilderNode>,
+    {
+        Self {
+            builder: self.builder,
+            children: children.into_iter().collect(),
+        }
+    }
+
+    pub fn add_child(self, child: impl Into<LayoutItemBuilderNode>) -> Self {
+        let mut children = self.children;
+        children.push(child.into());
+        Self {
+            builder: self.builder,
+            children,
+        }
+    }
+}
+
+impl From<Box<dyn LayoutItemBuilder>> for LayoutItemBuilderNode {
+    fn from(builder: Box<dyn LayoutItemBuilder>) -> Self {
+        Self {
+            builder,
+            children: vec![],
+        }
+    }
+}
+
 impl ProgressManager {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
-    pub(crate) fn new(root_builders: Vec<Box<dyn LayoutItemBuilder + Send + Sync>>) -> Self {
+    pub(crate) fn new(root_builders: Vec<LayoutItemBuilderNode>) -> Self {
         let multi = indicatif::MultiProgress::new();
         let mut builders = IndexMap::new();
         let mut items = HashMap::new();
 
         // Helper to do DFS insertion
         fn insert_builder_dfs(
-            mut b: Box<dyn LayoutItemBuilder + Send + Sync>,
-            map: &mut IndexMap<String, Box<dyn LayoutItemBuilder + Send + Sync>>,
+            LayoutItemBuilderNode {
+                mut builder,
+                children,
+            }: LayoutItemBuilderNode,
+            map: &mut IndexMap<String, Box<dyn LayoutItemBuilder>>,
             items: &mut HashMap<
                 String,
                 IndexMap<Option<String>, Box<dyn LayoutItem + Send + Sync>>,
             >,
             depth: usize,
         ) {
-            b.set_depth(depth);
-            let children = b.children();
-            let tkey = b.type_key().to_owned();
-            if !map.contains_key(&tkey) {
-                map.insert(tkey.clone(), b);
-                items.insert(tkey.clone(), IndexMap::new());
+            builder.set_depth(depth);
+            let type_key = builder.type_key().to_owned();
+            if !map.contains_key(&type_key) {
+                map.insert(type_key.clone(), builder);
+                items.insert(type_key.clone(), IndexMap::new());
             }
             for child in children {
                 insert_builder_dfs(child, map, items, depth + 1);

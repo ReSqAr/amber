@@ -44,7 +44,4 @@ pub trait LayoutItemBuilder: Send + Sync {
 
     /// Build a new item from an observation if no matching item was found.
     fn build_item(&self, obs: &Observation) -> Box<dyn LayoutItem>;
-
-    /// Child builders, for a depth-first builder structure.
-    fn children(&self) -> Vec<Box<dyn LayoutItemBuilder>>;
 }

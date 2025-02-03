@@ -2,8 +2,9 @@ use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::{Data, Observation, Value};
 use crate::flightdeck::observer::Observable;
 use chrono::Utc;
+use derive_builder::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::marker::PhantomData;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub enum BaseObservation {
@@ -29,10 +30,10 @@ impl BaseObservable {
         }
     }
 
-    pub fn with_id(type_key: String, id: Option<String>) -> Self {
+    pub fn with_id(type_key: String, id: String) -> Self {
         Self {
             type_key,
-            id,
+            id: Some(id),
             is_terminal: false,
         }
     }
@@ -117,10 +118,23 @@ impl ProgressBarManager for PGPositionManager {
         }
     }
 }
-#[derive(Debug, Default)]
+
+type StateTransformerFn = Box<dyn Fn(bool, Option<String>) -> String + Sync + Send>;
+
 struct PGMessageManager {
+    state_transformer: Arc<StateTransformerFn>,
     last_state: Option<String>,
     is_terminal: bool,
+}
+
+impl PGMessageManager {
+    fn new(state_transformer: Arc<StateTransformerFn>) -> Self {
+        Self {
+            state_transformer,
+            last_state: None,
+            is_terminal: false,
+        }
+    }
 }
 
 impl ProgressBarManager for PGMessageManager {
@@ -138,50 +152,61 @@ impl ProgressBarManager for PGMessageManager {
     }
 
     fn update_progress_bar(&mut self, pb: &ProgressBar) {
+        let state_transformer = self.state_transformer.clone();
+        let message = state_transformer(self.is_terminal, self.last_state.clone());
+
         match self.is_terminal {
-            false => {
-                if let Some(state) = &self.last_state {
-                    pb.set_message(state.clone())
-                }
-            }
-            true => {
-                if let Some(state) = &self.last_state {
-                    pb.finish_with_message(state.clone())
-                }
-            }
+            false => pb.set_message(message),
+            true => pb.finish_with_message(message),
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone)]
+struct PGStyle {
+    in_progress: ProgressStyle,
+    done: ProgressStyle,
+}
+
 struct PGStyleManager {
     already_initialised: bool,
     is_terminal: bool,
+    style: PGStyle,
+}
+
+impl PGStyleManager {
+    fn new(style: PGStyle) -> Self {
+        Self {
+            already_initialised: false,
+            is_terminal: false,
+            style,
+        }
+    }
 }
 
 impl ProgressBarManager for PGStyleManager {
     fn observe(&mut self, _data: &[Data], is_terminal: bool) {
-        self.is_terminal |= is_terminal;
+        if is_terminal && !self.is_terminal {
+            self.is_terminal = true;
+            self.already_initialised = false;
+        }
     }
 
     fn update_progress_bar(&mut self, pb: &ProgressBar) {
         if !self.already_initialised {
             self.already_initialised = true;
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{prefix}{spinner:.green} {msg} [{bar:20.cyan/blue}] {pos}/{len}")
-                    .unwrap(),
-            );
+            pb.set_style(match self.is_terminal {
+                false => self.style.in_progress.clone(),
+                true => self.style.done.clone(),
+            });
         }
     }
 }
 
-pub trait BaseLikeLayoutItem: LayoutItem + 'static {
-    fn new(type_key: String, obs: Observation, depth: usize) -> Self;
-}
+type TerminationActionFn = Box<dyn Fn(Vec<Data>) -> TerminationActionIndicator + Send + Sync>;
 
 #[derive(Debug)]
-pub enum TerminationAction {
+pub enum TerminationActionIndicator {
     Remove,
     Keep,
 }
@@ -190,25 +215,26 @@ pub struct BaseLayoutItem {
     type_key: String,
     id: Option<String>,
     pb: Option<ProgressBar>,
-    termination_action: Box<dyn Fn(Vec<Data>) -> TerminationAction + Send + Sync>,
-    depth: usize,
+    termination_action: Arc<TerminationActionFn>,
     managers: Vec<Box<dyn ProgressBarManager>>,
+    depth: usize,
 }
 
-impl BaseLikeLayoutItem for BaseLayoutItem {
-    fn new(type_key: String, obs: Observation, depth: usize) -> Self {
-        // TODO: add state transformer + termination_action
+impl BaseLayoutItem {
+    fn new(
+        type_key: String,
+        obs: Observation,
+        termination_action: Arc<TerminationActionFn>,
+        managers: Vec<Box<dyn ProgressBarManager>>,
+        depth: usize,
+    ) -> Self {
         Self {
             type_key,
             id: obs.id.clone(),
             pb: None,
-            termination_action: Box::new(|_| TerminationAction::Keep),
+            termination_action,
             depth,
-            managers: vec![
-                Box::new(PGPositionManager::default()),
-                Box::new(PGMessageManager::default()),
-                Box::new(PGStyleManager::default()),
-            ],
+            managers,
         }
     }
 }
@@ -239,8 +265,8 @@ impl LayoutItem for BaseLayoutItem {
         if obs.is_terminal {
             let termination_action = &self.termination_action;
             match termination_action(obs.data.clone()) {
-                TerminationAction::Remove => UpdateAction::FinishedRemove,
-                TerminationAction::Keep => UpdateAction::FinishedKeep,
+                TerminationActionIndicator::Remove => UpdateAction::FinishedRemove,
+                TerminationActionIndicator::Keep => UpdateAction::FinishedKeep,
             }
         } else {
             UpdateAction::Continue
@@ -258,47 +284,126 @@ impl LayoutItem for BaseLayoutItem {
     }
 }
 
-pub struct BaseLayoutBuilder<L: BaseLikeLayoutItem> {
-    type_key: String,
-    depth: usize,
-    limit: Option<usize>,
-    children: Box<dyn Fn() -> Vec<Box<dyn LayoutItemBuilder>> + Send + Sync>,
-    phantom: PhantomData<L>,
+pub enum TerminationAction {
+    Remove,
+    Keep,
+    Fn(TerminationActionFn),
 }
 
-impl<L: BaseLikeLayoutItem> BaseLayoutBuilder<L> {
-    pub fn new(type_key: String) -> Self {
-        Self::with(type_key, None, Box::new(Vec::new))
-    }
-
-    pub fn with_limit(type_key: String, limit: usize) -> Self {
-        Self::with(type_key, Some(limit), Box::new(Vec::new))
-    }
-
-    pub fn with_children(
-        type_key: String,
-        children: Box<dyn Fn() -> Vec<Box<dyn LayoutItemBuilder>> + Send + Sync>,
-    ) -> Self {
-        Self::with(type_key, None, children)
-    }
-
-    pub fn with(
-        // TODO: add state transformer + termination_action
-        type_key: String,
-        limit: Option<usize>,
-        children: Box<dyn Fn() -> Vec<Box<dyn LayoutItemBuilder>> + Send + Sync>,
-    ) -> Self {
-        Self {
-            type_key,
-            depth: 0,
-            limit,
-            children,
-            phantom: PhantomData,
+impl TerminationAction {
+    fn boxed(self) -> TerminationActionFn {
+        match self {
+            TerminationAction::Remove => Box::new(|_| TerminationActionIndicator::Remove),
+            TerminationAction::Keep => Box::new(|_| TerminationActionIndicator::Keep),
+            TerminationAction::Fn(f) => f,
         }
     }
 }
 
-impl<L: BaseLikeLayoutItem> LayoutItemBuilder for BaseLayoutBuilder<L> {
+pub enum StateTransformer {
+    Identity,
+    Static { msg: String, done: String },
+    StateFn(StateTransformerFn),
+}
+
+impl StateTransformer {
+    fn boxed(self) -> StateTransformerFn {
+        match self {
+            StateTransformer::Static { msg, done } => Box::new(move |d, _| match d {
+                true => done.clone(),
+                false => msg.clone(),
+            }),
+            StateTransformer::Identity => Box::new(|done, s| match (done, s) {
+                (true, None) => "done".to_string(),
+                (false, None) => "in progress".to_string(),
+                (true, Some(s)) => s,
+                (false, Some(s)) => s,
+            }),
+            StateTransformer::StateFn(f) => f,
+        }
+    }
+}
+
+pub enum Style {
+    Default,
+    Style(ProgressStyle),
+}
+
+impl From<Style> for PGStyle {
+    fn from(val: Style) -> Self {
+        match val {
+            Style::Default => PGStyle {
+                in_progress: ProgressStyle::default_bar()
+                    .template("{prefix}{spinner:.green} {msg} [{bar:20.cyan/blue}]")
+                    .unwrap(),
+                done: ProgressStyle::default_bar()
+                    .template("  {msg} [{bar:20.cyan/blue}]")
+                    .unwrap(),
+            },
+            Style::Style(style) => PGStyle {
+                in_progress: style.clone(),
+                done: style,
+            },
+        }
+    }
+}
+
+#[derive(Builder)]
+#[builder(
+    pattern = "owned",
+    build_fn(error = "Box<dyn std::error::Error + Send + Sync>")
+)]
+pub struct BaseLayoutBuilder {
+    #[builder(setter(into))]
+    type_key: String,
+    #[builder(default)]
+    depth: usize,
+    #[builder(default, setter(strip_option))]
+    limit: Option<usize>,
+    #[builder(
+        setter(custom),
+        default = "Arc::new(Box::new(TerminationAction::Keep.boxed()))"
+    )]
+    termination_action: Arc<TerminationActionFn>,
+    #[builder(
+        setter(custom),
+        default = "Arc::new(Box::new(StateTransformer::Identity.boxed()))"
+    )]
+    state_transformer: Arc<StateTransformerFn>,
+    #[builder(setter(into), default = "Style::Default.into()")]
+    style: PGStyle,
+}
+
+impl BaseLayoutBuilder {
+    pub fn boxed(self) -> Box<dyn LayoutItemBuilder> {
+        Box::new(self)
+    }
+}
+
+impl BaseLayoutBuilderBuilder {
+    pub fn termination_action(self, termination_action: TerminationAction) -> Self {
+        Self {
+            type_key: self.type_key,
+            depth: self.depth,
+            limit: self.limit,
+            termination_action: Some(Arc::new(termination_action.boxed())),
+            state_transformer: self.state_transformer,
+            style: self.style,
+        }
+    }
+    pub fn state_transformer(self, state_transformer: StateTransformer) -> Self {
+        Self {
+            type_key: self.type_key,
+            depth: self.depth,
+            limit: self.limit,
+            termination_action: self.termination_action,
+            state_transformer: Some(Arc::new(state_transformer.boxed())),
+            style: self.style,
+        }
+    }
+}
+
+impl LayoutItemBuilder for BaseLayoutBuilder {
     fn type_key(&self) -> &str {
         self.type_key.as_str()
     }
@@ -309,11 +414,17 @@ impl<L: BaseLikeLayoutItem> LayoutItemBuilder for BaseLayoutBuilder<L> {
         self.limit
     }
     fn build_item(&self, obs: &Observation) -> Box<dyn LayoutItem> {
-        Box::new(L::new(self.type_key.clone(), obs.clone(), self.depth))
-    }
-
-    fn children(&self) -> Vec<Box<dyn LayoutItemBuilder>> {
-        let children = &self.children;
-        children()
+        let managers: Vec<Box<dyn ProgressBarManager>> = vec![
+            Box::new(PGPositionManager::default()),
+            Box::new(PGMessageManager::new(self.state_transformer.clone())),
+            Box::new(PGStyleManager::new(self.style.clone())),
+        ];
+        Box::new(BaseLayoutItem::new(
+            self.type_key.clone(),
+            obs.clone(),
+            self.termination_action.clone(),
+            managers,
+            self.depth,
+        ))
     }
 }
