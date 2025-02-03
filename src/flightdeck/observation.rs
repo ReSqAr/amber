@@ -1,22 +1,36 @@
 /// ============ 1. Observation & UpdateAction ============
 
 #[derive(Debug, Clone)]
+pub enum Value {
+    String(String),
+    U64(u64),
+}
+
+impl From<String> for Value {
+    fn from(value: String) -> Self {
+        Value::String(value)
+    }
+}
+
+impl From<u64> for Value {
+    fn from(value: u64) -> Self {
+        Value::U64(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Data {
+    pub key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone)]
 pub struct Observation {
-    /// A type key used to route to a particular builder/item list.
     pub type_key: String,
-    /// Optional ID to identify or group the item within this type.
     pub id: Option<String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    /// Whether the item is finished.
-    pub state: String,
-    /// Whether the item is finished.
     pub is_terminal: bool,
-    /// Optional message for display or logging.
-    pub message: Option<String>,
-    /// Current progress position.
-    pub position: Option<u64>,
-    /// Optional total length for determinate progress.
-    pub length: Option<u64>,
+    pub data: Vec<Data>,
 }
 
 #[derive(Debug, Clone)]
