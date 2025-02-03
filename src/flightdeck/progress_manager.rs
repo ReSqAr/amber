@@ -1,6 +1,7 @@
 use crate::flightdeck::flightdeck::Manager;
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
+use crate::flightdeck::Manager;
 use indexmap::map::Entry;
 use indexmap::IndexMap;
 use indicatif::ProgressBar;
@@ -73,7 +74,10 @@ impl From<Box<dyn LayoutItemBuilder>> for LayoutItemBuilderNode {
 impl ProgressManager {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
-    pub(crate) fn new(root_builders: Vec<LayoutItemBuilderNode>) -> Self {
+    pub(crate) fn new<I>(root_builders: I) -> Self
+    where
+        I: IntoIterator<Item = LayoutItemBuilderNode>,
+    {
         let multi = indicatif::MultiProgress::new();
         let mut builders = IndexMap::new();
         let mut items = HashMap::new();

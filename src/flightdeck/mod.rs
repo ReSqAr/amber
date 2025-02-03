@@ -28,7 +28,6 @@ impl FlightDeck {
     where
         I: IntoIterator<Item = LayoutItemBuilderNode>,
     {
-        let root_builders = root_builders.into_iter().collect();
         self.manager
             .push(Box::new(ProgressManager::new(root_builders)));
         self
