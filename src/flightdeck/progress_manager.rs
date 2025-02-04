@@ -1,4 +1,3 @@
-use crate::flightdeck::flightdeck::Manager;
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
 use crate::flightdeck::Manager;
@@ -33,6 +32,10 @@ pub struct ProgressManager {
 impl Manager for ProgressManager {
     fn observe(&mut self, _: log::Level, obs: Observation) {
         self.observe(obs)
+    }
+
+    fn finish(&self) {
+        self.multi.suspend(|| {})
     }
 }
 
