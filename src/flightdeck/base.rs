@@ -420,9 +420,9 @@ impl LayoutItemBuilder for BaseLayoutBuilder {
     }
     fn build_item(&self, obs: &Observation) -> Box<dyn LayoutItem> {
         let managers: Vec<Box<dyn ProgressBarManager>> = vec![
+            Box::new(PGStyleManager::new(self.style.clone())),
             Box::new(PGPositionManager::default()),
             Box::new(PGMessageManager::new(self.state_transformer.clone())),
-            Box::new(PGStyleManager::new(self.style.clone())),
         ];
         Box::new(BaseLayoutItem::new(
             self.type_key.clone(),
