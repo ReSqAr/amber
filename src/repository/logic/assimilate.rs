@@ -62,7 +62,7 @@ async fn assimilate_blob(
     Ok::<InsertBlob, InternalError>(InsertBlob {
         repo_id,
         blob_id,
-        blob_size,
+        blob_size: blob_size as i64,
         has_blob: true,
         valid_from: chrono::Utc::now(),
     })

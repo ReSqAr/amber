@@ -112,7 +112,7 @@ pub(crate) async fn blobify(
             Some(InsertBlob {
                 repo_id: local.repo_id().await?,
                 blob_id: blob_id.clone(),
-                blob_size,
+                blob_size: blob_size as i64,
                 has_blob: true,
                 valid_from,
             }),
