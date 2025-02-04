@@ -327,22 +327,27 @@ impl StateTransformer {
 pub enum Style {
     Default,
     Style(ProgressStyle),
+    Template { in_progress: String, done: String },
 }
 
 impl From<Style> for PGStyle {
     fn from(val: Style) -> Self {
         match val {
             Style::Default => PGStyle {
-                in_progress: ProgressStyle::default_bar()
-                    .template("{prefix}{spinner:.green} {msg} [{bar:20.cyan/blue}]")
+                in_progress: ProgressStyle::with_template("{prefix}{spinner:.green} {msg} [{bar:20.cyan/blue}]")
                     .unwrap(),
-                done: ProgressStyle::default_bar()
-                    .template("  {msg} [{bar:20.cyan/blue}]")
+                done: ProgressStyle::with_template("{prefix}  {msg} [{bar:20.cyan/blue}]")
                     .unwrap(),
             },
             Style::Style(style) => PGStyle {
                 in_progress: style.clone(),
                 done: style,
+            },
+            Style::Template { in_progress, done } => PGStyle {
+                in_progress: ProgressStyle::with_template(in_progress.as_str())
+                    .unwrap(),
+                done: ProgressStyle::with_template(done.as_str())
+                    .unwrap(),
             },
         }
     }
