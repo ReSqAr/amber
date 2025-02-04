@@ -6,6 +6,13 @@ use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, Virt
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
+use amber::flightdeck;
+use amber::flightdeck::base::{
+    BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, Style,
+    TerminationAction,
+};
+use amber::flightdeck::observer::Observer;
+use amber::flightdeck::progress_manager::LayoutItemBuilderNode;
 use async_lock::Mutex;
 use futures::pin_mut;
 use std::collections::HashMap;
@@ -17,8 +24,59 @@ use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
+    let root_path = local_repository.root().abs().clone();
 
-    add_files(local_repository, dry_run).await
+    flightdeck::flightdeck(
+        async {
+            add_files(local_repository, dry_run).await?;
+            Ok::<(), InternalError>(())
+        },
+        root_builders(&root_path),
+    )
+    .await
+}
+
+fn root_builders(root_path: &PathBuf) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+    let root = root_path.display().to_string() + "/";
+
+    let file = BaseLayoutBuilderBuilder::default()
+        .type_key("sha")
+        .limit(5)
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdStateFn(Box::new(move |done, id, _| {
+            let id = id.unwrap_or("<missing>".into());
+            let path = id.strip_prefix(root.as_str()).unwrap_or(root.as_str());
+            match done {
+                true => format!("hashed {}", path),
+                false => format!("hashing {}", path),
+            }
+        })))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} {decimal_bytes}/{decimal_total_bytes}"
+                .into(),
+            done: "{prefix}✓ {msg} {decimal_bytes}".into(),
+        })
+        .build()
+        .expect("build should work")
+        .boxed();
+
+    let overall = BaseLayoutBuilderBuilder::default()
+        .type_key("adder")
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                true => msg.unwrap_or("done".into()),
+                false => msg.unwrap_or("adding".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            done: "{prefix}✓ {msg} in {elapsed}".into(),
+        })
+        .build()
+        .expect("build should work")
+        .boxed();
+
+    [LayoutItemBuilderNode::from(overall).add_child(file)]
 }
 
 pub async fn add_files(
@@ -33,6 +91,8 @@ pub async fn add_files(
         + 'static,
     dry_run: bool,
 ) -> Result<(), InternalError> {
+    let mut adder_obs = Observer::new(BaseObservable::without_id("adder".into()));
+
     let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
     let db_file_handle = {
         let local_repository = repository.clone();
@@ -98,16 +158,19 @@ pub async fn add_files(
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
-                Ok(path) => {
-                    println!("added {}", path.rel().display());
+                Ok(_path) => {
                     count += 1;
+                    adder_obs.observe(log::Level::Trace, BaseObservation::Position(count));
                 }
                 Err(e) => {
                     println!("error: {e}");
                 }
             }
         }
-        println!("added: {}", count);
+        adder_obs.observe(
+            log::Level::Info,
+            BaseObservation::TerminalState(format!("added {count} files")),
+        );
 
         state_handle.await??;
     }
