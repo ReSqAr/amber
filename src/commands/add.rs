@@ -70,7 +70,7 @@ fn root_builders(root_path: &PathBuf) -> impl IntoIterator<Item = LayoutItemBuil
         )))
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
-            done: "{prefix}✓ {msg} in {elapsed}".into(),
+            done: "{prefix}✓ {msg} ({elapsed})".into(),
         })
         .build()
         .expect("build should work")
@@ -167,10 +167,13 @@ pub async fn add_files(
                 }
             }
         }
-        adder_obs.observe(
-            log::Level::Info,
-            BaseObservation::TerminalState(format!("added {count} files")),
-        );
+
+        let msg = if count > 0 {
+            format!("added {count} files")
+        } else {
+            "no files added".into()
+        };
+        adder_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
 
         state_handle.await??;
     }
