@@ -119,17 +119,21 @@ impl ProgressBarManager for PGPositionManager {
     }
 }
 
+type IdStateTransformerFn =
+    Box<dyn Fn(bool, Option<String>, Option<String>) -> String + Sync + Send>;
 type StateTransformerFn = Box<dyn Fn(bool, Option<String>) -> String + Sync + Send>;
 
 struct PGMessageManager {
-    state_transformer: Arc<StateTransformerFn>,
+    id: Option<String>,
+    state_transformer: Arc<IdStateTransformerFn>,
     last_state: Option<String>,
     is_terminal: bool,
 }
 
 impl PGMessageManager {
-    fn new(state_transformer: Arc<StateTransformerFn>) -> Self {
+    fn new(id: Option<String>, state_transformer: Arc<IdStateTransformerFn>) -> Self {
         Self {
+            id,
             state_transformer,
             last_state: None,
             is_terminal: false,
@@ -153,7 +157,7 @@ impl ProgressBarManager for PGMessageManager {
 
     fn update_progress_bar(&mut self, pb: &ProgressBar) {
         let state_transformer = self.state_transformer.clone();
-        let message = state_transformer(self.is_terminal, self.last_state.clone());
+        let message = state_transformer(self.is_terminal, self.id.clone(), self.last_state.clone());
 
         match self.is_terminal {
             false => pb.set_message(message),
@@ -304,22 +308,24 @@ pub enum StateTransformer {
     Identity,
     Static { msg: String, done: String },
     StateFn(StateTransformerFn),
+    IdStateFn(IdStateTransformerFn),
 }
 
 impl StateTransformer {
-    fn boxed(self) -> StateTransformerFn {
+    fn boxed(self) -> IdStateTransformerFn {
         match self {
-            StateTransformer::Static { msg, done } => Box::new(move |d, _| match d {
+            StateTransformer::Static { msg, done } => Box::new(move |d, _, _| match d {
                 true => done.clone(),
                 false => msg.clone(),
             }),
-            StateTransformer::Identity => Box::new(|done, s| match (done, s) {
+            StateTransformer::Identity => Box::new(|done, _, s| match (done, s) {
                 (true, None) => "done".to_string(),
                 (false, None) => "in progress".to_string(),
                 (true, Some(s)) => s,
                 (false, Some(s)) => s,
             }),
-            StateTransformer::StateFn(f) => f,
+            StateTransformer::StateFn(f) => Box::new(move |done, _, s| f(done, s)),
+            StateTransformer::IdStateFn(f) => f,
         }
     }
 }
@@ -373,7 +379,7 @@ pub struct BaseLayoutBuilder {
         setter(custom),
         default = "Arc::new(Box::new(StateTransformer::Identity.boxed()))"
     )]
-    state_transformer: Arc<StateTransformerFn>,
+    state_transformer: Arc<IdStateTransformerFn>,
     #[builder(setter(into), default = "Style::Default.into()")]
     style: PGStyle,
 }
@@ -421,7 +427,10 @@ impl LayoutItemBuilder for BaseLayoutBuilder {
         let managers: Vec<Box<dyn ProgressBarManager>> = vec![
             Box::new(PGStyleManager::new(self.style.clone())),
             Box::new(PGPositionManager::default()),
-            Box::new(PGMessageManager::new(self.state_transformer.clone())),
+            Box::new(PGMessageManager::new(
+                obs.id.clone(),
+                self.state_transformer.clone(),
+            )),
         ];
         Box::new(BaseLayoutItem::new(
             self.type_key.clone(),
