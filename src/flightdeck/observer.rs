@@ -41,7 +41,7 @@ impl<T: Observable> Observer<T> {
         Self::with(inner, None)
     }
 
-    pub fn with_terminal_state(
+    pub fn with_auto_termination(
         inner: T,
         level: log::Level,
         default_terminal_observation: T::Observation,
