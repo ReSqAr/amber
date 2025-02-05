@@ -216,7 +216,6 @@ pub enum TerminationActionIndicator {
 }
 
 pub struct BaseLayoutItem {
-    type_key: String,
     id: Option<String>,
     pb: Option<ProgressBar>,
     termination_action: Arc<TerminationActionFn>,
@@ -226,14 +225,12 @@ pub struct BaseLayoutItem {
 
 impl BaseLayoutItem {
     fn new(
-        type_key: String,
         obs: Observation,
         termination_action: Arc<TerminationActionFn>,
         managers: Vec<Box<dyn ProgressBarManager>>,
         depth: usize,
     ) -> Self {
         Self {
-            type_key,
             id: obs.id.clone(),
             pb: None,
             termination_action,
@@ -252,9 +249,6 @@ impl BaseLayoutItem {
 }
 
 impl LayoutItem for BaseLayoutItem {
-    fn type_key(&self) -> &str {
-        self.type_key.as_str()
-    }
     fn id(&self) -> Option<String> {
         self.id.clone()
     }
@@ -433,7 +427,6 @@ impl LayoutItemBuilder for BaseLayoutBuilder {
             )),
         ];
         Box::new(BaseLayoutItem::new(
-            self.type_key.clone(),
             obs.clone(),
             self.termination_action.clone(),
             managers,

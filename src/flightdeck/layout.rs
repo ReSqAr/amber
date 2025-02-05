@@ -16,8 +16,6 @@ pub enum UpdateAction {
 ///
 /// A single displayable item, e.g. a task or sub-task.
 pub trait LayoutItem: Send + Sync {
-    /// Return the type key (e.g. "download", "upload").
-    fn type_key(&self) -> &str;
     /// Return the optional ID, if any.
     fn id(&self) -> Option<String>;
 
