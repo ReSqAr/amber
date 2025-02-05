@@ -5,6 +5,8 @@
 - fsck
 - edit & deletion
 - amazing user feedback
+  - TODO
+    - adding: terminal audit logs + file audit logs
   - good info/debug levels
   - dedicated system for user messages
     - mirrored into file? session.<>.txt

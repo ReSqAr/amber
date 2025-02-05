@@ -3,30 +3,56 @@ use crate::flightdeck::observation::Observation;
 use crate::flightdeck::Manager;
 use indexmap::map::Entry;
 use indexmap::IndexMap;
-use indicatif::ProgressBar;
 use std::collections::HashMap;
 
-/// ============ 3. ProgressManager ============
-///
-/// The manager maintains:
-///   - A single MultiProgress to which bars are added
-///   - An IndexMap of builders in DFS order (type_key -> builder)
-///   - A HashMap mapping each type_key to an ordered map (IndexMap) of items keyed by `id`.
-///
-/// The `observe()` method finds or creates an item. If newly created,
-/// it checks if the visible limit allows attaching a bar. If so,
-/// it calls `item.create_and_store_bar()` then inserts that bar in
-/// MultiProgress after the last visible bar among all builder types
-/// up to this type in the DFS ordering.
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+enum Key {
+    Body(String),
+    Footer(String),
+}
+
+enum Builder {
+    Body(Box<dyn LayoutItemBuilder>),
+    Footer,
+}
+
+enum Item {
+    Body(Box<dyn LayoutItem>),
+    Footer(FooterLayoutItem),
+}
+
+impl Item {
+    pub(crate) fn id(&self) -> Option<String> {
+        match self {
+            Item::Body(item) => item.id(),
+            Item::Footer(_) => None,
+        }
+    }
+
+    pub(crate) fn get_bar(&self) -> Option<&indicatif::ProgressBar> {
+        match self {
+            Item::Body(item) => item.get_bar(),
+            Item::Footer(item) => item.get_bar(),
+        }
+    }
+
+    pub(crate) fn set_bar(&mut self, pb: indicatif::ProgressBar) {
+        match self {
+            Item::Body(item) => item.set_bar(pb),
+            Item::Footer(item) => item.set_bar(pb),
+        }
+    }
+}
+
 pub struct ProgressManager {
     multi: indicatif::MultiProgress,
 
     /// Builders, in DFS order. Each entry is `(type_key -> builder)`.
     /// The insertion order in the IndexMap determines the type ordering.
-    builders: IndexMap<String, Box<dyn LayoutItemBuilder>>,
+    builders: IndexMap<Key, Builder>,
 
     /// Per-type ordered map of items, keyed by optional ID.
-    items: HashMap<String, IndexMap<Option<String>, Box<dyn LayoutItem + Send + Sync>>>,
+    items: HashMap<Key, IndexMap<Option<String>, Item>>,
 }
 
 impl Manager for ProgressManager {
@@ -74,6 +100,51 @@ impl From<Box<dyn LayoutItemBuilder>> for LayoutItemBuilderNode {
     }
 }
 
+struct FooterLayoutItem {
+    visible_count: u64,
+    total_count: u64,
+    pb: Option<indicatif::ProgressBar>,
+}
+
+impl FooterLayoutItem {
+    fn new(visible_count: u64, total_count: u64) -> Self {
+        Self {
+            visible_count,
+            total_count,
+            pb: None,
+        }
+    }
+
+    fn update_bar(&self, bar: &indicatif::ProgressBar) {
+        bar.set_position(if self.visible_count < self.total_count {
+            self.total_count - self.visible_count
+        } else {
+            0
+        });
+        bar.set_length(self.total_count);
+    }
+
+    fn set_bar(&mut self, bar: indicatif::ProgressBar) {
+        bar.set_style(
+            indicatif::ProgressStyle::with_template("omitting {pos} out of {len} rows").unwrap(),
+        );
+        self.update_bar(&bar);
+        self.pb = Some(bar);
+    }
+
+    fn set(&mut self, visible_count: u64, total_count: u64) {
+        self.visible_count = visible_count;
+        self.total_count = total_count;
+        if let Some(pb) = &self.pb {
+            self.update_bar(pb);
+        }
+    }
+
+    fn get_bar(&self) -> Option<&indicatif::ProgressBar> {
+        self.pb.as_ref()
+    }
+}
+
 impl ProgressManager {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
@@ -81,7 +152,8 @@ impl ProgressManager {
     where
         I: IntoIterator<Item = LayoutItemBuilderNode>,
     {
-        let multi = indicatif::MultiProgress::new();
+        let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(4);
+        let multi = indicatif::MultiProgress::with_draw_target(draw_target);
         let mut builders = IndexMap::new();
         let mut items = HashMap::new();
 
@@ -91,19 +163,25 @@ impl ProgressManager {
                 mut builder,
                 children,
             }: LayoutItemBuilderNode,
-            map: &mut IndexMap<String, Box<dyn LayoutItemBuilder>>,
-            items: &mut HashMap<
-                String,
-                IndexMap<Option<String>, Box<dyn LayoutItem + Send + Sync>>,
-            >,
+            map: &mut IndexMap<Key, Builder>,
+            items: &mut HashMap<Key, IndexMap<Option<String>, Item>>,
             depth: usize,
         ) {
             builder.set_depth(depth);
             let type_key = builder.type_key().to_owned();
-            if !map.contains_key(&type_key) {
-                map.insert(type_key.clone(), builder);
-                items.insert(type_key.clone(), IndexMap::new());
+
+            let key = Key::Body(type_key.clone());
+            if !map.contains_key(&key) {
+                map.insert(key.clone(), Builder::Body(builder));
+                items.insert(key, IndexMap::new());
             }
+
+            let key = Key::Footer(type_key.clone());
+            if !map.contains_key(&key) {
+                map.insert(key.clone(), Builder::Footer);
+                items.insert(key, IndexMap::new());
+            }
+
             for child in children {
                 insert_builder_dfs(child, map, items, depth + 1);
             }
@@ -126,66 +204,106 @@ impl ProgressManager {
     /// If update signals `FinishedKeep`, we do nothing extra.
     fn observe(&mut self, obs: Observation) {
         let type_key = obs.type_key.clone();
-        let builder = match self.builders.get(&type_key) {
-            None => {
-                return;
-            } // not known, so ignored
-            Some(b) => b,
+        let key = Key::Body(type_key.clone());
+        let builder = match self.builders.get(&key) {
+            None => return,
+            Some(Builder::Body(b)) => b,
+            Some(Builder::Footer) => return,
         };
-        let items_map = self.items.entry(type_key.clone()).or_default();
+        let items_map = self.items.entry(key.clone()).or_default();
         let id = obs.id.clone();
 
         match items_map.entry(id.clone()) {
             Entry::Occupied(mut entry) => {
                 // Item exists
-                let item = entry.get_mut();
-                let action = item.update(&obs);
-                match action {
-                    UpdateAction::FinishedRemove => {
-                        let pb = item.get_bar();
-                        if let Some(pb) = pb {
-                            self.multi.remove(pb);
-                        }
-                        let map = self.items.get_mut(&type_key).unwrap();
-                        map.shift_remove(&id); // TODO: slow!?
+                if let Item::Body(item) = entry.get_mut() {
+                    let action = item.update(&obs);
+                    match action {
+                        UpdateAction::FinishedRemove => {
+                            let pb = item.get_bar();
+                            if let Some(pb) = pb {
+                                self.multi.remove(pb);
+                            }
+                            let map = self.items.get_mut(&key).unwrap();
+                            map.shift_remove(&id); // maybe this is slow!?
 
-                        // Freed a slot => unhide if possible
-                        self.maybe_show_bar(&type_key);
+                            // Freed a slot => unhide if possible
+                            self.process_type_key(&type_key, builder.visible_limit());
+                        }
+                        UpdateAction::FinishedKeep => { /* keep the item & bar */ }
+                        UpdateAction::Continue => { /* do nothing */ }
                     }
-                    UpdateAction::FinishedKeep => { /* keep the item & bar */ }
-                    UpdateAction::Continue => { /* do nothing */ }
                 }
             }
             Entry::Vacant(vac) => {
                 // Create new item
                 let new_item = builder.build_item(&obs);
-                let _ = vac.insert(new_item);
+                let _ = vac.insert(Item::Body(new_item));
                 // Possibly attach bar if there's room
-                self.maybe_show_bar(&type_key);
+                self.process_type_key(&type_key, builder.visible_limit());
             }
         }
     }
 
     /// If a new item was created, we check if we can attach a bar
     /// for items that lack one, up to the visible limit.
-    fn maybe_show_bar(&mut self, type_key: &str) {
-        let builder = self.builders.get(type_key).unwrap();
-        let map = self.items.get_mut(type_key).unwrap();
+    fn process_type_key(&mut self, type_key: &str, visible_limit: Option<usize>) {
+        let key = Key::Body(type_key.to_string());
+        let map = self.items.get_mut(&key).unwrap();
 
         let visible_count = map.values().filter(|i| i.get_bar().is_some()).count();
-        let can_add = match builder.visible_limit() {
+        let can_add = match visible_limit {
             Some(limit) => visible_count < limit,
             None => true,
         };
+
         if can_add {
             for (_k, item) in map.iter_mut() {
                 if item.get_bar().is_none() {
-                    let bar = ProgressBar::hidden();
+                    let bar = indicatif::ProgressBar::hidden();
                     item.set_bar(bar.clone());
                     let id = item.id().clone();
-                    self.attach_to_multi_progress(type_key, id, bar.clone());
+                    self.attach_to_multi_progress(&key, id, bar.clone());
                     break; // attach only for one new item
                 }
+            }
+        }
+
+        if let Some(limit) = visible_limit {
+            self.process_type_key_footer(type_key, limit);
+        }
+    }
+
+    fn process_type_key_footer(&mut self, type_key: &str, limit: usize) {
+        let key = Key::Body(type_key.to_string());
+        let map = self.items.get_mut(&key).unwrap();
+        let visible_count = map.values().filter(|i| i.get_bar().is_some()).count();
+        let total_count = map.values().count();
+        let footer_required = visible_count >= limit;
+        let key = Key::Footer(type_key.to_string());
+
+        let items_map = self.items.entry(key.clone()).or_default();
+        match items_map.entry(None) {
+            Entry::Occupied(mut entry) => {
+                if let Item::Footer(item) = entry.get_mut() {
+                    if footer_required {
+                        item.set(visible_count as u64, total_count as u64);
+                    } else {
+                        let pb = item.get_bar();
+                        if let Some(pb) = pb {
+                            self.multi.remove(pb);
+                        }
+                        let map = self.items.get_mut(&key).unwrap();
+                        map.shift_remove(&None);
+                    }
+                }
+            }
+            Entry::Vacant(vac) => {
+                let mut item = FooterLayoutItem::new(visible_count as u64, total_count as u64);
+                let bar = indicatif::ProgressBar::hidden();
+                item.set_bar(bar.clone());
+                let _ = vac.insert(Item::Footer(item));
+                self.attach_to_multi_progress(&key, None, bar);
             }
         }
     }
@@ -195,12 +313,12 @@ impl ProgressManager {
     /// and call `insert_after`; if none is found, just `add`.
     fn attach_to_multi_progress(
         &self,
-        type_key: &str,
+        key: &Key,
         id: Option<String>,
         new_bar: indicatif::ProgressBar,
     ) {
         // find index in self.builders
-        let idx = match self.builders.get_index_of(type_key) {
+        let idx = match self.builders.get_index_of(key) {
             Some(i) => i,
             None => {
                 self.multi.add(new_bar);
@@ -214,7 +332,7 @@ impl ProgressManager {
             let (k, _) = self.builders.get_index(i).unwrap();
             if let Some(map) = self.items.get(k) {
                 for (_id, it) in map.iter() {
-                    if !(it.type_key() == type_key && it.id() == id) {
+                    if !(k == key && it.id() == id) {
                         if let Some(pb) = it.get_bar() {
                             candidate = Some(pb);
                         }
