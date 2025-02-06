@@ -15,6 +15,7 @@ pub trait Local {
     fn blob_path(&self, blob_id: String) -> RepoPath;
     fn staging_path(&self) -> RepoPath;
     fn transfer_path(&self, transfer_id: u32) -> RepoPath;
+    fn log_path(&self) -> RepoPath;
 }
 
 pub trait Metadata {

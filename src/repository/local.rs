@@ -189,6 +189,17 @@ impl Local for LocalRepository {
     fn transfer_path(&self, transfer_id: u32) -> RepoPath {
         self.staging_path().join(format!("t{}", transfer_id))
     }
+
+    fn log_path(&self) -> RepoPath {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|x| x.as_millis() as i64)
+            .unwrap_or(0);
+
+        self.repository_path()
+            .join("logs")
+            .join(format!("run_{}.txt", timestamp))
+    }
 }
 
 impl Config for LocalRepository {
