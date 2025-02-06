@@ -6,13 +6,16 @@
 - edit & deletion
 - amazing user feedback
   - TODO
-    - adding: terminal audit logs + file audit logs
+    - terminal audit logs
   - good info/debug levels
   - dedicated system for user messages
     - mirrored into file? session.<>.txt
     - nice to look at: colour = log level
     - proper progress tracking as in rclone transfers
     - map out which messages are produced per command and their level
+- optimise numbers - automatically via gen.py script + trying all kind of variants.
+  - needs config reader
+- show total time at the end?
 - make all files read-only <- disable via --immutable
 - amber add breaks if blob exists but is not available locally [checker] 
 - cleanup table transfers in the DB
