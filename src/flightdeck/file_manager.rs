@@ -7,6 +7,8 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 pub struct FileManager {
     writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
     level_filter: log::LevelFilter,
+    current_batch_size: usize,
+    max_batch_size: usize,
 }
 
 impl FileManager {
@@ -17,6 +19,8 @@ impl FileManager {
         Self {
             writer,
             level_filter,
+            current_batch_size: 0,
+            max_batch_size: 1000,
         }
     }
 }
@@ -62,8 +66,12 @@ impl FileManager {
         if let Err(e) = self.writer.write_all(b"\n").await {
             log::error!("flightdeck error: unable to write logs: {}", e);
         }
-        if let Err(e) = self.writer.flush().await {
-            log::error!("flightdeck error: unable to flush logs: {}", e);
+        self.current_batch_size += 1;
+        if self.current_batch_size > self.max_batch_size {
+            self.current_batch_size = 0;
+            if let Err(e) = self.writer.flush().await {
+                log::error!("flightdeck error: unable to flush logs: {}", e);
+            }
         }
     }
 
