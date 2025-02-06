@@ -15,12 +15,12 @@ use log::error;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub async fn status(maybe_root: Option<PathBuf>, details: bool) -> Result<(), InternalError> {
+pub async fn status(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let log_path = local_repository.log_path().abs().into();
 
     let wrapped = async {
-        show_status(local_repository, details).await?;
+        show_status(local_repository).await?;
         Ok::<(), InternalError>(())
     };
 
@@ -32,6 +32,13 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .type_key("file")
         .limit(5)
         .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
+            let path = id.unwrap_or("<missing>".into());
+            match done {
+                true => format!("checked {}", path),
+                false => format!("checking {}", path),
+            }
+        })))
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg}".into(),
             done: "{prefix}{spinner:.green} {msg}".into(),
@@ -62,8 +69,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
 pub async fn show_status(
     local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
-    details: bool,
 ) -> Result<(), InternalError> {
+    let start_time = tokio::time::Instant::now();
     let mut checker_obs = Observer::new(BaseObservable::without_id("checker"));
 
     let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
@@ -76,28 +83,19 @@ pub async fn show_status(
 
         match file_result {
             Ok(file) => {
-                let _ = Observer::with_auto_termination(
-                    BaseObservable::with_id("file", file.path.clone()),
-                    log::Level::Info,
-                    BaseObservation::TerminalState("done".into()),
-                );
+                let mut obs = Observer::new(BaseObservable::with_id("file", file.path.clone()));
 
                 let state = file.state.unwrap_or(VirtualFileState::NeedsCheck);
                 *count.entry(state.clone()).or_insert(0) += 1;
-                if details {
-                    match state {
-                        VirtualFileState::New => {
-                            println!("new: {}", file.path);
-                        }
-                        VirtualFileState::Deleted => {
-                            println!("deleted: {}", file.path);
-                        }
-                        VirtualFileState::Dirty | VirtualFileState::NeedsCheck => {
-                            println!("BROKEN: {}", file.path);
-                        }
-                        VirtualFileState::Ok => {}
+                let (level, state) = match state {
+                    VirtualFileState::New => (log::Level::Info, "new"),
+                    VirtualFileState::Deleted => (log::Level::Warn, "deleted"),
+                    VirtualFileState::Dirty | VirtualFileState::NeedsCheck => {
+                        (log::Level::Error, "broken")
                     }
-                }
+                    VirtualFileState::Ok => (log::Level::Debug, "verified"),
+                };
+                obs.observe(level, BaseObservation::TerminalState(state.into()));
             }
             Err(e) => {
                 error!("error during traversal: {e}");
@@ -107,13 +105,13 @@ pub async fn show_status(
 
     handle.await??;
 
-    let final_msg = generate_final_message(&mut count);
+    let final_msg = generate_final_message(&mut count, start_time);
     checker_obs.observe(log::Level::Info, BaseObservation::TerminalState(final_msg));
 
     Ok(())
 }
 
-fn generate_final_message(count: &mut HashMap<VirtualFileState, i32>) -> String {
+fn generate_final_message(count: &mut HashMap<VirtualFileState, i32>, start_time: tokio::time::Instant) -> String {
     let new_count = *count.entry(VirtualFileState::New).or_default();
     let deleted_count = *count.entry(VirtualFileState::Deleted).or_default();
     let ok_count = *count.entry(VirtualFileState::Ok).or_default();
@@ -122,19 +120,20 @@ fn generate_final_message(count: &mut HashMap<VirtualFileState, i32>) -> String 
 
     let mut parts = Vec::new();
     if new_count > 0 {
-        parts.push(format!("new: {}", new_count))
+        parts.push(format!("{} new files", new_count))
     }
     if deleted_count > 0 {
-        parts.push(format!("deleted: {}", deleted_count))
+        parts.push(format!("{} deleted files", deleted_count))
     }
     if ok_count > 0 {
-        parts.push(format!("ok: {}", ok_count))
+        parts.push(format!("{} verified files", ok_count))
     }
     if dirty_count + needs_check_count > 0 {
-        parts.push(format!("broken: {}", dirty_count + needs_check_count))
+        parts.push(format!("{} broken files", dirty_count + needs_check_count))
     }
     if !parts.is_empty() {
-        parts.join(" ")
+        let duration = start_time.elapsed();
+        format!("{} in {duration:.2?}", parts.join(" "))
     } else {
         "no files detected".into()
     }

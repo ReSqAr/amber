@@ -22,10 +22,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
     },
-    Status {
-        #[arg(long, default_value_t = false)]
-        details: bool,
-    },
+    Status {},
     Missing {
         #[arg(long, default_value_t = false)]
         files_only: bool,
@@ -88,8 +85,8 @@ pub async fn run() {
                 .await
                 .expect("Failed to add file");
         }
-        Commands::Status { details } => {
-            commands::status::status(cli.path, details)
+        Commands::Status {} => {
+            commands::status::status(cli.path)
                 .await
                 .expect("Failed to get status");
         }

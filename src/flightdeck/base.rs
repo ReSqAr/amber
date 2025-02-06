@@ -121,6 +121,7 @@ impl ProgressBarManager for PGPositionManager {
 
 type IdStateTransformerFn =
     Box<dyn Fn(bool, Option<String>, Option<String>) -> String + Sync + Send>;
+type IdTransformerFn = Box<dyn Fn(bool, Option<String>) -> String + Sync + Send>;
 type StateTransformerFn = Box<dyn Fn(bool, Option<String>) -> String + Sync + Send>;
 
 struct PGMessageManager {
@@ -307,6 +308,7 @@ pub enum StateTransformer {
     Static { msg: String, done: String },
     StateFn(StateTransformerFn),
     IdStateFn(IdStateTransformerFn),
+    IdFn(IdTransformerFn),
 }
 
 impl StateTransformer {
@@ -323,6 +325,7 @@ impl StateTransformer {
             }),
             StateTransformer::StateFn(f) => Box::new(move |done, _, s| f(done, s)),
             StateTransformer::IdStateFn(f) => f,
+            StateTransformer::IdFn(f) => Box::new(move |done, id, _| f(done, id)),
         }
     }
 }

@@ -43,7 +43,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdStateFn(Box::new(move |done, id, _| {
             let id = id.unwrap_or("<missing>".into());
-            let path = id.strip_prefix(root.as_str()).unwrap_or(root.as_str());
+            let path = id.strip_prefix(root.as_str()).unwrap_or(id.as_str());
             match done {
                 true => format!("hashed {}", path),
                 false => format!("hashing {}", path),
