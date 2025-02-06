@@ -1,6 +1,6 @@
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
-use crate::flightdeck::Manager;
+use crate::flightdeck::{base, Manager};
 use indexmap::map::Entry;
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ enum Key {
 
 enum Builder {
     Body(Box<dyn LayoutItemBuilder>),
-    Footer,
+    Footer { depth: usize },
 }
 
 enum Item {
@@ -101,14 +101,16 @@ impl From<Box<dyn LayoutItemBuilder>> for LayoutItemBuilderNode {
 }
 
 struct FooterLayoutItem {
+    depth: usize,
     visible_count: u64,
     total_count: u64,
     pb: Option<indicatif::ProgressBar>,
 }
 
 impl FooterLayoutItem {
-    fn new(visible_count: u64, total_count: u64) -> Self {
+    fn new(depth: usize, visible_count: u64, total_count: u64) -> Self {
         Self {
+            depth,
             visible_count,
             total_count,
             pb: None,
@@ -126,8 +128,9 @@ impl FooterLayoutItem {
 
     fn set_bar(&mut self, bar: indicatif::ProgressBar) {
         bar.set_style(
-            indicatif::ProgressStyle::with_template("omitting {pos} out of {len} rows").unwrap(),
+            indicatif::ProgressStyle::with_template("{prefix}{pos} out of {len} hidden").unwrap(),
         );
+        bar.set_prefix(base::prefix_from_depth(self.depth));
         self.update_bar(&bar);
         self.pb = Some(bar);
     }
@@ -178,7 +181,7 @@ impl ProgressManager {
 
             let key = Key::Footer(type_key.clone());
             if !map.contains_key(&key) {
-                map.insert(key.clone(), Builder::Footer);
+                map.insert(key.clone(), Builder::Footer { depth });
                 items.insert(key, IndexMap::new());
             }
 
@@ -208,7 +211,7 @@ impl ProgressManager {
         let builder = match self.builders.get(&key) {
             None => return,
             Some(Builder::Body(b)) => b,
-            Some(Builder::Footer) => return,
+            Some(Builder::Footer { .. }) => return,
         };
         let items_map = self.items.entry(key.clone()).or_default();
         let id = obs.id.clone();
@@ -264,7 +267,7 @@ impl ProgressManager {
                     item.set_bar(bar.clone());
                     let id = item.id().clone();
                     self.attach_to_multi_progress(&key, id, bar.clone());
-                    break; // attach only for one new item
+                    break; // attach only one new item
                 }
             }
         }
@@ -299,7 +302,14 @@ impl ProgressManager {
                 }
             }
             Entry::Vacant(vac) => {
-                let mut item = FooterLayoutItem::new(visible_count as u64, total_count as u64);
+                let depth = match self.builders.get(&key) {
+                    None => return,
+                    Some(Builder::Body(_)) => return,
+                    Some(Builder::Footer { depth }) => depth,
+                };
+
+                let mut item =
+                    FooterLayoutItem::new(*depth, visible_count as u64, total_count as u64);
                 let bar = indicatif::ProgressBar::hidden();
                 item.set_bar(bar.clone());
                 let _ = vac.insert(Item::Footer(item));

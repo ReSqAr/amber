@@ -240,6 +240,10 @@ impl BaseLayoutItem {
     }
 }
 
+pub(crate) fn prefix_from_depth(depth: usize) -> String {
+    " ".repeat(2 * depth)
+}
+
 impl BaseLayoutItem {
     fn update_progress_bar(&mut self, pb: &ProgressBar) {
         for manager in &mut self.managers {
@@ -272,7 +276,7 @@ impl LayoutItem for BaseLayoutItem {
     }
 
     fn set_bar(&mut self, pb: ProgressBar) {
-        pb.set_prefix(" ".repeat(2 * self.depth));
+        pb.set_prefix(prefix_from_depth(self.depth));
         self.update_progress_bar(&pb);
         self.pb = Some(pb);
     }
