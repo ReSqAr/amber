@@ -150,12 +150,10 @@ impl FooterLayoutItem {
 impl ProgressManager {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
-    pub(crate) fn new<I>(root_builders: I) -> Self
+    pub(crate) fn new<I>(multi: indicatif::MultiProgress, root_builders: I) -> Self
     where
         I: IntoIterator<Item = LayoutItemBuilderNode>,
     {
-        let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(10);
-        let multi = indicatif::MultiProgress::with_draw_target(draw_target);
         let mut builders = IndexMap::new();
         let mut items = HashMap::new();
 

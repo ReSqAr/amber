@@ -31,13 +31,7 @@ pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), Inter
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(
-        wrapped,
-        root_builders(&root_path),
-        log_path,
-        log::LevelFilter::Info,
-    )
-    .await
+    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, None).await
 }
 
 fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {

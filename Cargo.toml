@@ -12,6 +12,7 @@ base64 = "0.22.1"
 chrono = { version = "0.4", features = ["serde"] }
 cipher = "0.4.4"
 clap = { version = "4.5", features = ["derive", "color", "suggestions"] }
+colored = "3.0.0"
 ctr = "0.9.2"
 derive_builder = "0.20.2"
 env_logger = "0.11"
@@ -33,7 +34,6 @@ serde_json = "1.0.135"
 sha2 = { version = "0.10", features = ["asm"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono"] }
 thiserror = "2.0"
-time = "0.3.37"
 tokio = { version = "1.43", features = ["full"] }
 tokio-stream = "0.1.17"
 tonic = "0.12"

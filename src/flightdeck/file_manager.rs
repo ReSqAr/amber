@@ -10,7 +10,7 @@ pub struct FileManager {
 }
 
 impl FileManager {
-    pub fn new(
+    pub(crate) fn new(
         writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
         level_filter: log::LevelFilter,
     ) -> Self {

@@ -24,7 +24,7 @@ pub async fn status(maybe_root: Option<PathBuf>, details: bool) -> Result<(), In
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, log::LevelFilter::Info).await
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
