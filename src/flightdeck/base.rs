@@ -319,8 +319,7 @@ impl StateTransformer {
             StateTransformer::Identity => Box::new(|done, _, s| match (done, s) {
                 (true, None) => "done".to_string(),
                 (false, None) => "in progress".to_string(),
-                (true, Some(s)) => s,
-                (false, Some(s)) => s,
+                (_, Some(s)) => s,
             }),
             StateTransformer::StateFn(f) => Box::new(move |done, _, s| f(done, s)),
             StateTransformer::IdStateFn(f) => f,
@@ -328,10 +327,17 @@ impl StateTransformer {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Style {
     Default,
-    Style(ProgressStyle),
-    Template { in_progress: String, done: String },
+    Raw {
+        in_progress: ProgressStyle,
+        done: ProgressStyle,
+    },
+    Template {
+        in_progress: String,
+        done: String,
+    },
 }
 
 impl From<Style> for PGStyle {
@@ -342,12 +348,9 @@ impl From<Style> for PGStyle {
                     "{prefix}{spinner:.green} {msg} [{bar:20.cyan/blue}]",
                 )
                 .unwrap(),
-                done: ProgressStyle::with_template("{prefix}  {msg} [{bar:20.cyan/blue}]").unwrap(),
+                done: ProgressStyle::with_template("{prefix} {msg} [{bar:20.cyan/blue}]").unwrap(),
             },
-            Style::Style(style) => PGStyle {
-                in_progress: style.clone(),
-                done: style,
-            },
+            Style::Raw { in_progress, done } => PGStyle { in_progress, done },
             Style::Template { in_progress, done } => PGStyle {
                 in_progress: ProgressStyle::with_template(in_progress.as_str()).unwrap(),
                 done: ProgressStyle::with_template(done.as_str()).unwrap(),
