@@ -111,7 +111,10 @@ pub async fn show_status(
     Ok(())
 }
 
-fn generate_final_message(count: &mut HashMap<VirtualFileState, i32>, start_time: tokio::time::Instant) -> String {
+fn generate_final_message(
+    count: &mut HashMap<VirtualFileState, i32>,
+    start_time: tokio::time::Instant,
+) -> String {
     let new_count = *count.entry(VirtualFileState::New).or_default();
     let deleted_count = *count.entry(VirtualFileState::Deleted).or_default();
     let ok_count = *count.entry(VirtualFileState::Ok).or_default();
