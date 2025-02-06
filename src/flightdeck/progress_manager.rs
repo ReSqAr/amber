@@ -1,6 +1,6 @@
+use crate::flightdeck::base;
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
-use crate::flightdeck::{base, Manager};
 use indexmap::map::Entry;
 use indexmap::IndexMap;
 use std::collections::HashMap;
