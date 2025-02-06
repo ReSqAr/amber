@@ -4,6 +4,7 @@ use crate::flightdeck::observation::Observation;
 use indexmap::map::Entry;
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use tokio::task;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 enum Key {
@@ -55,13 +56,12 @@ pub struct ProgressManager {
     items: HashMap<Key, IndexMap<Option<String>, Item>>,
 }
 
-impl Manager for ProgressManager {
-    fn observe(&mut self, _: log::Level, obs: Observation) {
-        self.observe(obs)
-    }
-
-    fn finish(&self) {
-        self.multi.suspend(|| {})
+impl ProgressManager {
+    pub(crate) async fn finish(&self) {
+        let multi = self.multi.clone();
+        task::spawn_blocking(move || multi.suspend(|| {}))
+            .await
+            .expect("couldn't join finish");
     }
 }
 
@@ -204,7 +204,7 @@ impl ProgressManager {
     /// If the item is newly created, we check the visible limit.
     /// If update signals `FinishedRemove(pb)`, we remove it from the manager.
     /// If update signals `FinishedKeep`, we do nothing extra.
-    fn observe(&mut self, obs: Observation) {
+    pub(crate) async fn observe(&mut self, _: log::Level, obs: Observation) {
         let type_key = obs.type_key.clone();
         let key = Key::Body(type_key.clone());
         let id = obs.id.clone();
@@ -262,18 +262,18 @@ impl ProgressManager {
         };
 
         match action {
-            Action::SimpleRefresh => self.process_type_key(&type_key, visible_limit),
+            Action::SimpleRefresh => self.process_type_key(&type_key, visible_limit).await,
             Action::RemoveAndRefresh { pb } => {
                 let multi = self.multi.clone();
                 multi.remove(&pb);
-                self.process_type_key(&type_key, visible_limit);
+                self.process_type_key(&type_key, visible_limit).await;
             }
         }
     }
 
     /// If a new item was created, we check if we can attach a bar
     /// for items that lack one, up to the visible limit.
-    fn process_type_key(&mut self, type_key: &str, visible_limit: Option<usize>) {
+    async fn process_type_key(&mut self, type_key: &str, visible_limit: Option<usize>) {
         let key = Key::Body(type_key.to_string());
         let map = self.items.get_mut(&key).unwrap();
 
@@ -289,18 +289,18 @@ impl ProgressManager {
                     let bar = indicatif::ProgressBar::hidden();
                     item.set_bar(bar.clone());
                     let id = item.id().clone();
-                    self.attach_to_multi_progress(&key, id, bar.clone());
+                    self.attach_to_multi_progress(&key, id, bar.clone()).await;
                     break; // attach only one new item
                 }
             }
         }
 
         if let Some(limit) = visible_limit {
-            self.process_type_key_footer(type_key, limit);
+            self.process_type_key_footer(type_key, limit).await;
         }
     }
 
-    fn process_type_key_footer(&mut self, type_key: &str, limit: usize) {
+    async fn process_type_key_footer(&mut self, type_key: &str, limit: usize) {
         let key = Key::Body(type_key.to_string());
         let map = self.items.get_mut(&key).unwrap();
         let visible_count = map.values().filter(|i| i.get_bar().is_some()).count();
@@ -337,7 +337,7 @@ impl ProgressManager {
                     let bar = indicatif::ProgressBar::hidden();
                     item.set_bar(bar.clone());
                     let _ = vac.insert(Item::Footer(item));
-                    self.attach_to_multi_progress(&key, None, bar);
+                    self.attach_to_multi_progress(&key, None, bar).await;
                 }
             }
         }
@@ -346,7 +346,7 @@ impl ProgressManager {
     /// The insertion strategy: find the index of `type_key` in `builders`,
     /// gather the last visible bar among all type keys up to that index,
     /// and call `insert_after`; if none is found, just `add`.
-    fn attach_to_multi_progress(
+    async fn attach_to_multi_progress(
         &self,
         key: &Key,
         id: Option<String>,
@@ -381,6 +381,8 @@ impl ProgressManager {
         } else {
             self.multi.add(new_bar.clone());
         }
-        new_bar.tick();
+        task::spawn_blocking(move || {
+            new_bar.tick();
+        });
     }
 }
