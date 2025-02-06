@@ -60,6 +60,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
 
     let overall = BaseLayoutBuilderBuilder::default()
         .type_key("adder")
+        .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("done".into()),
@@ -89,6 +90,7 @@ pub async fn add_files(
         + 'static,
     dry_run: bool,
 ) -> Result<(), InternalError> {
+    let start_time = tokio::time::Instant::now();
     let mut adder_obs = Observer::new(BaseObservable::without_id("adder"));
 
     let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
@@ -118,6 +120,7 @@ pub async fn add_files(
         async move { state.unwrap_or(VirtualFileState::NeedsCheck) == VirtualFileState::New }
     });
 
+    let mut count = 0;
     {
         // scope to isolate the effects of the below wild channel cloning
         let blob_locks: BlobLockMap = Arc::new(async_lock::Mutex::new(HashMap::new()));
@@ -152,7 +155,6 @@ pub async fn add_files(
             repository.buffer_size(BufferType::AddFilesBlobifyFutureFileBuffer),
         );
 
-        let mut count = 0;
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
@@ -175,13 +177,6 @@ pub async fn add_files(
             }
         }
 
-        let msg = if count > 0 {
-            format!("added {count} files")
-        } else {
-            "no files added".into()
-        };
-        adder_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
-
         state_handle.await??;
     }
 
@@ -189,6 +184,14 @@ pub async fn add_files(
     drop(blob_tx);
     db_file_handle.await??;
     db_blob_handle.await??;
+
+    let duration = start_time.elapsed();
+    let msg = if count > 0 {
+        format!("added {count} files in {duration:.2?}")
+    } else {
+        "no files added".into()
+    };
+    adder_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
 
     Ok(())
 }

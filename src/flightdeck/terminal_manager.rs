@@ -49,7 +49,7 @@ impl TerminalManager {
 
         let msg = match obs.id {
             None => msg,
-            Some(id) => format!("{} {msg}", id.bold()).normal(),
+            Some(id) => format!("{msg} {}", id.bold()).normal(),
         };
 
         let multi = self.multi.clone();

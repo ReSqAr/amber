@@ -42,6 +42,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     let overall = BaseLayoutBuilderBuilder::default()
         .type_key("checker")
+        .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("done".into()),
