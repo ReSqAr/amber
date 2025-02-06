@@ -16,7 +16,7 @@ use amber::flightdeck::progress_manager::LayoutItemBuilderNode;
 use async_lock::Mutex;
 use futures::pin_mut;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
@@ -36,7 +36,7 @@ pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), Inter
     .await
 }
 
-fn root_builders(root_path: &PathBuf) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     let root = root_path.display().to_string() + "/";
 
     let file = BaseLayoutBuilderBuilder::default()
