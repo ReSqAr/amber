@@ -1,5 +1,5 @@
-use amber::flightdeck::base::{BaseObservable, BaseObservation};
-use amber::flightdeck::observer::Observer;
+use crate::flightdeck::base::{BaseObservable, BaseObservation};
+use crate::flightdeck::observer::Observer;
 use sha2::{Digest, Sha256};
 use std::io;
 use std::path::Path;
