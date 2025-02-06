@@ -118,18 +118,17 @@ impl FooterLayoutItem {
     }
 
     fn update_bar(&self, bar: &indicatif::ProgressBar) {
-        bar.set_position(if self.visible_count < self.total_count {
+        let hidden_count = if self.visible_count < self.total_count {
             self.total_count - self.visible_count
         } else {
             0
-        });
-        bar.set_length(self.total_count);
+        };
+        let msg = format!("[{} hidden]", hidden_count);
+        bar.set_message(msg);
     }
 
     fn set_bar(&mut self, bar: indicatif::ProgressBar) {
-        bar.set_style(
-            indicatif::ProgressStyle::with_template("{prefix}{pos} out of {len} hidden").unwrap(),
-        );
+        bar.set_style(indicatif::ProgressStyle::with_template("{prefix}{msg}").unwrap());
         bar.set_prefix(base::prefix_from_depth(self.depth));
         self.update_bar(&bar);
         self.pb = Some(bar);
@@ -155,7 +154,7 @@ impl ProgressManager {
     where
         I: IntoIterator<Item = LayoutItemBuilderNode>,
     {
-        let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(4);
+        let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(10);
         let multi = indicatif::MultiProgress::with_draw_target(draw_target);
         let mut builders = IndexMap::new();
         let mut items = HashMap::new();
@@ -208,42 +207,66 @@ impl ProgressManager {
     fn observe(&mut self, obs: Observation) {
         let type_key = obs.type_key.clone();
         let key = Key::Body(type_key.clone());
-        let builder = match self.builders.get(&key) {
-            None => return,
-            Some(Builder::Body(b)) => b,
-            Some(Builder::Footer { .. }) => return,
-        };
-        let items_map = self.items.entry(key.clone()).or_default();
         let id = obs.id.clone();
 
-        match items_map.entry(id.clone()) {
+        enum Action {
+            SimpleRefresh,
+            RemoveAndRefresh { pb: indicatif::ProgressBar },
+        }
+
+        // manage LayoutItem lifecycle
+        let items_map = self.items.entry(key.clone()).or_default();
+        let action: Action = match items_map.entry(id.clone()) {
             Entry::Occupied(mut entry) => {
-                // Item exists
                 if let Item::Body(item) = entry.get_mut() {
                     let action = item.update(&obs);
                     match action {
                         UpdateAction::FinishedRemove => {
-                            let pb = item.get_bar();
-                            if let Some(pb) = pb {
-                                self.multi.remove(pb);
-                            }
+                            let pb = item.get_bar().cloned();
                             let map = self.items.get_mut(&key).unwrap();
                             map.shift_remove(&id); // maybe this is slow!?
 
-                            // Freed a slot => unhide if possible
-                            self.process_type_key(&type_key, builder.visible_limit());
+                            if let Some(pb) = pb {
+                                Action::RemoveAndRefresh { pb }
+                            } else {
+                                Action::SimpleRefresh
+                            }
                         }
-                        UpdateAction::FinishedKeep => { /* keep the item & bar */ }
-                        UpdateAction::Continue => { /* do nothing */ }
+                        UpdateAction::FinishedKeep => Action::SimpleRefresh,
+                        UpdateAction::Continue => Action::SimpleRefresh,
                     }
+                } else {
+                    Action::SimpleRefresh
                 }
             }
             Entry::Vacant(vac) => {
-                // Create new item
+                let builder = match self.builders.get(&key) {
+                    None => return,
+                    Some(Builder::Body(b)) => b,
+                    Some(Builder::Footer { .. }) => return,
+                };
                 let new_item = builder.build_item(&obs);
                 let _ = vac.insert(Item::Body(new_item));
-                // Possibly attach bar if there's room
-                self.process_type_key(&type_key, builder.visible_limit());
+                Action::SimpleRefresh
+            }
+        };
+
+        // manage progress bar lifecycle
+        let visible_limit = {
+            let builder = match self.builders.get(&key) {
+                None => return,
+                Some(Builder::Body(b)) => b,
+                Some(Builder::Footer { .. }) => return,
+            };
+            builder.visible_limit()
+        };
+
+        match action {
+            Action::SimpleRefresh => self.process_type_key(&type_key, visible_limit),
+            Action::RemoveAndRefresh { pb } => {
+                let multi = self.multi.clone();
+                multi.remove(&pb);
+                self.process_type_key(&type_key, visible_limit);
             }
         }
     }
@@ -331,7 +354,8 @@ impl ProgressManager {
         let idx = match self.builders.get_index_of(key) {
             Some(i) => i,
             None => {
-                self.multi.add(new_bar);
+                self.multi.add(new_bar.clone());
+                new_bar.tick();
                 return;
             }
         };
@@ -351,9 +375,10 @@ impl ProgressManager {
             }
         }
         if let Some(existing) = candidate {
-            self.multi.insert_after(existing, new_bar);
+            self.multi.insert_after(existing, new_bar.clone());
         } else {
-            self.multi.add(new_bar);
+            self.multi.add(new_bar.clone());
         }
+        new_bar.tick();
     }
 }
