@@ -16,15 +16,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub async fn status(maybe_root: Option<PathBuf>, details: bool) -> Result<(), InternalError> {
-    flightdeck::flightdeck(
-        async {
-            let local_repository = LocalRepository::new(maybe_root).await?;
-            show_status(local_repository, details).await?;
-            Ok::<(), InternalError>(())
-        },
-        root_builders(),
-    )
-    .await
+    let local_repository = LocalRepository::new(maybe_root).await?;
+    let log_path = local_repository.log_path().abs().into();
+
+    let wrapped = async {
+        show_status(local_repository, details).await?;
+        Ok::<(), InternalError>(())
+    };
+
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, log::LevelFilter::Info).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

@@ -1,4 +1,11 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
+use crate::flightdeck;
+use crate::flightdeck::base::{
+    BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, Style,
+    TerminationAction,
+};
+use crate::flightdeck::observer::Observer;
+use crate::flightdeck::progress_manager::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::{blobify, state};
@@ -6,14 +13,6 @@ use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, Virt
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
-use amber::flightdeck;
-use amber::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, Style,
-    TerminationAction,
-};
-use amber::flightdeck::observer::Observer;
-use amber::flightdeck::progress_manager::LayoutItemBuilderNode;
-use async_lock::Mutex;
 use futures::pin_mut;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,13 +24,18 @@ use tokio_stream::wrappers::ReceiverStream;
 pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let root_path = local_repository.root().abs().clone();
+    let log_path = local_repository.log_path().abs().into();
+
+    let wrapped = async {
+        add_files(local_repository, dry_run).await?;
+        Ok::<(), InternalError>(())
+    };
 
     flightdeck::flightdeck(
-        async {
-            add_files(local_repository, dry_run).await?;
-            Ok::<(), InternalError>(())
-        },
+        wrapped,
         root_builders(&root_path),
+        log_path,
+        log::LevelFilter::Info,
     )
     .await
 }
@@ -122,7 +126,7 @@ pub async fn add_files(
 
     {
         // scope to isolate the effects of the below wild channel cloning
-        let blob_locks: BlobLockMap = Arc::new(Mutex::new(HashMap::new()));
+        let blob_locks: BlobLockMap = Arc::new(async_lock::Mutex::new(HashMap::new()));
         let file_tx_clone = file_tx.clone();
         let blob_tx_clone = blob_tx.clone();
         let stream = tokio_stream::StreamExt::map(
