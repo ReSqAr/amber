@@ -10,11 +10,8 @@ pub(crate) async fn compute_sha256_and_size(
     file_path: impl AsRef<Path> + Clone,
 ) -> io::Result<(String, u64)> {
     let mut obs = Observer::with_auto_termination(
-        BaseObservable::with_id(
-            "sha".into(),
-            file_path.clone().as_ref().display().to_string(),
-        ),
-        log::Level::Info,
+        BaseObservable::with_id("sha", file_path.clone().as_ref().display().to_string()),
+        log::Level::Trace,
         BaseObservation::TerminalState("done".into()),
     );
 

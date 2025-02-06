@@ -95,7 +95,7 @@ pub async fn add_files(
         + 'static,
     dry_run: bool,
 ) -> Result<(), InternalError> {
-    let mut adder_obs = Observer::new(BaseObservable::without_id("adder".into()));
+    let mut adder_obs = Observer::new(BaseObservable::without_id("adder"));
 
     let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
     let db_file_handle = {
@@ -162,7 +162,16 @@ pub async fn add_files(
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
-                Ok(_path) => {
+                Ok(path) => {
+                    Observer::new(BaseObservable::with_id(
+                        "add",
+                        path.rel().display().to_string(),
+                    ))
+                    .observe(
+                        log::Level::Info,
+                        BaseObservation::TerminalState("added".into()),
+                    );
+
                     count += 1;
                     adder_obs.observe(log::Level::Trace, BaseObservation::Position(count));
                 }

@@ -22,18 +22,18 @@ pub struct BaseObservable {
 }
 
 impl BaseObservable {
-    pub fn without_id(type_key: String) -> Self {
+    pub fn without_id(type_key: impl Into<String>) -> Self {
         Self {
-            type_key,
+            type_key: type_key.into(),
             id: None,
             is_terminal: false,
         }
     }
 
-    pub fn with_id(type_key: String, id: String) -> Self {
+    pub fn with_id(type_key: impl Into<String>, id: impl Into<String>) -> Self {
         Self {
-            type_key,
-            id: Some(id),
+            type_key: type_key.into(),
+            id: Some(id.into()),
             is_terminal: false,
         }
     }

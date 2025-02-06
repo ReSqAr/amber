@@ -63,7 +63,7 @@ pub async fn show_status(
     local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
     details: bool,
 ) -> Result<(), InternalError> {
-    let mut checker_obs = Observer::new(BaseObservable::without_id("checker".into()));
+    let mut checker_obs = Observer::new(BaseObservable::without_id("checker"));
 
     let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
     let mut count = HashMap::new();
@@ -76,7 +76,7 @@ pub async fn show_status(
         match file_result {
             Ok(file) => {
                 let _ = Observer::with_auto_termination(
-                    BaseObservable::with_id("file".into(), file.path.clone()),
+                    BaseObservable::with_id("file", file.path.clone()),
                     log::Level::Info,
                     BaseObservation::TerminalState("done".into()),
                 );

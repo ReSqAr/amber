@@ -23,7 +23,7 @@ impl FileManager {
 
 impl FileManager {
     pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
-        if level >= self.level_filter {
+        if level > self.level_filter {
             return;
         }
 
