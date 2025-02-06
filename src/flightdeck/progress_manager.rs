@@ -325,18 +325,20 @@ impl ProgressManager {
                 }
             }
             Entry::Vacant(vac) => {
-                let depth = match self.builders.get(&key) {
-                    None => return,
-                    Some(Builder::Body(_)) => return,
-                    Some(Builder::Footer { depth }) => depth,
-                };
+                if footer_required {
+                    let depth = match self.builders.get(&key) {
+                        None => return,
+                        Some(Builder::Body(_)) => return,
+                        Some(Builder::Footer { depth }) => depth,
+                    };
 
-                let mut item =
-                    FooterLayoutItem::new(*depth, visible_count as u64, total_count as u64);
-                let bar = indicatif::ProgressBar::hidden();
-                item.set_bar(bar.clone());
-                let _ = vac.insert(Item::Footer(item));
-                self.attach_to_multi_progress(&key, None, bar);
+                    let mut item =
+                        FooterLayoutItem::new(*depth, visible_count as u64, total_count as u64);
+                    let bar = indicatif::ProgressBar::hidden();
+                    item.set_bar(bar.clone());
+                    let _ = vac.insert(Item::Footer(item));
+                    self.attach_to_multi_progress(&key, None, bar);
+                }
             }
         }
     }
