@@ -28,10 +28,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
-    Missing {
-        #[arg(long, default_value_t = false)]
-        files_only: bool,
-    },
+    Missing {},
     #[command(hide = true)]
     Serve {},
     Sync {
@@ -95,8 +92,8 @@ pub async fn run() {
                 .await
                 .expect("Failed to get status");
         }
-        Commands::Missing { files_only } => {
-            commands::missing::missing(cli.path, files_only)
+        Commands::Missing {} => {
+            commands::missing::missing(cli.path)
                 .await
                 .expect("Failed to get missing");
         }

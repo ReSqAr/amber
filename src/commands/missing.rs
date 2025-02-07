@@ -1,38 +1,78 @@
+use crate::db::models::BlobWithPaths;
+use crate::flightdeck;
+use crate::flightdeck::base::BaseObservation;
+use crate::flightdeck::base::{
+    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
+};
+use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::traits::Missing;
+use crate::repository::traits::{Local, Missing};
 use crate::utils::errors::InternalError;
 use log::error;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-pub async fn missing(maybe_root: Option<PathBuf>, files_only: bool) -> Result<(), InternalError> {
+pub async fn missing(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
+    let log_path = local_repository.log_path().abs().clone();
 
-    list_missing_blobs(local_repository, files_only).await
+    let wrapped = async {
+        list_missing_blobs(local_repository).await?;
+        Ok::<(), InternalError>(())
+    };
+
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None).await
 }
 
-pub async fn list_missing_blobs(
-    repository: impl Missing,
-    files_only: bool,
-) -> Result<(), InternalError> {
+fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+    let missing = BaseLayoutBuilderBuilder::default()
+        .type_key("missing")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                true => msg.unwrap_or("done".into()),
+                false => msg.unwrap_or("searching".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    [LayoutItemBuilderNode::from(missing)]
+}
+
+pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), InternalError> {
+    let start_time = tokio::time::Instant::now();
+    let mut missing_obs = BaseObserver::without_id("missing");
+
     let mut missing_blobs = repository.missing();
 
     let mut count_files = 0usize;
     let mut count_blobs = 0usize;
     while let Some(blob_result) = missing_blobs.next().await {
         match blob_result {
-            Ok(blob) => {
-                count_files += blob.paths.len();
+            Ok(BlobWithPaths { paths, blob_id }) => {
+                count_files += paths.len();
                 count_blobs += 1;
+                missing_obs.observe(
+                    log::Level::Trace,
+                    BaseObservation::Position(count_blobs as u64),
+                );
 
-                if files_only {
-                    for path in blob.paths {
-                        println!("{}", path);
-                    }
-                } else {
-                    for path in blob.paths {
-                        println!("{} {}", blob.blob_id, path);
-                    }
+                for path in paths {
+                    let mut file_obs = BaseObserver::with_id("file", path);
+                    file_obs.observe(
+                        log::Level::Info,
+                        BaseObservation::TerminalStateWithData {
+                            state: "missing".into(),
+                            data: HashMap::from([("blob_id".into(), blob_id.clone())]),
+                        },
+                    );
                 }
             }
             Err(e) => {
@@ -41,10 +81,20 @@ pub async fn list_missing_blobs(
         }
     }
 
-    println!(
-        "missing files: {} missing blobs: {}",
-        count_files, count_blobs
-    );
+    let final_msg = generate_final_message(count_files, count_blobs, start_time);
+    missing_obs.observe(log::Level::Info, BaseObservation::TerminalState(final_msg));
 
     Ok(())
+}
+
+fn generate_final_message(count_files: usize, count_blobs: usize, start_time: Instant) -> String {
+    if count_files > 0 {
+        let duration = start_time.elapsed();
+
+        format!(
+            "detected {count_files} missing files and {count_blobs} missing blobs in {duration:.2?}"
+        )
+    } else {
+        "no files missing".into()
+    }
 }

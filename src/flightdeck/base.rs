@@ -4,12 +4,17 @@ use crate::flightdeck::observer::{Observable, Observer};
 use chrono::Utc;
 use derive_builder::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub enum BaseObservation {
     State(String),
     TerminalState(String),
+    TerminalStateWithData {
+        state: String,
+        data: HashMap<String, String>,
+    },
     Position(u64),
     Length(u64),
 }
@@ -52,6 +57,19 @@ impl Observable for BaseObservable {
                 key: "state".into(),
                 value: s.into(),
             }],
+            Some(BaseObservation::TerminalStateWithData { state, data }) => {
+                let mut d = vec![Data {
+                    key: "state".into(),
+                    value: state.into(),
+                }];
+                for (key, value) in data {
+                    d.push(Data {
+                        key,
+                        value: value.into(),
+                    })
+                }
+                d
+            }
             Some(BaseObservation::Position(p)) => vec![Data {
                 key: "position".into(),
                 value: p.into(),
@@ -66,6 +84,7 @@ impl Observable for BaseObservable {
             None => false,
             Some(BaseObservation::State(_)) => false,
             Some(BaseObservation::TerminalState(_)) => true,
+            Some(BaseObservation::TerminalStateWithData { .. }) => true,
             Some(BaseObservation::Position(_)) => false,
             Some(BaseObservation::Length(_)) => false,
         };
