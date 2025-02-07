@@ -1,19 +1,18 @@
+use crate::flightdeck;
+use crate::flightdeck::base::{
+    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer,
+    Style, TerminationAction,
+};
+use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
-use amber::flightdeck;
-use amber::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, Style,
-    TerminationAction,
-};
-use amber::flightdeck::observer::Observer;
-use amber::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use std::path::PathBuf;
 
 pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
-        let mut init_obs = Observer::new(BaseObservable::without_id("init"));
+        let mut init_obs = BaseObserver::without_id("init");
 
         let local = LocalRepository::create(maybe_root).await?;
 

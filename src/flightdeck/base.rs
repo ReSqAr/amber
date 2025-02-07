@@ -1,6 +1,6 @@
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::{Data, Observation, Value};
-use crate::flightdeck::observer::Observable;
+use crate::flightdeck::observer::{Observable, Observer};
 use chrono::Utc;
 use derive_builder::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -80,6 +80,18 @@ impl Observable for BaseObservable {
     }
     fn is_in_terminal_state(&self) -> bool {
         self.is_terminal
+    }
+}
+
+pub type BaseObserver = Observer<BaseObservable>;
+
+impl Observer<BaseObservable> {
+    pub fn without_id(type_key: impl Into<String>) -> Self {
+        Self::new(BaseObservable::without_id(type_key))
+    }
+
+    pub fn with_id(type_key: impl Into<String>, id: impl Into<String>) -> Self {
+        Self::new(BaseObservable::with_id(type_key, id))
     }
 }
 

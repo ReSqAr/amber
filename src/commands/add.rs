@@ -1,10 +1,9 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, Style,
-    TerminationAction,
+    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer,
+    Style, TerminationAction,
 };
-use crate::flightdeck::observer::Observer;
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
@@ -65,7 +64,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .infallible_build()
         .boxed();
 
-    let overall = BaseLayoutBuilderBuilder::default()
+    let adder = BaseLayoutBuilderBuilder::default()
         .type_key("adder")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
@@ -81,7 +80,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(overall).add_child(file)]
+    [LayoutItemBuilderNode::from(adder).add_child(file)]
 }
 
 pub async fn add_files(
@@ -97,7 +96,7 @@ pub async fn add_files(
     dry_run: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
-    let mut adder_obs = Observer::new(BaseObservable::without_id("adder"));
+    let mut adder_obs = BaseObserver::without_id("adder");
 
     let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
     let db_file_handle = {
@@ -165,11 +164,7 @@ pub async fn add_files(
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
                 Ok(path) => {
-                    Observer::new(BaseObservable::with_id(
-                        "add",
-                        path.rel().display().to_string(),
-                    ))
-                    .observe(
+                    BaseObserver::with_id("add", path.rel().display().to_string()).observe(
                         log::Level::Info,
                         BaseObservation::TerminalState("added".into()),
                     );

@@ -1,9 +1,8 @@
 use crate::db::models::VirtualFileState;
 use crate::flightdeck;
-use crate::flightdeck::base::{BaseLayoutBuilderBuilder, TerminationAction};
-use crate::flightdeck::base::{BaseObservable, BaseObservation};
+use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
+use crate::flightdeck::base::BaseObservation;
 use crate::flightdeck::base::{StateTransformer, Style};
-use crate::flightdeck::observer::Observer;
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
@@ -50,8 +49,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let overall = BaseLayoutBuilderBuilder::default()
-        .type_key("checker")
+    let status = BaseLayoutBuilderBuilder::default()
+        .type_key("status")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
@@ -66,14 +65,14 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(overall).add_child(file)]
+    [LayoutItemBuilderNode::from(status).add_child(file)]
 }
 
 pub async fn show_status(
     local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
-    let mut checker_obs = Observer::new(BaseObservable::without_id("checker"));
+    let mut checker_obs = BaseObserver::without_id("status");
 
     let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
     let mut count = HashMap::new();
@@ -85,7 +84,7 @@ pub async fn show_status(
 
         match file_result {
             Ok(file) => {
-                let mut obs = Observer::new(BaseObservable::with_id("file", file.path.clone()));
+                let mut obs = BaseObserver::with_id("file", file.path.clone());
 
                 let state = file.state.unwrap_or(VirtualFileState::NeedsCheck);
                 *count.entry(state.clone()).or_insert(0) += 1;
