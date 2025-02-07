@@ -21,10 +21,14 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool, verbose:bool) -> Result<(), InternalError> {
+pub async fn add(
+    maybe_root: Option<PathBuf>,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let root_path = local_repository.root().abs().clone();
-    let log_path = local_repository.log_path().abs().into();
+    let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
         add_files(local_repository, dry_run).await?;
@@ -72,7 +76,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         )))
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
-            done: "{prefix}✓ {msg} ({elapsed})".into(),
+            done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
         .boxed();

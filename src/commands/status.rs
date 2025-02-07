@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 pub async fn status(maybe_root: Option<PathBuf>, verbose: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
-    let log_path = local_repository.log_path().abs().into();
+    let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
         show_status(local_repository).await?;

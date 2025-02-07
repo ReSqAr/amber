@@ -47,7 +47,7 @@ pub struct FlightDeck {
 pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     wrapped: impl std::future::Future<Output = Result<(), E>> + Sized,
     root_builders: impl IntoIterator<Item = LayoutItemBuilderNode> + Sized + Send + Sync + 'static,
-    path: PathBuf,
+    path: impl Into<Option<PathBuf>>,
     file_level_filter: Option<log::LevelFilter>,
     terminal_level_filter: Option<log::LevelFilter>,
 ) -> Result<(), E> {
@@ -56,17 +56,24 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(10);
     let multi = indicatif::MultiProgress::with_draw_target(draw_target);
 
+    let path = path.into();
     let join_handle = tokio::spawn(async move {
-        FlightDeck::new()
-            .with_progress(multi.clone(), root_builders)
-            .with_terminal(
-                multi.clone(),
-                terminal_level_filter.unwrap_or(log::LevelFilter::Info),
-            )
-            .with_file(path, file_level_filter.unwrap_or(log::LevelFilter::Debug))
-            .await
-            .run(notify)
-            .await;
+        let flightdeck = FlightDeck::new();
+        let flightdeck = flightdeck.with_progress(multi.clone(), root_builders);
+        let flightdeck = flightdeck.with_terminal(
+            multi.clone(),
+            terminal_level_filter.unwrap_or(log::LevelFilter::Info),
+        );
+        let mut flightdeck = match path {
+            None => flightdeck,
+            Some(path) => {
+                flightdeck
+                    .with_file(path, file_level_filter.unwrap_or(log::LevelFilter::Debug))
+                    .await
+            }
+        };
+
+        flightdeck.run(notify).await;
     });
 
     wrapped.await?;
