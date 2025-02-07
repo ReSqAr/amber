@@ -71,9 +71,6 @@ impl FilePipe {
         if let Err(e) = self.writer.write_all(data.as_bytes()).await {
             log::error!("flightdeck error: unable to write logs: {}", e);
         }
-        if let Err(e) = self.writer.write_all(b"\n").await {
-            log::error!("flightdeck error: unable to write logs: {}", e);
-        }
         if let Err(e) = self.writer.flush().await {
             log::error!("flightdeck error: unable to flush logs: {}", e);
         }
