@@ -141,7 +141,7 @@ impl FlightDeck {
             tokio::select! {
                 _ = shutdown.recv() => {
                     while let Ok(Message { level, observation }) = rx_guard.try_recv() {
-                        self.manager.observe(level, observation.clone());
+                        self.manager.observe(level, observation.clone()).await;
                     }
 
                     self.manager.finish().await;
@@ -150,7 +150,7 @@ impl FlightDeck {
 
                 msg = rx_guard.recv() => {
                     if let Some(Message { level, observation }) = msg {
-                        self.manager.observe(level, observation.clone());
+                        self.manager.observe(level, observation.clone()).await;
                     } else {
                         self.manager.finish().await;
                         break;
