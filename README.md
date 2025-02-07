@@ -13,8 +13,8 @@
     - status [done]
     - add [done]
     - missing [done]
-    - remote list
-    - remote add
+    - remote list [done]
+    - remote add [done]
     - sync     
     - pull     
     - push     
