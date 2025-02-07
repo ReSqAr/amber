@@ -31,7 +31,7 @@ impl Pipes {
 
         let needs_flush = self
             .last_flush
-            .is_some_and(|t| t.elapsed() >= MAX_FLUSH_INTERVAL);
+            .is_none_or(|t| t.elapsed() >= MAX_FLUSH_INTERVAL);
         if needs_flush {
             self.flush().await;
         }
