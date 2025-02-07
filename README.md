@@ -8,6 +8,16 @@
   - dedicated system for user messages
     - map out which messages are produced per command and their level
     - show total time at the end as part of final user message
+  - commands:
+    - init [done]
+    - status [done]
+    - add [done]
+    - missing
+    - remote list
+    - remote add
+    - sync     
+    - pull     
+    - push     
 - optimise numbers - automatically via gen.py script + trying all kind of variants.
   - needs config reader
 - make all files read-only <- disable via --immutable

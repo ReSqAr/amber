@@ -134,7 +134,7 @@ fn generate_final_message(
         parts.push(format!("{} verified files", ok_count))
     }
     if dirty_count + needs_check_count > 0 {
-        parts.push(format!("{} broken files", dirty_count + needs_check_count))
+        parts.push(format!("{} changed files", dirty_count + needs_check_count))
     }
     if !parts.is_empty() {
         let duration = start_time.elapsed();
