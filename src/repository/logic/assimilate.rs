@@ -52,6 +52,10 @@ async fn assimilate_blob(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
+            if let Some(parent) = blob_path.abs().parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
             fs::rename(file_path, blob_path).await?;
         } else {
             warn!("blob {blob_id} already exists, skipping");

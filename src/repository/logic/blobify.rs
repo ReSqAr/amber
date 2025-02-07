@@ -138,6 +138,9 @@ pub(crate) async fn blobify(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
+            if let Some(parent) = blob_path.abs().parent() {
+                fs::create_dir_all(parent).await?;
+            }
             create_hard_link_or_dry_run(path, &blob_path, dry_run).await?;
             return Ok((file, blob));
         }

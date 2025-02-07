@@ -179,7 +179,14 @@ impl Local for LocalRepository {
     }
 
     fn blob_path(&self, blob_id: String) -> RepoPath {
-        self.blobs_path().join(blob_id)
+        if blob_id.len() > 6 {
+            self.blobs_path()
+                .join(&blob_id[0..2])
+                .join(&blob_id[2..4])
+                .join(&blob_id[4..])
+        } else {
+            self.blobs_path().join(blob_id)
+        }
     }
 
     fn staging_path(&self) -> RepoPath {

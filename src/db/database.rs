@@ -728,7 +728,11 @@ impl Database {
             SELECT
                 ? AS transfer_id,
                 m.blob_id,
-                (? || '/' || m.blob_id) AS path
+                ? || '/' || CASE
+                    WHEN length(m.blob_id) > 6
+                        THEN substr(m.blob_id, 1, 2) || '/' || substr(m.blob_id, 3, 2) || '/' || substr(m.blob_id, 5)
+                    ELSE  m.blob_id
+                END AS path
             FROM missing_blob_ids m
             INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
             RETURNING transfer_id, blob_id, path;",
