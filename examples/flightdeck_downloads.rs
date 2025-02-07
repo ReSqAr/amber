@@ -118,7 +118,7 @@ async fn wrapped() {
                 download_obs.observe(log::Level::Trace, BaseObservation::Position(progress));
 
                 if i == 10 && progress == 47 {
-                    let x: std::result::Result<(), anyhow::Error> =
+                    let x: Result<(), anyhow::Error> =
                         Err(anyhow::anyhow!("this is an error"));
                     let _ = x.map_err(
                         download_obs
