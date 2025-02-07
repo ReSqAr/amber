@@ -1,14 +1,22 @@
 # PROJECT MANAGEMENT
-- pull/push
-  - BlobRepository: rclone
-- multi sync & push
-- fsck
-- edit & deletion
+- new command behaviour:
+  - add:
+    - repo name table like blob/file - also support sync
+  - pull/push
+    - cleanup table transfers in the DB
+  - add:
+    - make all files read-only <- disable via --immutable
+    - amber add breaks if blob exists but is not available locally and not the same [checker]
+  - fsck
+  - edit & deletion
+- connections:
+  - add support for BlobRepository
+  - ssh: which honours ssh config + key auth
 - amazing user feedback
-  - dedicated system for user messages
-    - map out which messages are produced per command and their level
-    - show total time at the end as part of final user message
-  - commands:
+  - non-terminal behaviour:
+  - currently nothing is rendered
+  - however: still render println without colour
+- commands:
     - init [done]
     - status [done]
     - add [done]
@@ -18,19 +26,12 @@
     - sync     
     - pull     
     - push     
-- optimise numbers - automatically via gen.py script + trying all kind of variants.
-  - needs config reader
-- make all files read-only <- disable via --immutable
-- amber add breaks if blob exists but is not available locally and not the same [checker] 
-- cleanup table transfers in the DB
-- repo name table like blob/file + sync + set at init
-- ssh which honours ssh config + key auth
+- optimisation:
+  - optimise buffer sizes - automatically via gen.py script + trying all kind of variants - needs config reader
 - add documentation folder with knowledge base articles on:
   - large scale testing
   - ssh testing
-- non-terminal behaviour:
-  - currently nothing is rendered
-  - however: still render println without colour
+
 
 # Pull & Push
 
