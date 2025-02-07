@@ -14,7 +14,6 @@
 - amber add breaks if blob exists but is not available locally and not the same [checker] 
 - cleanup table transfers in the DB
 - repo name table like blob/file + sync + set at init
-- blob path: two level blob
 - ssh which honours ssh config + key auth
 - add documentation folder with knowledge base articles on:
   - large scale testing

@@ -1,4 +1,5 @@
 use crate::repository::local::LocalRepository;
+use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use amber::flightdeck;
 use amber::flightdeck::base::{
@@ -8,7 +9,6 @@ use amber::flightdeck::base::{
 use amber::flightdeck::observer::Observer;
 use amber::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use std::path::PathBuf;
-use crate::repository::traits::Local;
 
 pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let wrapped = async {
@@ -18,7 +18,10 @@ pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), Internal
         let local = LocalRepository::create(maybe_root).await?;
 
         let duration = start_time.elapsed();
-        let msg = format!("initialised repository {} in {duration:.2?}", local.root().abs().display());
+        let msg = format!(
+            "initialised repository {} in {duration:.2?}",
+            local.root().abs().display()
+        );
         init_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
 
         Ok::<(), InternalError>(())
