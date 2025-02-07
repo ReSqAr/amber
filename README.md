@@ -12,7 +12,7 @@
     - init [done]
     - status [done]
     - add [done]
-    - missing
+    - missing [done]
     - remote list
     - remote add
     - sync     
