@@ -15,20 +15,31 @@ pub struct Pipes {
 }
 
 impl Pipes {
-    pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
+    pub(crate) fn observe(&mut self, level: log::Level, obs: Observation) {
         if let Some(progress_manager) = self.progress_bar.as_mut() {
-            progress_manager.observe(level, obs.clone()).await;
+            progress_manager.observe(level, obs.clone());
         }
         if let Some(file_manager) = self.file.as_mut() {
-            file_manager.observe(level, obs.clone()).await;
+            file_manager.observe(level, obs.clone());
         }
         if let Some(terminal_manager) = self.terminal.as_mut() {
-            terminal_manager.observe(level, obs.clone()).await;
+            terminal_manager.observe(level, obs.clone());
         }
     }
 
+    pub(crate) async fn flush(&mut self) {
+        if let Some(progress_manager) = self.progress_bar.as_mut() {
+            progress_manager.flush().await;
+        }
+        if let Some(file_manager) = self.file.as_mut() {
+            file_manager.flush().await;
+        }
+        if let Some(terminal_manager) = self.terminal.as_mut() {
+            terminal_manager.flush().await;
+        }
+    }
     pub(crate) async fn finish(&mut self) {
-        if let Some(progress_manager) = &self.progress_bar {
+        if let Some(progress_manager) = self.progress_bar.as_mut() {
             progress_manager.finish().await;
         }
         if let Some(file_manager) = self.file.as_mut() {

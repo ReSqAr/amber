@@ -3,7 +3,7 @@ use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
 use indexmap::map::Entry;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::task;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -54,15 +54,9 @@ pub struct ProgressBarPipe {
 
     /// Per-type ordered map of items, keyed by optional ID.
     items: HashMap<Key, IndexMap<Option<String>, Item>>,
-}
 
-impl ProgressBarPipe {
-    pub(crate) async fn finish(&self) {
-        let multi = self.multi.clone();
-        task::spawn_blocking(move || multi.suspend(|| {}))
-            .await
-            .expect("couldn't join finish");
-    }
+    type_keys: HashSet<String>,
+    progress_bars_to_delete: Vec<indicatif::ProgressBar>,
 }
 
 pub struct LayoutItemBuilderNode {
@@ -147,7 +141,6 @@ impl FooterLayoutItem {
     }
 }
 
-impl ProgressManager {
 impl ProgressBarPipe {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
@@ -196,6 +189,8 @@ impl ProgressBarPipe {
             multi,
             builders,
             items,
+            type_keys: HashSet::new(),
+            progress_bars_to_delete: vec![],
         }
     }
 
@@ -203,19 +198,14 @@ impl ProgressBarPipe {
     /// If the item is newly created, we check the visible limit.
     /// If update signals `FinishedRemove(pb)`, we remove it from the manager.
     /// If update signals `FinishedKeep`, we do nothing extra.
-    pub(crate) async fn observe(&mut self, _: log::Level, obs: Observation) {
+    pub(crate) fn observe(&mut self, _: log::Level, obs: Observation) {
         let type_key = obs.type_key.clone();
         let key = Key::Body(type_key.clone());
         let id = obs.id.clone();
 
-        enum Action {
-            SimpleRefresh,
-            RemoveAndRefresh { pb: indicatif::ProgressBar },
-        }
-
         // manage LayoutItem lifecycle
         let items_map = self.items.entry(key.clone()).or_default();
-        let action: Action = match items_map.entry(id.clone()) {
+        match items_map.entry(id.clone()) {
             Entry::Occupied(mut entry) => {
                 if let Item::Body(item) = entry.get_mut() {
                     let action = item.update(&obs);
@@ -225,17 +215,14 @@ impl ProgressBarPipe {
                             let map = self.items.get_mut(&key).unwrap();
                             map.shift_remove(&id); // maybe this is slow!?
 
+                            self.type_keys.insert(type_key);
                             if let Some(pb) = pb {
-                                Action::RemoveAndRefresh { pb }
-                            } else {
-                                Action::SimpleRefresh
+                                self.progress_bars_to_delete.push(pb)
                             }
                         }
-                        UpdateAction::FinishedKeep => Action::SimpleRefresh,
-                        UpdateAction::Continue => Action::SimpleRefresh,
+                        UpdateAction::FinishedKeep => {}
+                        UpdateAction::Continue => {}
                     }
-                } else {
-                    Action::SimpleRefresh
                 }
             }
             Entry::Vacant(vac) => {
@@ -246,28 +233,47 @@ impl ProgressBarPipe {
                 };
                 let new_item = builder.build_item(&obs);
                 let _ = vac.insert(Item::Body(new_item));
-                Action::SimpleRefresh
+                self.type_keys.insert(type_key);
             }
         };
+    }
 
-        // manage progress bar lifecycle
-        let visible_limit = {
-            let builder = match self.builders.get(&key) {
-                None => return,
-                Some(Builder::Body(b)) => b,
-                Some(Builder::Footer { .. }) => return,
-            };
-            builder.visible_limit()
-        };
-
-        match action {
-            Action::SimpleRefresh => self.process_type_key(&type_key, visible_limit).await,
-            Action::RemoveAndRefresh { pb } => {
-                let multi = self.multi.clone();
-                multi.remove(&pb);
-                self.process_type_key(&type_key, visible_limit).await;
-            }
+    pub(crate) async fn flush(&mut self) {
+        if self.type_keys.is_empty() {
+            return;
         }
+
+        let multi = self.multi.clone();
+        let pbs = &self.progress_bars_to_delete;
+        for pb in pbs {
+            multi.remove(pb);
+        }
+        self.progress_bars_to_delete = vec![];
+
+        let type_keys = self.type_keys.clone();
+        self.type_keys.clear();
+        for type_key in type_keys {
+            let key = Key::Body(type_key.clone());
+            let visible_limit = {
+                let builder = match self.builders.get(&key) {
+                    None => return,
+                    Some(Builder::Body(b)) => b,
+                    Some(Builder::Footer { .. }) => return,
+                };
+                builder.visible_limit()
+            };
+
+            self.process_type_key(&type_key, visible_limit).await;
+        }
+    }
+
+    pub(crate) async fn finish(&mut self) {
+        self.flush().await;
+
+        let multi = self.multi.clone();
+        task::spawn_blocking(move || multi.suspend(|| {}))
+            .await
+            .expect("couldn't join finish");
     }
 
     /// If a new item was created, we check if we can attach a bar

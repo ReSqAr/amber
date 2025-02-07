@@ -15,6 +15,8 @@ pub mod observation;
 pub mod observer;
 pub mod pipes;
 
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 pub struct NotifyOnDrop {
     pub tx: broadcast::Sender<()>,
 }
@@ -126,12 +128,13 @@ impl FlightDeck {
 
     pub async fn run(&mut self, mut shutdown: broadcast::Receiver<()>) {
         let mut rx_guard = GLOBAL_LOGGER.rx.lock().await;
+        let mut interval = tokio::time::interval(FLUSH_INTERVAL);
 
         loop {
             tokio::select! {
                 _ = shutdown.recv() => {
                     while let Ok(Message { level, observation }) = rx_guard.try_recv() {
-                        self.manager.observe(level, observation.clone()).await;
+                        self.manager.observe(level, observation.clone());
                     }
 
                     self.manager.finish().await;
@@ -140,11 +143,15 @@ impl FlightDeck {
 
                 msg = rx_guard.recv() => {
                     if let Some(Message { level, observation }) = msg {
-                        self.manager.observe(level, observation.clone()).await;
+                        self.manager.observe(level, observation.clone());
                     } else {
                         self.manager.finish().await;
                         break;
                     }
+                },
+
+                _ = interval.tick() => {
+                    self.manager.flush().await;
                 },
             }
         }

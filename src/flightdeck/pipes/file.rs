@@ -7,8 +7,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 pub struct FilePipe {
     writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
     level_filter: log::LevelFilter,
-    current_batch_size: usize,
-    max_batch_size: usize,
+    buffer: Vec<String>,
 }
 
 impl FilePipe {
@@ -19,14 +18,13 @@ impl FilePipe {
         Self {
             writer,
             level_filter,
-            current_batch_size: 0,
-            max_batch_size: 1000,
+            buffer: vec![],
         }
     }
 }
 
 impl FilePipe {
-    pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
+    pub(crate) fn observe(&mut self, level: log::Level, obs: Observation) {
         if level > self.level_filter {
             return;
         }
@@ -59,25 +57,29 @@ impl FilePipe {
             }
         };
 
-        // Write the JSON line followed by a newline.
-        if let Err(e) = self.writer.write_all(json_line.as_bytes()).await {
+        self.buffer.push(json_line + "\n");
+    }
+
+    pub(crate) async fn flush(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        let data = self.buffer.concat();
+        self.buffer.clear();
+
+        if let Err(e) = self.writer.write_all(data.as_bytes()).await {
             log::error!("flightdeck error: unable to write logs: {}", e);
         }
         if let Err(e) = self.writer.write_all(b"\n").await {
             log::error!("flightdeck error: unable to write logs: {}", e);
         }
-        self.current_batch_size += 1;
-        if self.current_batch_size > self.max_batch_size {
-            self.current_batch_size = 0;
-            if let Err(e) = self.writer.flush().await {
-                log::error!("flightdeck error: unable to flush logs: {}", e);
-            }
+        if let Err(e) = self.writer.flush().await {
+            log::error!("flightdeck error: unable to flush logs: {}", e);
         }
     }
 
     pub(crate) async fn finish(&mut self) {
-        if let Err(e) = self.writer.flush().await {
-            log::error!("flightdeck error: unable to flush logs: {}", e);
-        }
+        self.flush().await
     }
 }

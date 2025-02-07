@@ -16,7 +16,6 @@
 - repo name table like blob/file + sync + set at init
 - blob path: two level blob
 - ssh which honours ssh config + key auth
-- optimise flightdeck - seems not to be able to keep up
 - add documentation folder with knowledge base articles on:
   - large scale testing
   - ssh testing
