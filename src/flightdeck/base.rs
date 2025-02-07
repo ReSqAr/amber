@@ -363,12 +363,9 @@ impl From<Style> for PGStyle {
 }
 
 #[derive(Builder)]
-#[builder(
-    pattern = "owned",
-    build_fn(error = "Box<dyn std::error::Error + Send + Sync>")
-)]
+#[builder(pattern = "owned", build_fn(error = "std::convert::Infallible"))]
 pub struct BaseLayoutBuilder {
-    #[builder(setter(into))]
+    #[builder(default, setter(into))]
     type_key: String,
     #[builder(default)]
     depth: usize,
@@ -395,6 +392,10 @@ impl BaseLayoutBuilder {
 }
 
 impl BaseLayoutBuilderBuilder {
+    pub fn infallible_build(self) -> BaseLayoutBuilder {
+        self.build().unwrap()
+    }
+
     pub fn termination_action(self, termination_action: TerminationAction) -> Self {
         Self {
             type_key: self.type_key,

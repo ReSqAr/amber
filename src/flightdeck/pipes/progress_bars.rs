@@ -45,7 +45,7 @@ impl Item {
     }
 }
 
-pub struct ProgressManager {
+pub struct ProgressBarPipe {
     multi: indicatif::MultiProgress,
 
     /// Builders, in DFS order. Each entry is `(type_key -> builder)`.
@@ -56,7 +56,7 @@ pub struct ProgressManager {
     items: HashMap<Key, IndexMap<Option<String>, Item>>,
 }
 
-impl ProgressManager {
+impl ProgressBarPipe {
     pub(crate) async fn finish(&self) {
         let multi = self.multi.clone();
         task::spawn_blocking(move || multi.suspend(|| {}))
@@ -148,6 +148,7 @@ impl FooterLayoutItem {
 }
 
 impl ProgressManager {
+impl ProgressBarPipe {
     /// Construct a manager from top-level builders in DFS order.
     /// We'll insert them recursively to get a single IndexMap, ensuring an overall ordering.
     pub(crate) fn new<I>(multi: indicatif::MultiProgress, root_builders: I) -> Self
@@ -273,16 +274,18 @@ impl ProgressManager {
     /// for items that lack one, up to the visible limit.
     async fn process_type_key(&mut self, type_key: &str, visible_limit: Option<usize>) {
         let key = Key::Body(type_key.to_string());
-        let map = self.items.get_mut(&key).unwrap();
 
-        let visible_count = map.values().filter(|i| i.get_bar().is_some()).count();
-        let can_add = match visible_limit {
-            Some(limit) => visible_count < limit,
-            None => true,
-        };
+        while {
+            let map = self.items.get_mut(&key).unwrap();
+            let total_count = map.values().count();
+            let visible_count = map.values().filter(|i| i.get_bar().is_some()).count();
 
-        if can_add {
-            for (_k, item) in map.iter_mut() {
+            match visible_limit {
+                Some(limit) => visible_count < total_count && visible_count < limit,
+                None => visible_count < total_count,
+            }
+        } {
+            for (_k, item) in self.items.get_mut(&key).unwrap().iter_mut() {
                 if item.get_bar().is_none() {
                     let bar = indicatif::ProgressBar::hidden();
                     item.set_bar(bar.clone());

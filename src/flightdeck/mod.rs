@@ -1,78 +1,19 @@
-use crate::flightdeck::file_manager::FileManager;
 use crate::flightdeck::global::GLOBAL_LOGGER;
 use crate::flightdeck::observation::Message;
-use crate::flightdeck::observation::Observation;
-use crate::flightdeck::progress_manager::{LayoutItemBuilderNode, ProgressManager};
-use crate::flightdeck::terminal_manager::TerminalManager;
+use pipes::file::FilePipe;
+use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
+use pipes::terminal::TerminalPipe;
+use pipes::Pipes;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::broadcast;
 
 pub mod base;
-pub mod file_manager;
 pub mod global;
 pub mod layout;
 pub mod observation;
 pub mod observer;
-pub mod progress_manager;
-mod terminal_manager;
-
-#[derive(Default)]
-struct Manager {
-    progress_manager: Option<ProgressManager>,
-    file_manager: Option<FileManager>,
-    terminal_manager: Option<TerminalManager>,
-}
-
-impl Manager {
-    pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
-        if let Some(progress_manager) = self.progress_manager.as_mut() {
-            progress_manager.observe(level, obs.clone()).await;
-        }
-        if let Some(file_manager) = self.file_manager.as_mut() {
-            file_manager.observe(level, obs.clone()).await;
-        }
-        if let Some(terminal_manager) = self.terminal_manager.as_mut() {
-            terminal_manager.observe(level, obs.clone()).await;
-        }
-    }
-
-    pub(crate) async fn finish(&mut self) {
-        if let Some(progress_manager) = &self.progress_manager {
-            progress_manager.finish().await;
-        }
-        if let Some(file_manager) = self.file_manager.as_mut() {
-            file_manager.finish().await;
-        }
-        if let Some(terminal_manager) = self.terminal_manager.as_mut() {
-            terminal_manager.finish().await;
-        }
-    }
-}
-
-impl Manager {
-    pub(crate) fn set_progress(self, progress_manager: ProgressManager) -> Self {
-        Self {
-            progress_manager: Some(progress_manager),
-            file_manager: self.file_manager,
-            terminal_manager: self.terminal_manager,
-        }
-    }
-    pub(crate) fn set_file(self, file_manager: FileManager) -> Self {
-        Self {
-            progress_manager: self.progress_manager,
-            file_manager: Some(file_manager),
-            terminal_manager: self.terminal_manager,
-        }
-    }
-    pub(crate) fn set_terminal(self, terminal_manager: TerminalManager) -> Self {
-        Self {
-            progress_manager: self.progress_manager,
-            file_manager: self.file_manager,
-            terminal_manager: Some(terminal_manager),
-        }
-    }
-}
+pub mod pipes;
 
 pub struct NotifyOnDrop {
     pub tx: broadcast::Sender<()>,
@@ -98,7 +39,7 @@ pub fn notify_on_drop() -> (NotifyOnDrop, broadcast::Receiver<()>) {
 
 #[derive(Default)]
 pub struct FlightDeck {
-    manager: Manager,
+    manager: Pipes,
 }
 
 pub async fn flightdeck<E: From<tokio::task::JoinError>>(
@@ -146,7 +87,7 @@ impl FlightDeck {
         Self {
             manager: self
                 .manager
-                .set_progress(ProgressManager::new(multi, root_builders)),
+                .set_progress(ProgressBarPipe::new(multi, root_builders)),
         }
     }
 
@@ -167,9 +108,7 @@ impl FlightDeck {
             .unwrap_or_else(|_| panic!("unable to open log file {}", path.display()));
         let writer = Box::new(file);
         Self {
-            manager: self
-                .manager
-                .set_file(FileManager::new(writer, level_filter)),
+            manager: self.manager.set_file(FilePipe::new(writer, level_filter)),
         }
     }
 
@@ -181,7 +120,7 @@ impl FlightDeck {
         Self {
             manager: self
                 .manager
-                .set_terminal(TerminalManager::new(multi, level_filter)),
+                .set_terminal(TerminalPipe::new(multi, level_filter)),
         }
     }
 

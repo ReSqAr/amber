@@ -5,7 +5,7 @@ use crate::flightdeck::base::{
     TerminationAction,
 };
 use crate::flightdeck::observer::Observer;
-use crate::flightdeck::progress_manager::LayoutItemBuilderNode;
+use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::BlobLockMap;
 use crate::repository::logic::{blobify, state};
@@ -54,8 +54,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
                 .into(),
             done: "{prefix}✓ {msg} {decimal_bytes}".into(),
         })
-        .build()
-        .expect("build should work")
+        .infallible_build()
         .boxed();
 
     let overall = BaseLayoutBuilderBuilder::default()
@@ -71,8 +70,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
             in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
             done: "{prefix}✓ {msg} ({elapsed})".into(),
         })
-        .build()
-        .expect("build should work")
+        .infallible_build()
         .boxed();
 
     [LayoutItemBuilderNode::from(overall).add_child(file)]

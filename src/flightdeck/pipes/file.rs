@@ -4,14 +4,14 @@ use chrono::SecondsFormat;
 use sqlx::types::JsonValue;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-pub struct FileManager {
+pub struct FilePipe {
     writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
     level_filter: log::LevelFilter,
     current_batch_size: usize,
     max_batch_size: usize,
 }
 
-impl FileManager {
+impl FilePipe {
     pub(crate) fn new(
         writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
         level_filter: log::LevelFilter,
@@ -25,7 +25,7 @@ impl FileManager {
     }
 }
 
-impl FileManager {
+impl FilePipe {
     pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
         if level > self.level_filter {
             return;

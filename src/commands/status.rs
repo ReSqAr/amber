@@ -4,7 +4,7 @@ use crate::flightdeck::base::{BaseLayoutBuilderBuilder, TerminationAction};
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::observer::Observer;
-use crate::flightdeck::progress_manager::LayoutItemBuilderNode;
+use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
 use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesystem};
@@ -43,8 +43,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             in_progress: "{prefix}{spinner:.green} {msg}".into(),
             done: "{prefix}{spinner:.green} {msg}".into(),
         })
-        .build()
-        .expect("build should work")
+        .infallible_build()
         .boxed();
 
     let overall = BaseLayoutBuilderBuilder::default()
@@ -60,8 +59,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
             done: "{prefix}✓ {msg}".into(),
         })
-        .build()
-        .expect("build should work")
+        .infallible_build()
         .boxed();
 
     [LayoutItemBuilderNode::from(overall).add_child(file)]

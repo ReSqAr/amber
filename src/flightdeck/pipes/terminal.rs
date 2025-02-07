@@ -3,12 +3,12 @@ use crate::flightdeck::observation::Value;
 use colored::*;
 use tokio::task;
 
-pub struct TerminalManager {
+pub struct TerminalPipe {
     multi: indicatif::MultiProgress,
     level_filter: log::LevelFilter,
 }
 
-impl TerminalManager {
+impl TerminalPipe {
     pub(crate) fn new(multi: indicatif::MultiProgress, level_filter: log::LevelFilter) -> Self {
         Self {
             multi,
