@@ -21,7 +21,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), InternalError> {
+pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool, verbose:bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let root_path = local_repository.root().abs().clone();
     let log_path = local_repository.log_path().abs().into();
@@ -31,7 +31,11 @@ pub async fn add(maybe_root: Option<PathBuf>, dry_run: bool) -> Result<(), Inter
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, None).await
+    let terminal = match verbose {
+        true => Some(log::LevelFilter::Debug),
+        false => None,
+    };
+    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, terminal).await
 }
 
 fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {

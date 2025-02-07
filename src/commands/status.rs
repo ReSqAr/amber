@@ -15,7 +15,7 @@ use log::error;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub async fn status(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
+pub async fn status(maybe_root: Option<PathBuf>, verbose: bool) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let log_path = local_repository.log_path().abs().into();
 
@@ -24,7 +24,11 @@ pub async fn status(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None).await
+    let terminal = match verbose {
+        true => Some(log::LevelFilter::Debug),
+        false => None,
+    };
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

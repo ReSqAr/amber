@@ -21,8 +21,13 @@ enum Commands {
     Add {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
     },
-    Status {},
+    Status {
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
     Missing {
         #[arg(long, default_value_t = false)]
         files_only: bool,
@@ -80,13 +85,13 @@ pub async fn run() {
                 .await
                 .expect("Failed to initialize repository");
         }
-        Commands::Add { dry_run } => {
-            commands::add::add(cli.path, dry_run)
+        Commands::Add { dry_run, verbose } => {
+            commands::add::add(cli.path, dry_run, verbose)
                 .await
                 .expect("Failed to add file");
         }
-        Commands::Status {} => {
-            commands::status::status(cli.path)
+        Commands::Status { verbose } => {
+            commands::status::status(cli.path, verbose)
                 .await
                 .expect("Failed to get status");
         }
