@@ -1,7 +1,7 @@
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer,
-    Style, TerminationAction,
+    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer, Style,
+    TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;

@@ -53,7 +53,7 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
 ) -> Result<(), E> {
     let (drop_to_notify, notify) = notify_on_drop();
 
-    let draw_target = indicatif::ProgressDrawTarget::stderr_with_hz(10);
+    let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
     let multi = indicatif::MultiProgress::with_draw_target(draw_target);
 
     let path = path.into();

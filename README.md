@@ -28,7 +28,10 @@
 - add documentation folder with knowledge base articles on:
   - large scale testing
   - ssh testing
-
+- non-terminal behaviour:
+  - currently nothing is rendered
+  - however: still want 'audit log'
+ 
 - features:
 - `--immutable` - no del to hard link multiple copies & not read only
 - `--statistics` - print stats

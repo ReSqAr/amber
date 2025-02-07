@@ -1,7 +1,7 @@
 use crate::db::models::VirtualFileState;
 use crate::flightdeck;
-use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
 use crate::flightdeck::base::BaseObservation;
+use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
 use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
