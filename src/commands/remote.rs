@@ -1,8 +1,7 @@
 use crate::db::models::{Connection, ConnectionType};
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style,
-    TerminationAction,
+    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::connection::EstablishedConnection;

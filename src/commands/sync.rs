@@ -1,9 +1,9 @@
 use crate::db::models::{Blob, File, Repository};
 use crate::flightdeck;
+use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
 };
-use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::{checkout, sync};
