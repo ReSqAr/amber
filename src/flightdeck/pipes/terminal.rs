@@ -4,13 +4,16 @@ use colored::*;
 use tokio::task;
 
 pub struct TerminalPipe {
-    multi: indicatif::MultiProgress,
+    multi: Option<indicatif::MultiProgress>,
     level_filter: log::LevelFilter,
     buffer: Vec<String>,
 }
 
 impl TerminalPipe {
-    pub(crate) fn new(multi: indicatif::MultiProgress, level_filter: log::LevelFilter) -> Self {
+    pub(crate) fn new(
+        multi: Option<indicatif::MultiProgress>,
+        level_filter: log::LevelFilter,
+    ) -> Self {
         Self {
             multi,
             level_filter,
@@ -66,10 +69,16 @@ impl TerminalPipe {
         self.buffer.clear();
 
         let multi = self.multi.clone();
-        match task::spawn_blocking(move || multi.println(&data)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => log::error!("could not write to the terminal via indactif: {}", e),
-            Err(e) => log::error!("could not write to the terminal: {}", e),
+        match multi {
+            None => match task::spawn_blocking(move || print!("{}", data)).await {
+                Ok(()) => {}
+                Err(e) => log::error!("could not write to the terminal: {}", e),
+            },
+            Some(multi) => match task::spawn_blocking(move || multi.println(&data)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => log::error!("could not write to the terminal via indactif: {}", e),
+                Err(e) => log::error!("could not write to the terminal: {}", e),
+            },
         };
     }
 

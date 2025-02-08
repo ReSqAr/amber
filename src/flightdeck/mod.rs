@@ -4,6 +4,7 @@ use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
 use pipes::terminal::TerminalPipe;
 use pipes::Pipes;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::broadcast;
@@ -53,13 +54,21 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
 ) -> Result<(), E> {
     let (drop_to_notify, notify) = notify_on_drop();
 
-    let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
-    let multi = indicatif::MultiProgress::with_draw_target(draw_target);
+    let multi = if std::io::stdout().is_terminal() {
+        let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
+        Some(indicatif::MultiProgress::with_draw_target(draw_target))
+    } else {
+        None
+    };
 
     let path = path.into();
     let join_handle = tokio::spawn(async move {
         let flightdeck = FlightDeck::new();
-        let flightdeck = flightdeck.with_progress(multi.clone(), root_builders);
+        let flightdeck = if let Some(multi) = multi.clone() {
+            flightdeck.with_progress(multi, root_builders)
+        } else {
+            flightdeck
+        };
         let flightdeck = flightdeck.with_terminal(
             multi.clone(),
             terminal_level_filter.unwrap_or(log::LevelFilter::Info),
@@ -123,7 +132,7 @@ impl FlightDeck {
 
     pub fn with_terminal(
         self,
-        multi: indicatif::MultiProgress,
+        multi: Option<indicatif::MultiProgress>,
         level_filter: log::LevelFilter,
     ) -> Self {
         Self {
