@@ -1,7 +1,7 @@
 use crate::db::models::{VirtualFile, VirtualFileState};
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer, Style,
+    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style,
     TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
@@ -164,13 +164,11 @@ pub async fn add_files(
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
                 Ok(path) => {
-                    BaseObserver::with_id("add", path.rel().display().to_string()).observe(
-                        log::Level::Info,
-                        BaseObservation::TerminalState("added".into()),
-                    );
+                    BaseObserver::with_id("add", path.rel().display().to_string())
+                        .observe_termination(log::Level::Info, "added");
 
                     count += 1;
-                    adder_obs.observe(log::Level::Trace, BaseObservation::Position(count));
+                    adder_obs.observe_position(log::Level::Trace, count);
                 }
                 Err(e) => {
                     println!("error: {e}");
@@ -192,7 +190,7 @@ pub async fn add_files(
     } else {
         "no files added".into()
     };
-    adder_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
+    adder_obs.observe_termination(log::Level::Info, msg);
 
     Ok(())
 }

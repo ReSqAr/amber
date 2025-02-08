@@ -112,6 +112,33 @@ impl Observer<BaseObservable> {
     pub fn with_id(type_key: impl Into<String>, id: impl Into<String>) -> Self {
         Self::new(BaseObservable::with_id(type_key, id))
     }
+
+    pub fn observe_state(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
+        self.observe(level, BaseObservation::State(s.into()))
+    }
+    pub fn observe_termination(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
+        self.observe(level, BaseObservation::TerminalState(s.into()))
+    }
+    pub fn observe_termination_ext(
+        &mut self,
+        level: log::Level,
+        s: impl Into<String>,
+        data: impl Into<HashMap<String, String>>,
+    ) -> &mut Self {
+        self.observe(
+            level,
+            BaseObservation::TerminalStateWithData {
+                state: s.into(),
+                data: data.into(),
+            },
+        )
+    }
+    pub fn observe_length(&mut self, level: log::Level, pos: u64) -> &mut Self {
+        self.observe(level, BaseObservation::Length(pos))
+    }
+    pub fn observe_position(&mut self, level: log::Level, pos: u64) -> &mut Self {
+        self.observe(level, BaseObservation::Position(pos))
+    }
 }
 
 trait ProgressBarManager: Send + Sync {

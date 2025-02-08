@@ -3,7 +3,7 @@ use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
 };
-use crate::flightdeck::base::{BaseObservation, BaseObserver};
+use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::{checkout, sync};
@@ -31,7 +31,7 @@ pub async fn sync(
                 format!("synchronised via {} in {duration:.2?}", connection_name)
             }
         };
-        init_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
+        init_obs.observe_termination(log::Level::Info, msg);
 
         Ok::<(), InternalError>(())
     };
@@ -128,10 +128,7 @@ async fn connect_sync_checkout(
                 .into());
             }
         };
-        connect_obs.observe(
-            log::Level::Info,
-            BaseObservation::TerminalState("connected".into()),
-        );
+        connect_obs.observe_termination(log::Level::Info, "connected");
 
         sync_repositories(&local, &managed_remote).await?;
     }
@@ -175,10 +172,7 @@ where
             remote_last_indices.file,
         )
         .await?;
-        o.observe(
-            log::Level::Info,
-            BaseObservation::TerminalState("synchronised".into()),
-        );
+        o.observe_termination(log::Level::Info, "synchronised");
     }
 
     {
@@ -190,23 +184,17 @@ where
             remote_last_indices.blob,
         )
         .await?;
-        o.observe(
-            log::Level::Info,
-            BaseObservation::TerminalState("synchronised".into()),
-        );
+        o.observe_termination(log::Level::Info, "synchronised");
     }
 
     {
         let mut o = BaseObserver::with_id("sync_table", "repositories");
         remote.refresh().await?;
         local.refresh().await?;
-        o.observe(log::Level::Info, BaseObservation::State("prepared".into()));
+        o.observe_state(log::Level::Info, "prepared");
 
         sync::sync_table::<Repository, _, _>(local, (), remote, ()).await?;
-        o.observe(
-            log::Level::Info,
-            BaseObservation::TerminalState("synchronised".into()),
-        );
+        o.observe_termination(log::Level::Info, "synchronised");
     }
 
     Ok(())

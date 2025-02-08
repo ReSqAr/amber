@@ -1,6 +1,5 @@
 use crate::db::models::BlobWithPaths;
 use crate::flightdeck;
-use crate::flightdeck::base::BaseObservation;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
@@ -9,7 +8,6 @@ use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Local, Missing};
 use crate::utils::errors::InternalError;
 use log::error;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
@@ -59,19 +57,14 @@ pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), Internal
             Ok(BlobWithPaths { paths, blob_id }) => {
                 count_files += paths.len();
                 count_blobs += 1;
-                missing_obs.observe(
-                    log::Level::Trace,
-                    BaseObservation::Position(count_blobs as u64),
-                );
+                missing_obs.observe_position(log::Level::Trace, count_blobs as u64);
 
                 for path in paths {
                     let mut file_obs = BaseObserver::with_id("file", path);
-                    file_obs.observe(
+                    file_obs.observe_termination_ext(
                         log::Level::Info,
-                        BaseObservation::TerminalStateWithData {
-                            state: "missing".into(),
-                            data: HashMap::from([("blob_id".into(), blob_id.clone())]),
-                        },
+                        "missing",
+                        [("blob_id".into(), blob_id.clone())],
                     );
                 }
             }
@@ -82,7 +75,7 @@ pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), Internal
     }
 
     let final_msg = generate_final_message(count_files, count_blobs, start_time);
-    missing_obs.observe(log::Level::Info, BaseObservation::TerminalState(final_msg));
+    missing_obs.observe_termination(log::Level::Info, final_msg);
 
     Ok(())
 }

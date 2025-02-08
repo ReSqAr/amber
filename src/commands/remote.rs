@@ -1,7 +1,7 @@
 use crate::db::models::{Connection, ConnectionType};
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer, Style,
+    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style,
     TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
@@ -70,7 +70,7 @@ pub async fn add(
             name,
             render_connection_type(connection_type)
         );
-        init_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
+        init_obs.observe_termination(log::Level::Info, msg);
 
         Ok::<(), InternalError>(())
     };

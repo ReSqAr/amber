@@ -1,6 +1,5 @@
 use crate::db::models::VirtualFileState;
 use crate::flightdeck;
-use crate::flightdeck::base::BaseObservation;
 use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
 use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
@@ -80,7 +79,7 @@ pub async fn show_status(
     let mut total_count: u64 = 0;
     while let Some(file_result) = stream.next().await {
         total_count += 1;
-        checker_obs.observe(log::Level::Trace, BaseObservation::Position(total_count));
+        checker_obs.observe_position(log::Level::Trace, total_count);
 
         match file_result {
             Ok(file) => {
@@ -96,7 +95,7 @@ pub async fn show_status(
                     }
                     VirtualFileState::Ok => (log::Level::Debug, "verified"),
                 };
-                obs.observe(level, BaseObservation::TerminalState(state.into()));
+                obs.observe_termination(level, state);
             }
             Err(e) => {
                 error!("error during traversal: {e}");
@@ -107,7 +106,7 @@ pub async fn show_status(
     handle.await??;
 
     let final_msg = generate_final_message(&mut count, start_time);
-    checker_obs.observe(log::Level::Info, BaseObservation::TerminalState(final_msg));
+    checker_obs.observe_termination(log::Level::Info, final_msg);
 
     Ok(())
 }

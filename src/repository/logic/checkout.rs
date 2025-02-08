@@ -1,9 +1,8 @@
 use crate::db::models::FilePathWithBlobId;
 use crate::repository::traits::{Local, Reconciler};
 use crate::utils::errors::InternalError;
-use amber::flightdeck::base::{BaseObservation, BaseObserver};
+use amber::flightdeck::base::BaseObserver;
 use futures::StreamExt;
-use std::collections::HashMap;
 use tokio::fs;
 
 pub async fn checkout(
@@ -36,21 +35,17 @@ pub async fn checkout(
             fs::hard_link(&object_path, &target_path).await?;
 
             count += 1;
-            checkout_obs.observe(log::Level::Trace, BaseObservation::Position(count));
-            o.observe(
+            checkout_obs.observe_position(log::Level::Trace, count);
+            o.observe_termination_ext(
                 log::Level::Info,
-                BaseObservation::TerminalStateWithData {
-                    state: "hardlinked".into(),
-                    data: HashMap::from([("blob_id".into(), blob_id.clone())]),
-                },
+                "hardlinked",
+                [("blob_id".into(), blob_id.clone())],
             );
         } else {
-            o.observe(
+            o.observe_termination_ext(
                 log::Level::Trace,
-                BaseObservation::TerminalStateWithData {
-                    state: "skipped".into(),
-                    data: HashMap::from([("blob_id".into(), blob_id.clone())]),
-                },
+                "skipped",
+                [("blob_id".into(), blob_id.clone())],
             );
         };
     }
@@ -61,7 +56,7 @@ pub async fn checkout(
     } else {
         "no files checked out".into()
     };
-    checkout_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
+    checkout_obs.observe_termination(log::Level::Info, msg);
 
     Ok(())
 }

@@ -49,7 +49,7 @@ impl<T: Observable> Observer<T> {
         Self::with(inner, Some((level, default_terminal_observation)))
     }
 
-    pub fn observe(&mut self, level: log::Level, observation: T::Observation) -> &mut Observer<T> {
+    pub fn observe(&mut self, level: log::Level, observation: T::Observation) -> &mut Self {
         let observation = self.inner.generate_observation(Some(observation));
         global::send(level, observation);
         self

@@ -16,10 +16,8 @@ pub(crate) async fn compute_sha256_and_size(
     );
 
     let mut file = File::open(file_path).await?;
-    obs.observe(
-        log::Level::Trace,
-        BaseObservation::Length(file.metadata().await?.len()),
-    );
+    obs.observe_length(log::Level::Trace, file.metadata().await?.len());
+
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1024 * 1024]; // 1MB buffer
     let mut size = 0u64;
@@ -31,7 +29,7 @@ pub(crate) async fn compute_sha256_and_size(
         }
         hasher.update(&buffer[..bytes_read]);
         size += bytes_read as u64;
-        obs.observe(log::Level::Trace, BaseObservation::Position(size));
+        obs.observe_position(log::Level::Trace, size);
     }
 
     let hash = hasher.finalize();

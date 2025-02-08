@@ -1,6 +1,6 @@
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObservation, BaseObserver, StateTransformer, Style,
+    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style,
     TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
@@ -21,7 +21,7 @@ pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), Internal
             "initialised repository {} in {duration:.2?}",
             local.root().abs().display()
         );
-        init_obs.observe(log::Level::Info, BaseObservation::TerminalState(msg));
+        init_obs.observe_termination(log::Level::Info, msg);
 
         Ok::<(), InternalError>(())
     };
