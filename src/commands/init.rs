@@ -26,9 +26,7 @@ pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), Internal
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), None, None, None).await?;
-
-    Ok(())
+    flightdeck::flightdeck(wrapped, root_builders(), None, None, None).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
