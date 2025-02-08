@@ -1,6 +1,6 @@
 # PROJECT MANAGEMENT
 - new command behaviour:
-  - add:
+  - init:
     - repo name table like blob/file - also support sync
   - pull/push
     - cleanup table transfers in the DB
@@ -23,7 +23,7 @@
     - missing [done]
     - remote list [done]
     - remote add [done]
-    - sync     
+    - sync [done]
     - pull     
     - push     
 - optimisation:
