@@ -48,7 +48,7 @@ impl Database {
     }
 
     pub async fn setup_db(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("PRAGMA journal_mode = WAL;")
+        sqlx::query("TRUNCATE transfers;")
             .execute(&self.pool)
             .await?;
         Ok(())
