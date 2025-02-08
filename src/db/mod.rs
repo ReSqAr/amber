@@ -2,8 +2,8 @@ pub(crate) mod database;
 pub(crate) mod migrations;
 pub(crate) mod models;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteJournalMode};
-use sqlx::{Error, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::{ConnectOptions, Error, SqlitePool};
 use std::str::FromStr;
 
 pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Error> {

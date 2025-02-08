@@ -42,7 +42,7 @@ pub async fn sync(
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     let connect = BaseLayoutBuilderBuilder::default()
         .type_key("connect")
-        .termination_action(TerminationAction::Keep)
+        .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
             false => format!("connecting via {}...", id.unwrap_or("<unknown>".into())),
             true => format!("connected via {}", id.unwrap_or("<unknown>".into())),
@@ -56,7 +56,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     let sync_table = BaseLayoutBuilderBuilder::default()
         .type_key("sync:table")
-        .termination_action(TerminationAction::Keep)
+        .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
             false => format!(
                 "synchronising known {}...",
@@ -77,8 +77,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdStateFn(Box::new(
             move |done, id, _| match done {
-                false => format!("checking out {}", id.unwrap_or("<missing>".into())),
-                true => format!("checked out {}", id.unwrap_or("<missing>".into())),
+                false => format!("checking {}", id.unwrap_or("<missing>".into())),
+                true => format!("checked {}", id.unwrap_or("<missing>".into())),
             },
         )))
         .style(Style::Template {
@@ -90,7 +90,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     let checkout = BaseLayoutBuilderBuilder::default()
         .type_key("checkout")
-        .termination_action(TerminationAction::Keep)
+        .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("checked out files".into()),
@@ -98,8 +98,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
-            done: "{prefix}✓ {msg}".into(),
+            in_progress: "{prefix}{spinner:.green} {pos} files checked out".into(),
+            done: "{prefix}{pos} files checked out".into(),
         })
         .infallible_build()
         .boxed();
