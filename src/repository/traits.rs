@@ -32,6 +32,7 @@ pub enum BufferType {
     State,
     Walker,
     StateChecker,
+    Checkout,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;

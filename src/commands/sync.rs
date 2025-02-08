@@ -20,7 +20,7 @@ pub async fn sync(
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
-        let mut init_obs = BaseObserver::without_id("init");
+        let mut sync_obs = BaseObserver::without_id("sync");
 
         connect_sync_checkout(local_repository, connection_name.clone()).await?;
 
@@ -31,7 +31,7 @@ pub async fn sync(
                 format!("synchronised via {} in {duration:.2?}", connection_name)
             }
         };
-        init_obs.observe_termination(log::Level::Info, msg);
+        sync_obs.observe_termination(log::Level::Info, msg);
 
         Ok::<(), InternalError>(())
     };
@@ -42,7 +42,7 @@ pub async fn sync(
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     let connect = BaseLayoutBuilderBuilder::default()
         .type_key("connect")
-        .termination_action(TerminationAction::Remove)
+        .termination_action(TerminationAction::Keep)
         .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
             false => format!("connecting via {}...", id.unwrap_or("<unknown>".into())),
             true => format!("connected via {}", id.unwrap_or("<unknown>".into())),
@@ -54,9 +54,9 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let sync = BaseLayoutBuilderBuilder::default()
-        .type_key("sync_table")
-        .termination_action(TerminationAction::Remove)
+    let sync_table = BaseLayoutBuilderBuilder::default()
+        .type_key("sync:table")
+        .termination_action(TerminationAction::Keep)
         .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
             false => format!(
                 "synchronising known {}...",
@@ -90,7 +90,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     let checkout = BaseLayoutBuilderBuilder::default()
         .type_key("checkout")
-        .termination_action(TerminationAction::Remove)
+        .termination_action(TerminationAction::Keep)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("checked out files".into()),
@@ -106,7 +106,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     [
         LayoutItemBuilderNode::from(connect),
-        LayoutItemBuilderNode::from(sync),
+        LayoutItemBuilderNode::from(sync_table),
         LayoutItemBuilderNode::from(checkout).add_child(checkout_file),
     ]
 }
@@ -164,7 +164,7 @@ where
     let remote_last_indices = local.lookup(remote_repo_id).await?;
 
     {
-        let mut o = BaseObserver::with_id("sync_table", "files");
+        let mut o = BaseObserver::with_id("sync:table", "files");
         sync::sync_table::<File, _, _>(
             local,
             local_last_indices.file,
@@ -176,7 +176,7 @@ where
     }
 
     {
-        let mut o = BaseObserver::with_id("sync_table", "blobs");
+        let mut o = BaseObserver::with_id("sync:table", "blobs");
         sync::sync_table::<Blob, _, _>(
             local,
             local_last_indices.blob,
@@ -188,7 +188,7 @@ where
     }
 
     {
-        let mut o = BaseObserver::with_id("sync_table", "repositories");
+        let mut o = BaseObserver::with_id("sync:table", "repositories");
         remote.refresh().await?;
         local.refresh().await?;
         o.observe_state(log::Level::Info, "prepared");

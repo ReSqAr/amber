@@ -1,53 +1,64 @@
 use crate::db::models::FilePathWithBlobId;
-use crate::repository::traits::{Local, Reconciler};
+use crate::flightdeck::base::BaseObserver;
+use crate::repository::traits::{BufferType, Config, Local, Reconciler};
 use crate::utils::errors::InternalError;
-use amber::flightdeck::base::BaseObserver;
 use futures::StreamExt;
 use tokio::fs;
 
 pub async fn checkout(
-    local: &(impl Local + Reconciler + Send),
+    local: &(impl Local + Config + Reconciler + Send),
 ) -> anyhow::Result<(), InternalError> {
     let mut count = 0;
     let start_time = tokio::time::Instant::now();
     let mut checkout_obs = BaseObserver::without_id("checkout");
 
-    let mut desired_state = local.target_filesystem_state();
-    while let Some(next) = desired_state.next().await {
-        let FilePathWithBlobId {
-            path: relative_path,
-            blob_id,
-        } = next?;
+    enum Action {
+        CheckedOut,
+        Skipped,
+    }
 
-        let mut o = BaseObserver::with_id("checkout:file", relative_path.clone());
+    let desired_state = local.target_filesystem_state();
+    let mut x = desired_state
+        .map(|item| async move {
+            let FilePathWithBlobId { path, blob_id } = item?;
+            let object_path = local.blob_path(blob_id.clone());
+            let target_path = local.root().join(path.clone());
+            let mut o = BaseObserver::with_id("checkout:file", path);
 
-        let object_path = local.blob_path(blob_id.clone());
-        let target_path = local.root().join(relative_path);
+            if !fs::metadata(&target_path)
+                .await
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+            {
+                if let Some(parent) = target_path.abs().parent() {
+                    fs::create_dir_all(parent).await?;
+                }
+                fs::hard_link(&object_path, &target_path).await?;
 
-        if !fs::metadata(&target_path)
-            .await
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-        {
-            if let Some(parent) = target_path.abs().parent() {
-                fs::create_dir_all(parent).await?;
+                o.observe_termination_ext(
+                    log::Level::Info,
+                    "hardlinked",
+                    [("blob_id".into(), blob_id.clone())],
+                );
+                Ok::<Action, InternalError>(Action::CheckedOut)
+            } else {
+                o.observe_termination_ext(
+                    log::Level::Trace,
+                    "skipped",
+                    [("blob_id".into(), blob_id.clone())],
+                );
+                Ok::<Action, InternalError>(Action::Skipped)
             }
-            fs::hard_link(&object_path, &target_path).await?;
+        })
+        .buffer_unordered(local.buffer_size(BufferType::Checkout));
 
-            count += 1;
-            checkout_obs.observe_position(log::Level::Trace, count);
-            o.observe_termination_ext(
-                log::Level::Info,
-                "hardlinked",
-                [("blob_id".into(), blob_id.clone())],
-            );
-        } else {
-            o.observe_termination_ext(
-                log::Level::Trace,
-                "skipped",
-                [("blob_id".into(), blob_id.clone())],
-            );
+    while let Some(next) = x.next().await {
+        let action = next?;
+        count += match action {
+            Action::CheckedOut => 1,
+            Action::Skipped => 0,
         };
+        checkout_obs.observe_position(log::Level::Trace, count);
     }
 
     let duration = start_time.elapsed();
