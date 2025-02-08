@@ -113,6 +113,8 @@ impl LocalRepository {
             .await
             .expect("failed to create repo id");
 
+        db.clean().await?;
+
         debug!("db connected");
 
         Ok(Self {
@@ -148,8 +150,6 @@ impl LocalRepository {
         run_migrations(&pool).await?;
 
         let db = Database::new(pool.clone());
-
-        db.setup_db().await?;
 
         let repo = db
             .get_or_create_current_repository()

@@ -47,8 +47,8 @@ impl Database {
             .boxed()
     }
 
-    pub async fn setup_db(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("TRUNCATE transfers;")
+    pub async fn clean(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM transfers;")
             .execute(&self.pool)
             .await?;
         Ok(())

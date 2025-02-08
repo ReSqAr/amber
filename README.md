@@ -2,8 +2,6 @@
 - new command behaviour:
   - init:
     - repo name table like blob/file - also support sync
-  - pull/push
-    - cleanup table transfers in the DB
   - add:
     - make all files read-only <- disable via --immutable
     - amber add breaks if blob exists but is not available locally and not the same [checker]
