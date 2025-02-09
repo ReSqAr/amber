@@ -16,7 +16,7 @@ pub mod observation;
 pub mod observer;
 pub mod pipes;
 
-const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 pub struct NotifyOnDrop {
     pub tx: broadcast::Sender<()>,

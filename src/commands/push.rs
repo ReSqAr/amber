@@ -77,7 +77,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdStateFn(Box::new(move |_, id, msg| {
             let id = id.unwrap_or("<missing>".into());
-            let msg = msg.unwrap_or("<unknown>".into());
+            let msg = msg.unwrap_or("copying".into());
             format!("{msg} {id}")
         })))
         .style(Style::Template {

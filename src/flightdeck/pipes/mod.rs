@@ -7,7 +7,7 @@ pub mod file;
 pub mod progress_bars;
 pub mod terminal;
 
-const MAX_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+const MAX_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Default)]
 pub struct Pipes {
