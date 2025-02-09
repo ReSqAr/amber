@@ -350,9 +350,6 @@ impl LayoutItem for BaseLayoutItem {
     fn update(&mut self, obs: &Observation) -> UpdateAction {
         for manager in &mut self.managers {
             manager.observe(&obs.data, obs.is_terminal);
-            if let Some(pb) = &self.pb {
-                manager.update_progress_bar(pb);
-            }
         }
 
         if obs.is_terminal {
@@ -363,6 +360,15 @@ impl LayoutItem for BaseLayoutItem {
             }
         } else {
             UpdateAction::Continue
+        }
+    }
+
+    fn tick(&mut self) {
+        for manager in &mut self.managers {
+            if let Some(pb) = &self.pb {
+                manager.update_progress_bar(pb);
+                pb.tick();
+            }
         }
     }
 

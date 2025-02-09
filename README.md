@@ -16,7 +16,6 @@
 - connections:
   - add support for BlobRepository
   - ssh: which honours ssh config + key auth
-- FlightDeck: only update progress bar at the ticks. Normal update does not change progress bae
 - optimisation:
   - optimise buffer sizes - automatically via gen.py script + trying all kind of variants - needs config reader
 - add documentation folder with knowledge base articles on:

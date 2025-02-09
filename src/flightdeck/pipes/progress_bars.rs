@@ -30,6 +30,13 @@ impl Item {
         }
     }
 
+    pub(crate) fn tick(&mut self) {
+        match self {
+            Item::Body(item) => item.tick(),
+            Item::Footer(item) => item.tick(),
+        }
+    }
+
     pub(crate) fn get_bar(&self) -> Option<&indicatif::ProgressBar> {
         match self {
             Item::Body(item) => item.get_bar(),
@@ -108,6 +115,12 @@ impl FooterLayoutItem {
             visible_count,
             total_count,
             pb: None,
+        }
+    }
+
+    fn tick(&self) {
+        if let Some(pb) = &self.pb {
+            self.update_bar(pb);
         }
     }
 
@@ -239,11 +252,9 @@ impl ProgressBarPipe {
     }
 
     pub(crate) async fn flush(&mut self) {
-        for items in self.items.values() {
-            for item in items.values() {
-                if let Some(pb) = item.get_bar() {
-                    pb.tick()
-                }
+        for items in self.items.values_mut() {
+            for item in items.values_mut() {
+                item.tick();
             }
         }
 
