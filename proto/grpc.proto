@@ -82,7 +82,9 @@ message CreateTransferRequestRequest {
 message FinaliseTransferRequest {
     uint32 transfer_id = 1;
 }
-message FinaliseTransferResponse {}
+message FinaliseTransferResponse {
+    uint64 count = 1;
+}
 
 service Grpc {
   rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);

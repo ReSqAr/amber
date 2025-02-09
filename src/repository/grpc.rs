@@ -5,9 +5,10 @@ use crate::db::models::TransferItem as DbTransferItem;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
-    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, LookupLastIndicesRequest,
-    LookupLastIndicesResponse, Repository, RepositoryIdRequest, SelectBlobsRequest,
-    SelectFilesRequest, SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest,
+    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
+    LookupLastIndicesRequest, LookupLastIndicesResponse, Repository, RepositoryIdRequest,
+    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, TransferItem,
+    UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
@@ -236,13 +237,14 @@ impl BlobReceiver for GRPCClient {
         }
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
-        self.client
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
+        let FinaliseTransferResponse { count } = self
+            .client
             .write()
             .await
             .finalise_transfer(tonic::Request::new(FinaliseTransferRequest { transfer_id }))
             .await?
             .into_inner();
-        Ok(())
+        Ok(count)
     }
 }

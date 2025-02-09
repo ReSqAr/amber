@@ -43,11 +43,11 @@ pub trait Missing {
 }
 
 pub trait Adder {
-    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
+    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send;
 
-    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<(), sqlx::Error>> + Send
+    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
 }
@@ -130,5 +130,5 @@ pub trait BlobReceiver {
     fn finalise_transfer(
         &self,
         transfer_id: u32,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send;
+    ) -> impl Future<Output = Result<u64, InternalError>> + Send;
 }

@@ -7,7 +7,7 @@ use crate::grpc::definitions::{
     SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest, UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
-    Adder, BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -35,7 +35,6 @@ impl<T> grpc_server::Grpc for Service<T>
 where
     T: Metadata
         + Local
-        + Adder
         + LastIndicesSyncer
         + Syncer<DbRepository>
         + Syncer<DbFile>
@@ -184,7 +183,7 @@ where
         request: Request<FinaliseTransferRequest>,
     ) -> Result<Response<FinaliseTransferResponse>, Status> {
         let FinaliseTransferRequest { transfer_id } = request.into_inner();
-        self.repository.finalise_transfer(transfer_id).await?;
-        Ok(Response::new(FinaliseTransferResponse {}))
+        let count = self.repository.finalise_transfer(transfer_id).await?;
+        Ok(Response::new(FinaliseTransferResponse { count }))
     }
 }

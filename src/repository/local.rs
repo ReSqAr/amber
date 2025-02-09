@@ -239,14 +239,14 @@ impl Missing for LocalRepository {
 }
 
 impl Adder for LocalRepository {
-    async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    async fn add_files<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = models::InsertFile> + Unpin + Send,
     {
         self.db.add_files(s).await
     }
 
-    async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    async fn add_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
@@ -464,7 +464,7 @@ impl BlobReceiver for LocalRepository {
             .boxed()
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
         self.db
             .select_transfer(transfer_id)
             .await
@@ -475,8 +475,6 @@ impl BlobReceiver for LocalRepository {
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
                 assimilate::assimilate(self, s).await
             })
-            .await?;
-
-        Ok(())
+            .await
     }
 }

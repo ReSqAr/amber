@@ -129,7 +129,7 @@ impl BlobReceiver for ManagedRepository {
         }
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<(), InternalError> {
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
         match self {
             ManagedRepository::Local(local) => local.finalise_transfer(transfer_id).await,
             ManagedRepository::Grpc(grpc) => grpc.finalise_transfer(transfer_id).await,

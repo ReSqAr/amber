@@ -71,7 +71,7 @@ impl Database {
             .await
     }
 
-    pub async fn add_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn add_files<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = InsertFile> + Unpin,
     {
@@ -115,10 +115,10 @@ impl Database {
             "files added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
-        Ok(())
+        Ok(total_inserted)
     }
 
-    pub async fn add_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn add_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = InsertBlob> + Unpin,
     {
@@ -164,7 +164,7 @@ impl Database {
             "blobs added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
-        Ok(())
+        Ok(total_inserted)
     }
 
     pub async fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
