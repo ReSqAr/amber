@@ -50,7 +50,7 @@ pub async fn materialise(
                 Ok::<Action, InternalError>(Action::Skipped)
             }
         })
-        .buffer_unordered(local.buffer_size(BufferType::Checkout));
+        .buffer_unordered(local.buffer_size(BufferType::Materialise));
 
     while let Some(next) = x.next().await {
         let action = next?;

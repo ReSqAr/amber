@@ -222,7 +222,7 @@ impl Config for LocalRepository {
             BufferType::State => 10000,
             BufferType::StateChecker => 100,
             BufferType::Walker => 10000,
-            BufferType::Checkout => 100,
+            BufferType::Materialise => 100,
         }
     }
 }

@@ -22,7 +22,7 @@ pub async fn sync(
         let start_time = tokio::time::Instant::now();
         let mut sync_obs = BaseObserver::without_id("sync");
 
-        connect_sync_checkout(local_repository, connection_name.clone()).await?;
+        connect_sync_materialise(local_repository, connection_name.clone()).await?;
 
         let duration = start_time.elapsed();
         let msg = match connection_name {
@@ -88,7 +88,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let checkout = BaseLayoutBuilderBuilder::default()
+    let materialise = BaseLayoutBuilderBuilder::default()
         .type_key("materialise")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
@@ -107,11 +107,11 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     [
         LayoutItemBuilderNode::from(connect),
         LayoutItemBuilderNode::from(sync_table),
-        LayoutItemBuilderNode::from(checkout).add_child(materialise_file),
+        LayoutItemBuilderNode::from(materialise).add_child(materialise_file),
     ]
 }
 
-async fn connect_sync_checkout(
+async fn connect_sync_materialise(
     local: LocalRepository,
     connection_name: Option<String>,
 ) -> Result<(), InternalError> {

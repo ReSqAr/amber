@@ -164,7 +164,6 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-
     [
         LayoutItemBuilderNode::from(connect),
         LayoutItemBuilderNode::from(transfer).with_children([LayoutItemBuilderNode::from(rclone)
