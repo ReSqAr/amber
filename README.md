@@ -13,8 +13,6 @@
   - fsck
   - edit & deletion
 - proper error handling
-- better name for:
-  - checkout/hardlinked
 - connections:
   - add support for BlobRepository
   - ssh: which honours ssh config + key auth

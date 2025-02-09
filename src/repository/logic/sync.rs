@@ -8,7 +8,7 @@ pub async fn sync_table<I, L, R>(
     local_param: I::Params,
     remote: &R,
     remote_param: I::Params,
-) -> anyhow::Result<(), InternalError>
+) -> Result<(), InternalError>
 where
     I: Send + Sync + 'static + SyncerParams,
     L: Syncer<I> + Send + Sync,

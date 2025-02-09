@@ -4,11 +4,10 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::checkout;
+use crate::repository::logic::materialise;
 use crate::repository::logic::transfer::{cleanup_staging, transfer};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
-use anyhow::Result;
 use std::path::PathBuf;
 
 pub async fn pull(
@@ -29,7 +28,7 @@ pub async fn pull(
 
         let count = transfer(&local, &managed_remote, &local, connection).await?;
 
-        checkout::checkout(&local).await?;
+        materialise::materialise(&local).await?;
 
         cleanup_staging(&local).await?;
 
@@ -82,8 +81,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                false => msg.unwrap_or("rclone: running".into()),
-                true => msg.unwrap_or("rclone: done".into()),
+                false => msg.unwrap_or("copying...".into()),
+                true => msg.unwrap_or("copied".into()),
             },
         )))
         .style(Style::Template {
@@ -116,14 +115,30 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let checkout_file = BaseLayoutBuilderBuilder::default()
-        .type_key("checkout:file")
+    let assimilate = BaseLayoutBuilderBuilder::default()
+        .type_key("assimilate")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                true => msg.unwrap_or("verifying files".into()),
+                false => msg.unwrap_or("verified".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
+            done: "{prefix}{pos} {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    let materialise_file = BaseLayoutBuilderBuilder::default()
+        .type_key("materialise:file")
         .limit(5)
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdStateFn(Box::new(
             move |done, id, _| match done {
-                false => format!("checking {}", id.unwrap_or("<missing>".into())),
-                true => format!("checked {}", id.unwrap_or("<missing>".into())),
+                false => format!("materialising {}", id.unwrap_or("<missing>".into())),
+                true => format!("materialised {}", id.unwrap_or("<missing>".into())),
             },
         )))
         .style(Style::Template {
@@ -133,43 +148,28 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let checkout = BaseLayoutBuilderBuilder::default()
-        .type_key("checkout")
+    let materialise = BaseLayoutBuilderBuilder::default()
+        .type_key("materialise")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                true => msg.unwrap_or("checked out files".into()),
-                false => msg.unwrap_or("checking".into()),
+                true => msg.unwrap_or("materialised files".into()),
+                false => msg.unwrap_or("materialising files".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {pos} files checked out".into(),
-            done: "{prefix}{pos} files checked out".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
+            done: "{prefix} {msg} ({pos})".into(),
         })
         .infallible_build()
         .boxed();
 
-    let assimilate = BaseLayoutBuilderBuilder::default()
-        .type_key("assimilate")
-        .termination_action(TerminationAction::Remove)
-        .state_transformer(StateTransformer::StateFn(Box::new(
-            |done, msg| match done {
-                true => msg.unwrap_or("checked out files".into()),
-                false => msg.unwrap_or("checking".into()),
-            },
-        )))
-        .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {pos} files checked out".into(),
-            done: "{prefix}{pos} files checked out".into(),
-        })
-        .infallible_build()
-        .boxed();
 
     [
         LayoutItemBuilderNode::from(connect),
         LayoutItemBuilderNode::from(transfer).with_children([LayoutItemBuilderNode::from(rclone)
             .with_children([LayoutItemBuilderNode::from(rclone_file)])]),
         LayoutItemBuilderNode::from(assimilate),
-        LayoutItemBuilderNode::from(checkout).add_child(checkout_file),
+        LayoutItemBuilderNode::from(materialise).add_child(materialise_file),
     ]
 }

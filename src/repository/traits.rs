@@ -25,6 +25,7 @@ pub trait Metadata {
 pub enum BufferType {
     Assimilate,
     TransferRcloneFilesWriter,
+    TransferRcloneFilesStream,
     AddFilesBlobifyFutureFileBuffer,
     AddFilesDBAddFiles,
     AddFilesDBAddBlobs,

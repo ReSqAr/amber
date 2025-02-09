@@ -34,16 +34,17 @@ fn write_rclone_files_clone(
     JoinHandle<Result<(), InternalError>>,
     mpsc::Sender<TransferItem>,
 ) {
-    let buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriter);
-    let (tx, rx) = mpsc::channel::<TransferItem>(buffer_size);
+    let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriter);
+    let (tx, rx) = mpsc::channel::<TransferItem>(channel_buffer_size);
 
+    let writer_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesStream);
     let writing_task = tokio::spawn(async move {
         let file = File::create(rclone_files)
             .await
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream = ReceiverStream::new(rx).ready_chunks(buffer_size);
+        let mut chunked_stream = ReceiverStream::new(rx).ready_chunks(writer_buffer_size);
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item| {
                 acc.push_str(&(item.path + "\n"));
@@ -172,7 +173,6 @@ pub async fn transfer(
     let mut rng = rand::rng();
     let transfer_id: u32 = rng.random();
 
-    let start_time = tokio::time::Instant::now();
     let mut transfer_obs = BaseObserver::without_id("transfer");
 
     let transfer_path = local.transfer_path(transfer_id);
@@ -199,6 +199,7 @@ pub async fn transfer(
         ],
     );
 
+    let start_time = tokio::time::Instant::now();
     let stream = destination
         .create_transfer_request(transfer_id, source_repo_id)
         .await;
@@ -247,23 +248,25 @@ pub async fn transfer(
     )
     .await?;
 
+    let start_time = tokio::time::Instant::now();
     transfer_obs.observe_state(log::Level::Debug, "verifying");
     let count = destination.finalise_transfer(transfer_id).await?;
-
     let msg = if count > 0 {
         let duration = start_time.elapsed();
-        format!("transferred {count} files in {duration:.2?}")
+        format!("verified {count} files in {duration:.2?}")
     } else {
-        "no files transferred".into()
+        "no files verified".into()
     };
-    transfer_obs.observe_termination(log::Level::Info, msg);
+    transfer_obs.observe_state(log::Level::Info, msg);
+
+    transfer_obs.observe_termination(log::Level::Debug, "done");
 
     // TODO: cleanup staging folder - local + remote
 
     Ok(count)
 }
 
-pub(crate) async fn cleanup_staging(local: &impl Local) -> anyhow::Result<(), InternalError> {
+pub(crate) async fn cleanup_staging(local: &impl Local) -> Result<(), InternalError> {
     let staging_path = local.staging_path();
     match fs::remove_dir_all(&staging_path).await {
         Ok(_) => {}

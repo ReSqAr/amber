@@ -7,7 +7,6 @@ use crate::repository::local::LocalRepository;
 use crate::repository::logic::transfer::{cleanup_staging, transfer};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
-use anyhow::Result;
 use std::path::PathBuf;
 
 pub async fn push(
@@ -79,7 +78,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                false => msg.unwrap_or("rclone: running".into()),
+                false => msg.unwrap_or("rclone: copying...".into()),
                 true => msg.unwrap_or("rclone: done".into()),
             },
         )))

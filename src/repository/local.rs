@@ -213,6 +213,7 @@ impl Config for LocalRepository {
     fn buffer_size(&self, buffer: BufferType) -> usize {
         match buffer {
             BufferType::Assimilate => 1000,
+            BufferType::TransferRcloneFilesStream => 10000,
             BufferType::TransferRcloneFilesWriter => 1000,
             BufferType::AddFilesBlobifyFutureFileBuffer => 1000,
             BufferType::AddFilesDBAddFiles => 1000,

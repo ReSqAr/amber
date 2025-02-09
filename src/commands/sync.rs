@@ -6,7 +6,7 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::{checkout, sync};
+use crate::repository::logic::{materialise, sync};
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Local, Metadata, Syncer};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
@@ -71,8 +71,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let checkout_file = BaseLayoutBuilderBuilder::default()
-        .type_key("checkout:file")
+    let materialise_file = BaseLayoutBuilderBuilder::default()
+        .type_key("materialise:file")
         .limit(5)
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdStateFn(Box::new(
@@ -89,7 +89,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .boxed();
 
     let checkout = BaseLayoutBuilderBuilder::default()
-        .type_key("checkout")
+        .type_key("materialise")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
@@ -107,7 +107,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     [
         LayoutItemBuilderNode::from(connect),
         LayoutItemBuilderNode::from(sync_table),
-        LayoutItemBuilderNode::from(checkout).add_child(checkout_file),
+        LayoutItemBuilderNode::from(checkout).add_child(materialise_file),
     ]
 }
 
@@ -124,7 +124,7 @@ async fn connect_sync_checkout(
         sync_repositories(&local, &managed_remote).await?;
     }
 
-    checkout::checkout(&local).await?;
+    materialise::materialise(&local).await?;
 
     Ok(())
 }

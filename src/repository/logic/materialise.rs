@@ -5,12 +5,12 @@ use crate::utils::errors::InternalError;
 use futures::StreamExt;
 use tokio::fs;
 
-pub async fn checkout(
+pub async fn materialise(
     local: &(impl Local + Config + Reconciler + Send),
-) -> anyhow::Result<(), InternalError> {
+) -> Result<(), InternalError> {
     let mut count = 0;
     let start_time = tokio::time::Instant::now();
-    let mut checkout_obs = BaseObserver::without_id("checkout");
+    let mut materialise_obs = BaseObserver::without_id("materialise");
 
     enum Action {
         CheckedOut,
@@ -23,7 +23,7 @@ pub async fn checkout(
             let FilePathWithBlobId { path, blob_id } = item?;
             let object_path = local.blob_path(blob_id.clone());
             let target_path = local.root().join(path.clone());
-            let mut o = BaseObserver::with_id("checkout:file", path);
+            let mut o = BaseObserver::with_id("materialise:file", path);
 
             if !fs::metadata(&target_path)
                 .await
@@ -37,7 +37,7 @@ pub async fn checkout(
 
                 o.observe_termination_ext(
                     log::Level::Info,
-                    "hardlinked",
+                    "materialised",
                     [("blob_id".into(), blob_id.clone())],
                 );
                 Ok::<Action, InternalError>(Action::CheckedOut)
@@ -58,16 +58,16 @@ pub async fn checkout(
             Action::CheckedOut => 1,
             Action::Skipped => 0,
         };
-        checkout_obs.observe_position(log::Level::Trace, count);
+        materialise_obs.observe_position(log::Level::Trace, count);
     }
 
     let duration = start_time.elapsed();
     let msg = if count > 0 {
-        format!("checked out {count} files in {duration:.2?}")
+        format!("materialised {count} files in {duration:.2?}")
     } else {
-        "no new files checked out".into()
+        "no new files materialised".into()
     };
-    checkout_obs.observe_termination(log::Level::Info, msg);
+    materialise_obs.observe_termination(log::Level::Info, msg);
 
     Ok(())
 }
