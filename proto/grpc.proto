@@ -74,7 +74,9 @@ message TransferItem {
     string path = 3;
 }
 
-message PrepareTransferResponse {}
+message PrepareTransferResponse {
+    uint64 count = 1;
+}
 message CreateTransferRequestRequest {
     uint32 transfer_id = 1;
     string repo_id = 2;

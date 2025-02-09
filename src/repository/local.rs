@@ -403,7 +403,7 @@ impl ConnectionManager for LocalRepository {
 }
 
 impl BlobSender for LocalRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<(), InternalError>
+    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {
@@ -426,19 +426,18 @@ impl BlobSender for LocalRepository {
             self.buffer_size(BufferType::PrepareTransfer),
         );
 
-        //let stream = stream.try_all(|_| true).await? // TODO: express in more straightforward manner
-
+        let mut count = 0;
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
-                Ok(()) => {}
+                Ok(()) => count += 1,
                 Err(e) => {
                     return Err(e);
                 }
             }
         }
 
-        Ok(())
+        Ok(count)
     }
 }
 

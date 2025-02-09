@@ -8,7 +8,7 @@ use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::{checkout, sync};
 use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Local, Metadata, Syncer};
-use crate::utils::errors::{AppError, InternalError};
+use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
 pub async fn sync(
@@ -118,16 +118,7 @@ async fn connect_sync_checkout(
     if let Some(connection_name) = connection_name {
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
         let connection = local.connect(connection_name.clone()).await?;
-        let managed_remote = match connection.remote.as_managed() {
-            Some(tracked_remote) => tracked_remote,
-            None => {
-                return Err(AppError::UnsupportedRemote {
-                    connection_name,
-                    operation: "sync".into(),
-                }
-                .into());
-            }
-        };
+        let managed_remote = connection.get_managed_repo()?;
         connect_obs.observe_termination(log::Level::Info, "connected");
 
         sync_repositories(&local, &managed_remote).await?;

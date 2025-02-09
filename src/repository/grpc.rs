@@ -6,9 +6,9 @@ use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
     Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
-    LookupLastIndicesRequest, LookupLastIndicesResponse, Repository, RepositoryIdRequest,
-    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest, TransferItem,
-    UpdateLastIndicesRequest,
+    LookupLastIndicesRequest, LookupLastIndicesResponse, PrepareTransferResponse, Repository,
+    RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
@@ -199,18 +199,18 @@ impl BlobSender for GRPCClient {
     fn prepare_transfer<S>(
         &self,
         s: S,
-    ) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    ) -> impl std::future::Future<Output = Result<u64, InternalError>> + Send
     where
         S: Stream<Item = DbTransferItem> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
-            guard
+            let PrepareTransferResponse { count } = guard
                 .prepare_transfer(s.map(TransferItem::from))
-                .err_into()
-                .map_ok(|_| ())
-                .await
+                .await?
+                .into_inner();
+            Ok(count)
         }
     }
 }

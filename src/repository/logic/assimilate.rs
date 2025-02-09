@@ -5,7 +5,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
 use async_lock::Mutex;
 use futures::{Stream, StreamExt};
-use log::warn;
+use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
@@ -58,7 +58,7 @@ async fn assimilate_blob(
 
             fs::rename(file_path, blob_path).await?;
         } else {
-            warn!("blob {blob_id} already exists, skipping");
+            debug!("blob {blob_id} already exists, skipping");
         }
         // lock is released here as `_lock_guard` goes out of scope
     }

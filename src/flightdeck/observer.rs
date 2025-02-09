@@ -55,6 +55,7 @@ impl<T: Observable> Observer<T> {
         self
     }
 
+    #[allow(dead_code)] // TODO
     pub fn observe_error<E, U>(&mut self, map: U) -> impl FnOnce(E) -> E + use<'_, E, T, U>
     where
         U: FnOnce(&E) -> T::Observation,

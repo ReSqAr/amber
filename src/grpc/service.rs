@@ -150,12 +150,12 @@ where
         &self,
         request: Request<Streaming<TransferItem>>,
     ) -> Result<Response<PrepareTransferResponse>, Status> {
-        request
+        let count = request
             .into_inner()
             .map_ok::<DbTransferItem, _>(TransferItem::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.prepare_transfer(s))
             .await?;
-        Ok(Response::new(PrepareTransferResponse {}))
+        Ok(Response::new(PrepareTransferResponse { count }))
     }
 
     type CreateTransferRequestStream =

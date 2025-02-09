@@ -47,7 +47,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .type_key("sha")
         .limit(5)
         .termination_action(TerminationAction::Remove)
-        .state_transformer(StateTransformer::IdStateFn(Box::new(move |done, id, _| {
+        .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
             let id = id.unwrap_or("<missing>".into());
             let path = id.strip_prefix(root.as_str()).unwrap_or(id.as_str());
             match done {

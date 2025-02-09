@@ -10,6 +10,10 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub enum BaseObservation {
     State(String),
+    StateWithData {
+        state: String,
+        data: HashMap<String, String>,
+    },
     TerminalState(String),
     TerminalStateWithData {
         state: String,
@@ -53,6 +57,19 @@ impl Observable for BaseObservable {
                 key: "state".into(),
                 value: s.into(),
             }],
+            Some(BaseObservation::StateWithData { state, data }) => {
+                let mut d = vec![Data {
+                    key: "state".into(),
+                    value: state.into(),
+                }];
+                for (key, value) in data {
+                    d.push(Data {
+                        key,
+                        value: value.into(),
+                    })
+                }
+                d
+            }
             Some(BaseObservation::TerminalState(s)) => vec![Data {
                 key: "state".into(),
                 value: s.into(),
@@ -83,6 +100,7 @@ impl Observable for BaseObservable {
         self.is_terminal |= match observation {
             None => false,
             Some(BaseObservation::State(_)) => false,
+            Some(BaseObservation::StateWithData { .. }) => false,
             Some(BaseObservation::TerminalState(_)) => true,
             Some(BaseObservation::TerminalStateWithData { .. }) => true,
             Some(BaseObservation::Position(_)) => false,
@@ -115,6 +133,20 @@ impl Observer<BaseObservable> {
 
     pub fn observe_state(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
         self.observe(level, BaseObservation::State(s.into()))
+    }
+    pub fn observe_state_ext(
+        &mut self,
+        level: log::Level,
+        s: impl Into<String>,
+        data: impl Into<HashMap<String, String>>,
+    ) -> &mut Self {
+        self.observe(
+            level,
+            BaseObservation::StateWithData {
+                state: s.into(),
+                data: data.into(),
+            },
+        )
     }
     pub fn observe_termination(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
         self.observe(level, BaseObservation::TerminalState(s.into()))
@@ -348,6 +380,7 @@ impl LayoutItem for BaseLayoutItem {
 pub enum TerminationAction {
     Remove,
     Keep,
+    #[allow(dead_code)] // TODO
     Fn(TerminationActionFn),
 }
 
@@ -391,6 +424,7 @@ impl StateTransformer {
 #[allow(clippy::large_enum_variant)]
 pub enum Style {
     Default,
+    #[allow(dead_code)] // TODO
     Raw {
         in_progress: ProgressStyle,
         done: ProgressStyle,

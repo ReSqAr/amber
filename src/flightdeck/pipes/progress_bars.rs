@@ -239,6 +239,14 @@ impl ProgressBarPipe {
     }
 
     pub(crate) async fn flush(&mut self) {
+        for items in self.items.values() {
+            for item in items.values() {
+                if let Some(pb) = item.get_bar() {
+                    pb.tick()
+                }
+            }
+        }
+
         if self.type_keys.is_empty() {
             return;
         }

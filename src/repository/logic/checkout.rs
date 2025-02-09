@@ -65,7 +65,7 @@ pub async fn checkout(
     let msg = if count > 0 {
         format!("checked out {count} files in {duration:.2?}")
     } else {
-        "no files checked out".into()
+        "no new files checked out".into()
     };
     checkout_obs.observe_termination(log::Level::Info, msg);
 

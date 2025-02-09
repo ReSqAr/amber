@@ -100,7 +100,7 @@ where
 }
 
 impl BlobSender for ManagedRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<(), InternalError>
+    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static,
     {

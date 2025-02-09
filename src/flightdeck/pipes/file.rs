@@ -33,6 +33,8 @@ impl FilePipe {
 
         log_object.insert("level".to_string(), JsonValue::String(level.to_string()));
 
+        log_object.insert("type".to_string(), JsonValue::String(obs.type_key));
+
         if let Some(id_value) = obs.id.map(JsonValue::String) {
             log_object.insert("id".to_string(), id_value);
         }

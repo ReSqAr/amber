@@ -155,14 +155,18 @@ struct RcloneJsonLog {
     msg: String,
 
     #[serde(default)]
+    object: Option<String>,
+
+    #[serde(default)]
     stats: Option<RcloneStats>,
 }
 
 #[derive(Debug)]
 pub enum RcloneEvent {
-    Message(String),
+    UnknownMessage(String),
     Error(String),
     Stats(RcloneStats),
+    Copied(String),
 }
 
 pub async fn run_rclone_operation<F>(
@@ -239,20 +243,26 @@ where
     };
 
     let parse_and_callback = |channel: &str, line: String, callback: &mut F| {
-        debug!("rclone {channel}: {line}");
         match serde_json::from_str::<RcloneJsonLog>(&line) {
             Ok(json_log) => {
-                debug!("rclone json log {channel}: {json_log:?}");
-                let event = match (json_log.level.as_str(), json_log.stats) {
-                    ("error", _) => RcloneEvent::Error(json_log.msg),
-                    (_, Some(stats)) => RcloneEvent::Stats(stats),
-                    (_, None) => RcloneEvent::Message(json_log.msg),
+                let event = if "error" == json_log.level.as_str() {
+                    RcloneEvent::Error(json_log.msg)
+                } else if let Some(stats) = json_log.stats {
+                    RcloneEvent::Stats(stats)
+                } else if json_log.msg.starts_with("Copied") {
+                    if let Some(object) = json_log.object {
+                        RcloneEvent::Copied(object)
+                    } else {
+                        RcloneEvent::UnknownMessage(line)
+                    }
+                } else {
+                    RcloneEvent::UnknownMessage(line)
                 };
                 callback(event);
             }
             Err(parse_err) => {
                 debug!("Failed to parse rclone {channel} JSON: {parse_err}");
-                callback(RcloneEvent::Message(line));
+                callback(RcloneEvent::UnknownMessage(line));
             }
         }
     };

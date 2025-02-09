@@ -5,8 +5,14 @@
   - add:
     - make all files read-only <- disable via --immutable
     - amber add breaks if blob exists but is not available locally and not the same [checker]
+  - pull/push:
+    - do sync first (if possible)
+  - sync breaks if upstream blob has changed
   - fsck
   - edit & deletion
+- proper error handling
+- better name for:
+  - checkout/hardlinked
 - connections:
   - add support for BlobRepository
   - ssh: which honours ssh config + key auth
@@ -18,8 +24,8 @@
     - remote list [done]
     - remote add [done]
     - sync [done]
-    - pull     
-    - push     
+    - pull [needs fine-tuning]
+    - push [needs fine-tuning]
 - optimisation:
   - optimise buffer sizes - automatically via gen.py script + trying all kind of variants - needs config reader
 - add documentation folder with knowledge base articles on:

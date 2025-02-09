@@ -113,7 +113,7 @@ pub trait ConnectionManager {
 }
 
 pub trait BlobSender {
-    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
+    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
     where
         S: Stream<Item = TransferItem> + Unpin + Send + 'static;
 }
