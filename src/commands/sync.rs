@@ -93,13 +93,13 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                true => msg.unwrap_or("checked out files".into()),
+                true => msg.unwrap_or("materialised files".into()),
                 false => msg.unwrap_or("checking".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {pos} files checked out".into(),
-            done: "{prefix}{pos} files checked out".into(),
+            in_progress: "{prefix}{spinner:.green} materialising files ({pos})".into(),
+            done: "{prefix}{pos} files materialised".into(),
         })
         .infallible_build()
         .boxed();

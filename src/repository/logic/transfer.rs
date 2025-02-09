@@ -205,12 +205,20 @@ pub async fn transfer(
         .await;
 
     transfer_obs.observe_state(log::Level::Debug, "preparing");
-    let rclone_files_clone = rclone_files.clone();
     let expected_count = {
+        let mut prep_count = 0;
+        let mut prep_obs = Observer::with_auto_termination(
+            BaseObservable::without_id("transfer:preparation"),
+            log::Level::Debug,
+            BaseObservation::TerminalState("done".into()),
+        );
+        let rclone_files_clone = rclone_files.clone();
         let (writing_task, tx) = write_rclone_files_clone(local, rclone_files_clone.abs().clone());
         let count = stream
             .then(move |t| {
                 let tx = tx.clone();
+                prep_count += 1;
+                prep_obs.observe_position(log::Level::Trace, prep_count);
                 async move {
                     if let Ok(ref item) = t {
                         tx.send(item.clone()).await.map_err(|err| {

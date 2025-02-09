@@ -60,6 +60,20 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
+    let prep = BaseLayoutBuilderBuilder::default()
+        .type_key("transfer:preparation")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::Static {
+            msg: "preparing files...".into(),
+            done: "files prepared".into(),
+        })
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
+            done: "{prefix}✓ {msg} ({pos})".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     let rclone_file = BaseLayoutBuilderBuilder::default()
         .type_key("rclone:file")
         .limit(5)
@@ -154,20 +168,23 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("materialised files".into()),
-                false => msg.unwrap_or("materialising files".into()),
+                false => msg.unwrap_or("checking".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
-            done: "{prefix} {msg} ({pos})".into(),
+            in_progress: "{prefix}{spinner:.green} materialising files ({pos})".into(),
+            done: "{prefix}{pos} files materialised".into(),
         })
         .infallible_build()
         .boxed();
 
     [
         LayoutItemBuilderNode::from(connect),
-        LayoutItemBuilderNode::from(transfer).with_children([LayoutItemBuilderNode::from(rclone)
-            .with_children([LayoutItemBuilderNode::from(rclone_file)])]),
+        LayoutItemBuilderNode::from(transfer).with_children([
+            LayoutItemBuilderNode::from(prep),
+            LayoutItemBuilderNode::from(rclone)
+                .with_children([LayoutItemBuilderNode::from(rclone_file)]),
+        ]),
         LayoutItemBuilderNode::from(assimilate),
         LayoutItemBuilderNode::from(materialise).add_child(materialise_file),
     ]

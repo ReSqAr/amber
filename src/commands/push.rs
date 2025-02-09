@@ -57,6 +57,20 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
+    let prep = BaseLayoutBuilderBuilder::default()
+        .type_key("transfer:preparation")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::Static {
+            msg: "preparing files...".into(),
+            done: "files prepared".into(),
+        })
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
+            done: "{prefix}✓ {msg} ({pos})".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     let rclone_file = BaseLayoutBuilderBuilder::default()
         .type_key("rclone:file")
         .limit(5)
@@ -78,8 +92,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                false => msg.unwrap_or("rclone: copying...".into()),
-                true => msg.unwrap_or("rclone: done".into()),
+                false => msg.unwrap_or("copying...".into()),
+                true => msg.unwrap_or("copied".into()),
             },
         )))
         .style(Style::Template {
@@ -114,7 +128,10 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     [
         LayoutItemBuilderNode::from(connect),
-        LayoutItemBuilderNode::from(transfer).with_children([LayoutItemBuilderNode::from(rclone)
-            .with_children([LayoutItemBuilderNode::from(rclone_file)])]),
+        LayoutItemBuilderNode::from(transfer).with_children([
+            LayoutItemBuilderNode::from(prep),
+            LayoutItemBuilderNode::from(rclone)
+                .with_children([LayoutItemBuilderNode::from(rclone_file)]),
+        ]),
     ]
 }

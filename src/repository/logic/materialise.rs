@@ -13,7 +13,7 @@ pub async fn materialise(
     let mut materialise_obs = BaseObserver::without_id("materialise");
 
     enum Action {
-        CheckedOut,
+        Materialised,
         Skipped,
     }
 
@@ -40,7 +40,7 @@ pub async fn materialise(
                     "materialised",
                     [("blob_id".into(), blob_id.clone())],
                 );
-                Ok::<Action, InternalError>(Action::CheckedOut)
+                Ok::<Action, InternalError>(Action::Materialised)
             } else {
                 o.observe_termination_ext(
                     log::Level::Trace,
@@ -55,7 +55,7 @@ pub async fn materialise(
     while let Some(next) = x.next().await {
         let action = next?;
         count += match action {
-            Action::CheckedOut => 1,
+            Action::Materialised => 1,
             Action::Skipped => 0,
         };
         materialise_obs.observe_position(log::Level::Trace, count);
