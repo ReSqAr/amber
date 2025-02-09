@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 aes = "0.8"
 anyhow = "1.0"
+async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 async-lock = "3.4"
 async-trait = "0.1"
 base64 = "0.22"

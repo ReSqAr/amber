@@ -1,11 +1,12 @@
 use crate::flightdeck::observation::Observation;
 use crate::flightdeck::observation::Value;
+use async_compression::tokio::write::GzipEncoder;
 use chrono::SecondsFormat;
 use sqlx::types::JsonValue;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub struct FilePipe {
-    writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
+    encoder: GzipEncoder<Box<dyn AsyncWrite + Send + Sync + Unpin>>,
     level_filter: log::LevelFilter,
     buffer: Vec<String>,
 }
@@ -15,15 +16,14 @@ impl FilePipe {
         writer: Box<dyn AsyncWrite + Send + Sync + Unpin>,
         level_filter: log::LevelFilter,
     ) -> Self {
+        let encoder = GzipEncoder::new(writer);
         Self {
-            writer,
+            encoder,
             level_filter,
-            buffer: vec![],
+            buffer: Vec::new(),
         }
     }
-}
 
-impl FilePipe {
     pub(crate) fn observe(&mut self, level: log::Level, obs: Observation) {
         if level > self.level_filter {
             return;
@@ -70,15 +70,18 @@ impl FilePipe {
         let data = self.buffer.concat();
         self.buffer.clear();
 
-        if let Err(e) = self.writer.write_all(data.as_bytes()).await {
+        if let Err(e) = self.encoder.write_all(data.as_bytes()).await {
             log::error!("flightdeck error: unable to write logs: {}", e);
         }
-        if let Err(e) = self.writer.flush().await {
+        if let Err(e) = self.encoder.flush().await {
             log::error!("flightdeck error: unable to flush logs: {}", e);
         }
     }
 
     pub(crate) async fn finish(&mut self) {
-        self.flush().await
+        self.flush().await;
+        if let Err(e) = self.encoder.shutdown().await {
+            log::error!("flightdeck error: unable to shutdown encoder: {}", e);
+        }
     }
 }

@@ -73,6 +73,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",
+ "async-compression",
  "async-lock",
  "async-trait",
  "base64",
@@ -190,6 +191,19 @@ dependencies = [
  "blake2",
  "cpufeatures",
  "password-hash",
+]
+
+[[package]]
+name = "async-compression"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df895a515f70646414f4b45c0b79082783b80552b373a68283012928df56f522"
+dependencies = [
+ "flate2",
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
