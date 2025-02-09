@@ -205,7 +205,7 @@ impl Local for LocalRepository {
 
         self.repository_path()
             .join("logs")
-            .join(format!("run_{}.txt.gzip", timestamp))
+            .join(format!("run_{}.txt.gz", timestamp))
     }
 }
 
