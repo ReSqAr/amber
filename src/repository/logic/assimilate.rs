@@ -75,7 +75,7 @@ async fn assimilate_blob(
 pub(crate) async fn assimilate<S>(
     local: &(impl Local + Metadata + Adder + Send + Sync + Config),
     stream: S,
-) -> Result<(), InternalError>
+) -> Result<u64, InternalError>
 where
     S: Stream<Item = Item> + Unpin + Send + 'static,
 {
