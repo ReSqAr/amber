@@ -8,6 +8,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
     run_rclone_operation, LocalConfig, RcloneEvent, RcloneStats, RcloneTarget,
 };
+use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -106,18 +107,9 @@ async fn execute_rclone(
                 obs.observe_position(log::Level::Trace, new_count);
             }
             RcloneEvent::Stats(RcloneStats {
-                // TODO
                 bytes,
-                elapsed_time,
-                errors,
                 eta,
-                fatal_error,
-                retry_error,
-                speed,
                 total_bytes,
-                total_transfers,
-                transfer_time,
-                transfers,
                 transferring,
                 ..
             }) => {
@@ -128,20 +120,30 @@ async fn execute_rclone(
                     let f = files.entry(transfer.name.clone()).or_insert_with(|| {
                         Observer::with_auto_termination(
                             BaseObservable::with_id("rclone:file", transfer.name.clone()),
-                            log::Level::Info,
+                            log::Level::Debug,
                             BaseObservation::TerminalState("done".into()),
                         )
                     });
                     f.observe_state(
                         log::Level::Debug,
-                        format!("{}/{} {}", transfer.bytes, transfer.size, transfer.eta),
+                        format!(
+                            "{}/{}",
+                            units::human_readable_size(transfer.bytes),
+                            units::human_readable_size(transfer.size),
+                        ),
                     );
                 }
 
                 files.retain(|key, _| seen_files.contains(key));
 
                 let msg = format!(
-                    "{elapsed_time}/{eta:?}/{transfer_time} {bytes}B/{total_bytes}B {transfers}/{total_transfers} {speed} B/s (E:{errors} R: {retry_error} F: {fatal_error})",
+                    "{}/{} ETA: {}",
+                    units::human_readable_size(bytes),
+                    units::human_readable_size(total_bytes),
+                    match eta {
+                        None => "-".into(),
+                        Some(eta) => format!("{}s", eta),
+                    }
                 );
                 obs.observe_state(log::Level::Debug, msg);
             }

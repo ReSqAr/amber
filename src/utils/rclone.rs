@@ -114,16 +114,8 @@ impl RcloneTarget {
 pub struct RcloneStats {
     #[serde(default)]
     pub bytes: u64,
-    pub elapsed_time: f64,
-    pub errors: u64,
-    pub eta: Option<f64>,
-    pub fatal_error: bool,
-    pub retry_error: bool,
-    pub speed: f64,
     pub total_bytes: u64,
-    pub total_transfers: u64,
-    pub transfer_time: f64,
-    pub transfers: u64,
+    pub eta: Option<f64>,
     #[serde(default)]
     pub transferring: Vec<TransferProgress>,
 }
@@ -131,22 +123,9 @@ pub struct RcloneStats {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
-    #[allow(dead_code)] // TODO
     pub bytes: u64,
-    #[allow(dead_code)] // TODO
-    pub eta: u64,
-    #[allow(dead_code)] // TODO
-    pub group: String,
-    #[allow(dead_code)] // TODO
     pub name: String,
-    #[allow(dead_code)] // TODO
-    pub percentage: u64,
-    #[allow(dead_code)] // TODO
     pub size: u64,
-    #[allow(dead_code)] // TODO
-    pub speed: f64,
-    #[allow(dead_code)] // TODO
-    pub speed_avg: f64,
 }
 
 #[derive(Debug, Deserialize)]

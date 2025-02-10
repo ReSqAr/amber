@@ -217,7 +217,7 @@ impl Config for LocalRepository {
             BufferType::AddFilesDBAddBlobs => 1000,
             BufferType::PrepareTransfer => 1000,
             BufferType::State => 10000,
-            BufferType::StateChecker => 100,
+            BufferType::StateChecker => 10000,
             BufferType::Walker => 10000,
             BufferType::Materialise => 100,
         }
