@@ -73,7 +73,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
