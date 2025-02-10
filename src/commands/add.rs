@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn add(
     maybe_root: Option<PathBuf>,
-    dry_run: bool,
+    deduplicate: bool,
     verbose: bool,
 ) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
@@ -29,7 +29,7 @@ pub async fn add(
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
-        add_files(local_repository, dry_run).await?;
+        add_files(local_repository, deduplicate).await?;
         Ok::<(), InternalError>(())
     };
 
@@ -92,7 +92,7 @@ pub async fn add_files(
         + Send
         + Sync
         + 'static,
-    dry_run: bool,
+    deduplicate: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut adder_obs = BaseObserver::without_id("adder");
@@ -139,9 +139,13 @@ pub async fn add_files(
                 let blob_locks_clone = blob_locks.clone();
                 async move {
                     let path = local_repository_clone.root().join(file_result?.path);
-                    let (insert_file, insert_blob) =
-                        blobify::blobify(&local_repository_clone, &path, dry_run, blob_locks_clone)
-                            .await?;
+                    let (insert_file, insert_blob) = blobify::blobify(
+                        &local_repository_clone,
+                        &path,
+                        deduplicate,
+                        blob_locks_clone,
+                    )
+                    .await?;
                     if let Some(file) = insert_file {
                         file_tx_clone.send(file).await?;
                     }
@@ -153,7 +157,7 @@ pub async fn add_files(
             },
         );
 
-        // Allow multiple blobify operations to run concurrently
+        // allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(
             stream,
             repository.buffer_size(BufferType::AddFilesBlobifyFutureFileBuffer),
