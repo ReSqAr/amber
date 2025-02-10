@@ -405,7 +405,7 @@ impl ProgressBarPipe {
         if let Some(existing) = candidate {
             self.multi.insert_after(existing, new_bar.clone());
         } else {
-            self.multi.add(new_bar.clone());
+            self.multi.insert(0, new_bar.clone());
         }
         task::spawn_blocking(move || {
             new_bar.tick();
