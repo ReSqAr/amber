@@ -12,6 +12,7 @@
   - sync breaks if upstream blob has changed
   - fsck
   - edit & deletion
+- multi.add is wrong, should be insert at 0
 - proper error handling
 - connections:
   - add support for BlobRepository
