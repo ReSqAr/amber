@@ -24,7 +24,7 @@ enum Commands {
     /// Add files to the repository
     Add {
         #[arg(long, default_value_t = false)]
-        deduplicate: bool,
+        skip_deduplication: bool,
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
@@ -84,10 +84,9 @@ pub async fn run() {
 
     let result = match cli.command {
         Commands::Init {} => commands::init::init_repository(cli.path).await,
-        Commands::Add {
-            deduplicate,
-            verbose,
-        } => commands::add::add(cli.path, deduplicate, verbose).await,
+        Commands::Add { skip_deduplication, verbose } => {
+            commands::add::add(cli.path, skip_deduplication, verbose).await
+        }
         Commands::Status { verbose } => commands::status::status(cli.path, verbose).await,
         Commands::Missing {} => commands::missing::missing(cli.path).await,
         Commands::Serve {} => commands::serve::serve(cli.path).await,

@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn add(
     maybe_root: Option<PathBuf>,
-    deduplicate: bool,
+    skip_deduplication: bool,
     verbose: bool,
 ) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
@@ -29,7 +29,7 @@ pub async fn add(
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
-        add_files(local_repository, deduplicate).await?;
+        add_files(local_repository, skip_deduplication).await?;
         Ok::<(), InternalError>(())
     };
 
@@ -92,7 +92,7 @@ pub async fn add_files(
         + Send
         + Sync
         + 'static,
-    deduplicate: bool,
+    skip_deduplication: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut adder_obs = BaseObserver::without_id("adder");
@@ -142,7 +142,7 @@ pub async fn add_files(
                     let (insert_file, insert_blob) = blobify::blobify(
                         &local_repository_clone,
                         &path,
-                        deduplicate,
+                        skip_deduplication,
                         blob_locks_clone,
                     )
                     .await?;

@@ -4,6 +4,7 @@ use crate::grpc::service::Service;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::connect;
 use crate::repository::logic::connect::{ServeError, ServeResponse, ServeResult};
+use crate::repository::logic::files;
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use log::debug;
@@ -12,9 +13,9 @@ use rand::Rng;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::{fs, io};
 use tonic::transport::Server;
 
 pub fn generate_auth_key() -> String {
@@ -87,11 +88,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
 
     server.await?;
 
-    match fs::remove_dir_all(&staging_path).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
-    };
+    files::cleanup_staging(&staging_path).await?;
     debug!("deleted staging {}", staging_path.display());
 
     Ok(())

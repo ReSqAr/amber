@@ -1,4 +1,5 @@
 use crate::db::models::InsertBlob;
+use crate::repository::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::pipe::TryForwardIntoExt;
@@ -52,11 +53,7 @@ async fn assimilate_blob(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            if let Some(parent) = blob_path.abs().parent() {
-                fs::create_dir_all(parent).await?;
-            }
-
-            fs::rename(file_path, blob_path).await?;
+            files::assimilate(&file_path, &blob_path).await?;
         } else {
             debug!("blob {blob_id} already exists, skipping");
         }

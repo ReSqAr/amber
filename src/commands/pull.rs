@@ -4,7 +4,8 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::transfer::{cleanup_staging, transfer};
+use crate::repository::logic::files;
+use crate::repository::logic::transfer::transfer;
 use crate::repository::logic::{materialise, sync};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
@@ -32,7 +33,7 @@ pub async fn pull(
 
         materialise::materialise(&local).await?;
 
-        cleanup_staging(&local).await?;
+        files::cleanup_staging(&local.staging_path()).await?;
 
         let duration = start_time.elapsed();
         let msg = format!(

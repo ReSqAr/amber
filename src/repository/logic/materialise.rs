@@ -1,5 +1,6 @@
 use crate::db::models::FilePathWithBlobId;
 use crate::flightdeck::base::BaseObserver;
+use crate::repository::logic::files;
 use crate::repository::traits::{BufferType, Config, Local, Reconciler};
 use crate::utils::errors::InternalError;
 use futures::StreamExt;
@@ -30,10 +31,7 @@ pub async fn materialise(
                 .map(|m| m.is_file())
                 .unwrap_or(false)
             {
-                if let Some(parent) = target_path.abs().parent() {
-                    fs::create_dir_all(parent).await?;
-                }
-                fs::hard_link(&object_path, &target_path).await?;
+                files::create_hard_link(&object_path, &target_path).await?;
 
                 o.observe_termination_ext(
                     log::Level::Info,

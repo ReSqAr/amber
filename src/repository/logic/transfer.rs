@@ -177,7 +177,6 @@ pub async fn transfer(
 
     let transfer_path = local.transfer_path(transfer_id);
     fs::create_dir_all(&transfer_path).await?;
-    fs::create_dir_all(&transfer_path).await?;
     let rclone_files = transfer_path.join("rclone.files");
 
     let local_repo_id = local.repo_id().await?;
@@ -272,14 +271,4 @@ pub async fn transfer(
     // TODO: cleanup staging folder - local + remote
 
     Ok(count)
-}
-
-pub(crate) async fn cleanup_staging(local: &impl Local) -> Result<(), InternalError> {
-    let staging_path = local.staging_path();
-    match fs::remove_dir_all(&staging_path).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
-    };
-    Ok(())
 }

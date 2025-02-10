@@ -8,6 +8,7 @@ use crate::db::{establish_connection, models};
 use crate::repository::connection::EstablishedConnection;
 use crate::repository::logic::assimilate;
 use crate::repository::logic::assimilate::Item;
+use crate::repository::logic::files;
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
     LastIndicesSyncer, Local, Metadata, Missing, Reconciler, Syncer, SyncerParams,
@@ -92,11 +93,7 @@ impl LocalRepository {
         let lock = acquire_exclusive_lock(lock_path).await?;
 
         let staging_path = repository_path.join("staging");
-        match fs::remove_dir_all(&staging_path).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        };
+        files::cleanup_staging(&staging_path).await?;
         debug!("deleted staging {}", staging_path.display());
 
         let db_path = repository_path.join("db.sqlite");
