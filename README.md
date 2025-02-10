@@ -12,7 +12,6 @@
   - sync breaks if upstream blob has changed
   - fsck
   - edit & deletion
-- proper error handling
 - connections:
   - add support for BlobRepository
   - ssh: which honours ssh config + key auth

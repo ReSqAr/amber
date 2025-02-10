@@ -1,6 +1,7 @@
 use crate::{commands, db};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+use std::process;
 
 #[derive(Parser)]
 #[command(name = "amber")]
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 #[command(version = "1.0")]
 #[command(about = "distribute blobs", long_about = None)]
 struct Cli {
+    /// Optional path to the repository
     #[arg(long)]
     path: Option<PathBuf>,
 
@@ -17,29 +19,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize the repository
     Init {},
+    /// Add files to the repository
     Add {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    /// Show status information
     Status {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    /// Show missing files
     Missing {},
+    /// (Hidden) Serve command
     #[command(hide = true)]
     Serve {},
-    Sync {
-        connection_name: Option<String>,
-    },
-    Pull {
-        connection_name: String,
-    },
-    Push {
-        connection_name: String,
-    },
+    /// Sync with a remote connection
+    Sync { connection_name: Option<String> },
+    /// Pull data from a remote connection
+    Pull { connection_name: String },
+    /// Push data to a remote connection
+    Push { connection_name: String },
+    /// Manage remotes
     Remote {
         #[command(subcommand)]
         command: RemoteCommands,
@@ -48,13 +53,14 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum RemoteCommands {
+    /// Add a new remote
     Add {
         name: String,
         #[arg(value_enum)]
         connection_type: ConnectionType,
         parameter: String,
     },
-
+    /// List all remotes
     List {},
 }
 
@@ -76,62 +82,27 @@ impl From<ConnectionType> for db::models::ConnectionType {
 pub async fn run() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Init {} => {
-            commands::init::init_repository(cli.path)
-                .await
-                .expect("Failed to initialize repository");
-        }
-        Commands::Add { dry_run, verbose } => {
-            commands::add::add(cli.path, dry_run, verbose)
-                .await
-                .expect("Failed to add file");
-        }
-        Commands::Status { verbose } => {
-            commands::status::status(cli.path, verbose)
-                .await
-                .expect("Failed to get status");
-        }
-        Commands::Missing {} => {
-            commands::missing::missing(cli.path)
-                .await
-                .expect("Failed to get missing");
-        }
-        Commands::Serve {} => {
-            commands::serve::serve(cli.path)
-                .await
-                .expect("Failed to run server");
-        }
-        Commands::Sync { connection_name } => {
-            commands::sync::sync(cli.path, connection_name)
-                .await
-                .expect("Failed to sync");
-        }
-        Commands::Pull { connection_name } => {
-            commands::pull::pull(cli.path, connection_name)
-                .await
-                .expect("Failed to pull");
-        }
-        Commands::Push { connection_name } => {
-            commands::push::push(cli.path, connection_name)
-                .await
-                .expect("Failed to push");
-        }
+    let result = match cli.command {
+        Commands::Init {} => commands::init::init_repository(cli.path).await,
+        Commands::Add { dry_run, verbose } => commands::add::add(cli.path, dry_run, verbose).await,
+        Commands::Status { verbose } => commands::status::status(cli.path, verbose).await,
+        Commands::Missing {} => commands::missing::missing(cli.path).await,
+        Commands::Serve {} => commands::serve::serve(cli.path).await,
+        Commands::Sync { connection_name } => commands::sync::sync(cli.path, connection_name).await,
+        Commands::Pull { connection_name } => commands::pull::pull(cli.path, connection_name).await,
+        Commands::Push { connection_name } => commands::push::push(cli.path, connection_name).await,
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
                 name,
                 connection_type,
                 parameter,
-            } => {
-                commands::remote::add(cli.path, name, connection_type.into(), parameter)
-                    .await
-                    .expect("Failed to add remote");
-            }
-            RemoteCommands::List {} => {
-                commands::remote::list(cli.path)
-                    .await
-                    .expect("Failed to list remotes");
-            }
+            } => commands::remote::add(cli.path, name, connection_type.into(), parameter).await,
+            RemoteCommands::List {} => commands::remote::list(cli.path).await,
         },
+    };
+
+    if let Err(err) = result {
+        eprintln!("\nan error occurred: {}", err);
+        process::exit(1);
     }
 }
