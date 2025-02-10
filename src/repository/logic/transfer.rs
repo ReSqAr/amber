@@ -159,7 +159,7 @@ async fn execute_rclone(
 
     let final_count = count.load(Ordering::Relaxed);
     let duration = start_time.elapsed();
-    let msg = format!("copied {} files in {duration:.2?}", final_count);
+    let msg = format!("copied {} blobs in {duration:.2?}", final_count);
     Observer::without_id("rclone").observe_termination(log::Level::Info, msg);
     Ok(final_count)
 }
@@ -240,7 +240,7 @@ pub async fn transfer(
     };
     let msg = if expected_count > 0 {
         let duration = start_time.elapsed();
-        format!("selected {expected_count} files for transfer in {duration:.2?}")
+        format!("selected {expected_count} blobs for transfer in {duration:.2?}")
     } else {
         "selected no files transfer".into()
     };
@@ -261,7 +261,7 @@ pub async fn transfer(
     let count = destination.finalise_transfer(transfer_id).await?;
     let msg = if count > 0 {
         let duration = start_time.elapsed();
-        format!("verified {count} files in {duration:.2?}")
+        format!("verified {count} blobs in {duration:.2?}")
     } else {
         "no files verified".into()
     };

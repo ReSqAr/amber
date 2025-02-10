@@ -1,4 +1,3 @@
-use crate::db::models::{Blob, File, Repository};
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{
@@ -7,7 +6,7 @@ use crate::flightdeck::base::{
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::{materialise, sync};
-use crate::repository::traits::{ConnectionManager, LastIndicesSyncer, Local, Metadata, Syncer};
+use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
@@ -121,72 +120,10 @@ async fn connect_sync_materialise(
         let managed_remote = connection.get_managed_repo()?;
         connect_obs.observe_termination(log::Level::Info, "connected");
 
-        sync_repositories(&local, &managed_remote).await?;
+        sync::sync_repositories(&local, &managed_remote).await?;
     }
 
     materialise::materialise(&local).await?;
-
-    Ok(())
-}
-
-pub async fn sync_repositories<S, T>(local: &S, remote: &T) -> Result<(), InternalError>
-where
-    S: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
-        + Syncer<File>
-        + Syncer<Blob>
-        + Clone
-        + Send
-        + Sync,
-    T: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
-        + Syncer<File>
-        + Syncer<Blob>
-        + Clone
-        + Send
-        + Sync,
-{
-    let local_repo_id = local.repo_id().await?;
-    let remote_repo_id = remote.repo_id().await?;
-
-    let local_last_indices = remote.lookup(local_repo_id).await?;
-    let remote_last_indices = local.lookup(remote_repo_id).await?;
-
-    {
-        let mut o = BaseObserver::with_id("sync:table", "files");
-        sync::sync_table::<File, _, _>(
-            local,
-            local_last_indices.file,
-            remote,
-            remote_last_indices.file,
-        )
-        .await?;
-        o.observe_termination(log::Level::Info, "synchronised");
-    }
-
-    {
-        let mut o = BaseObserver::with_id("sync:table", "blobs");
-        sync::sync_table::<Blob, _, _>(
-            local,
-            local_last_indices.blob,
-            remote,
-            remote_last_indices.blob,
-        )
-        .await?;
-        o.observe_termination(log::Level::Info, "synchronised");
-    }
-
-    {
-        let mut o = BaseObserver::with_id("sync:table", "repositories");
-        remote.refresh().await?;
-        local.refresh().await?;
-        o.observe_state(log::Level::Info, "prepared");
-
-        sync::sync_table::<Repository, _, _>(local, (), remote, ()).await?;
-        o.observe_termination(log::Level::Info, "synchronised");
-    }
 
     Ok(())
 }

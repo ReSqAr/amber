@@ -4,8 +4,8 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::materialise;
 use crate::repository::logic::transfer::{cleanup_staging, transfer};
+use crate::repository::logic::{materialise, sync};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
@@ -26,6 +26,8 @@ pub async fn pull(
         let managed_remote = connection.get_managed_repo()?;
         connect_obs.observe_termination(log::Level::Info, "connected");
 
+        sync::sync_repositories(&local, &managed_remote).await?;
+
         let count = transfer(&local, &managed_remote, &local, connection).await?;
 
         materialise::materialise(&local).await?;
@@ -34,7 +36,7 @@ pub async fn pull(
 
         let duration = start_time.elapsed();
         let msg = format!(
-            "pulled {} files via {} in {duration:.2?}",
+            "pulled {} blobs via {} in {duration:.2?}",
             count, connection_name
         );
         sync_obs.observe_termination(log::Level::Info, msg);
@@ -60,12 +62,29 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
+    let sync_table = BaseLayoutBuilderBuilder::default()
+        .type_key("sync:table")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
+            false => format!(
+                "synchronising known {}...",
+                id.unwrap_or("<unknown>".into())
+            ),
+            true => format!("synchronised known {}", id.unwrap_or("<unknown>".into())),
+        })))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     let prep = BaseLayoutBuilderBuilder::default()
         .type_key("transfer:preparation")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::Static {
-            msg: "preparing files...".into(),
-            done: "files prepared".into(),
+            msg: "preparing blobs...".into(),
+            done: "blobs prepared".into(),
         })
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
@@ -114,9 +133,9 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
                 false => state.map_or("initialising...".into(), |s| match s.as_str() {
                     "download" => "initialising...".into(),
                     "upload" => "initialising...".into(),
-                    "preparing" => "selecting files for transfer...".into(),
-                    "copying" => "transferring files...".into(),
-                    "verifying" => "verifying files...".into(),
+                    "preparing" => "selecting blobs for transfer...".into(),
+                    "copying" => "transferring blobs...".into(),
+                    "verifying" => "verifying blobs...".into(),
                     _ => s,
                 }),
                 true => "transferred".into(),
@@ -125,22 +144,6 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg}".into(),
             done: "{prefix}✓ {msg}".into(),
-        })
-        .infallible_build()
-        .boxed();
-
-    let assimilate = BaseLayoutBuilderBuilder::default()
-        .type_key("assimilate")
-        .termination_action(TerminationAction::Remove)
-        .state_transformer(StateTransformer::StateFn(Box::new(
-            |done, msg| match done {
-                true => msg.unwrap_or("verifying files".into()),
-                false => msg.unwrap_or("verified".into()),
-            },
-        )))
-        .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
-            done: "{prefix}{pos} {msg}".into(),
         })
         .infallible_build()
         .boxed();
@@ -180,12 +183,12 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     [
         LayoutItemBuilderNode::from(connect),
+        LayoutItemBuilderNode::from(sync_table),
         LayoutItemBuilderNode::from(transfer).with_children([
             LayoutItemBuilderNode::from(prep),
             LayoutItemBuilderNode::from(rclone)
                 .with_children([LayoutItemBuilderNode::from(rclone_file)]),
         ]),
-        LayoutItemBuilderNode::from(assimilate),
         LayoutItemBuilderNode::from(materialise).add_child(materialise_file),
     ]
 }

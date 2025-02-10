@@ -4,6 +4,7 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
+use crate::repository::logic::sync;
 use crate::repository::logic::transfer::{cleanup_staging, transfer};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
@@ -25,13 +26,15 @@ pub async fn push(
         let managed_remote = connection.get_managed_repo()?;
         connect_obs.observe_termination(log::Level::Info, "connected");
 
+        sync::sync_repositories(&local, &managed_remote).await?;
+
         let count = transfer(&local, &local, &managed_remote, connection).await?;
 
         cleanup_staging(&local).await?;
 
         let duration = start_time.elapsed();
         let msg = format!(
-            "pushed {} files via {} in {duration:.2?}",
+            "pushed {} blobs via {} in {duration:.2?}",
             count, connection_name
         );
         sync_obs.observe_termination(log::Level::Info, msg);
@@ -57,12 +60,29 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
+    let sync_table = BaseLayoutBuilderBuilder::default()
+        .type_key("sync:table")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
+            false => format!(
+                "synchronising known {}...",
+                id.unwrap_or("<unknown>".into())
+            ),
+            true => format!("synchronised known {}", id.unwrap_or("<unknown>".into())),
+        })))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     let prep = BaseLayoutBuilderBuilder::default()
         .type_key("transfer:preparation")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::Static {
-            msg: "preparing files...".into(),
-            done: "files prepared".into(),
+            msg: "preparing blobs...".into(),
+            done: "blobs prepared".into(),
         })
         .style(Style::Template {
             in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
@@ -111,9 +131,9 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
                 false => state.map_or("initialising...".into(), |s| match s.as_str() {
                     "download" => "initialising...".into(),
                     "upload" => "initialising...".into(),
-                    "preparing" => "selecting files for transfer...".into(),
-                    "copying" => "transferring files...".into(),
-                    "verifying" => "verifying files...".into(),
+                    "preparing" => "selecting blobs for transfer...".into(),
+                    "copying" => "transferring blobs...".into(),
+                    "verifying" => "verifying blobs...".into(),
                     _ => s,
                 }),
                 true => "transferred".into(),
@@ -128,6 +148,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 
     [
         LayoutItemBuilderNode::from(connect),
+        LayoutItemBuilderNode::from(sync_table),
         LayoutItemBuilderNode::from(transfer).with_children([
             LayoutItemBuilderNode::from(prep),
             LayoutItemBuilderNode::from(rclone)
