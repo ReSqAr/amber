@@ -5,8 +5,6 @@
   - add:
     - amber add breaks if blob exists but is not available locally and not the same [checker]
     - throughput problems?!
-  - pull/push:
-    - rclone status only at the end
   - sync breaks if upstream blob has changed
   - fsck
   - edit & deletion
