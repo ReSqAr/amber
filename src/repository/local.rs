@@ -212,7 +212,7 @@ impl Config for LocalRepository {
             BufferType::Assimilate => 1000,
             BufferType::TransferRcloneFilesStream => 10000,
             BufferType::TransferRcloneFilesWriter => 1000,
-            BufferType::AddFilesBlobifyFutureFileBuffer => 1000,
+            BufferType::AddFilesBlobifyFutureFileBuffer => 10,
             BufferType::AddFilesDBAddFiles => 1000,
             BufferType::AddFilesDBAddBlobs => 1000,
             BufferType::PrepareTransfer => 1000,

@@ -135,7 +135,7 @@ pub async fn state(
 
                     // we have a loop in the streams, this gives the checker observations priority
                     // otherwise we run into deadlocks
-                    let max_delay = time::Duration::from_millis(100);
+                    let max_delay = time::Duration::from_millis(10);
                     let mut current_delay = time::Duration::from_millis(1);
                     loop {
                         if obs_tx_clone.capacity() > obs_tx_clone.max_capacity() / 2 {
