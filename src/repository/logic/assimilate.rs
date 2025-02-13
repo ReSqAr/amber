@@ -26,7 +26,10 @@ async fn assimilate_blob(
     blob_locks: BlobLockMap,
 ) -> Result<InsertBlob, InternalError> {
     let file_path = local.root().join(item.path);
-    let (blob_id, blob_size) = sha256::compute_sha256_and_size(&file_path).await?;
+    let sha256::HashWithSize {
+        hash: blob_id,
+        size: blob_size,
+    } = sha256::compute_sha256_and_size(&file_path).await?;
     if let Some(expected_blob_id) = item.expected_blob_id {
         if expected_blob_id != blob_id {
             return Err(AppError::UnexpectedBlobId {

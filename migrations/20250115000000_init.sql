@@ -36,20 +36,28 @@ CREATE TABLE blobs
     valid_from  DATETIME    NOT NULL
 );
 
+-- table: materialisations
+CREATE TABLE materialisations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    path        TEXT        NOT NULL,
+    blob_id     TEXT        NOT NULL,
+    valid_from  DATETIME    NOT NULL
+);
+
 -- table: virtual_filesystem
 CREATE TABLE virtual_filesystem (
     id                            INTEGER PRIMARY KEY AUTOINCREMENT,
     path                          TEXT UNIQUE NOT NULL,
-    file_last_seen_id             INTEGER,
-    file_last_seen_dttm           INTEGER,
-    file_last_modified_dttm       INTEGER,
-    file_size                     INTEGER,
-    local_has_blob                BOOLEAN NOT NULL DEFAULT FALSE,
-    blob_id                       TEXT,
-    blob_size                     INTEGER,
-    last_file_eq_blob_check_dttm  INTEGER,
-    last_file_eq_blob_result      BOOLEAN,
-    state                         TEXT
+    fs_last_seen_id               INTEGER,
+    fs_last_seen_dttm             INTEGER,
+    fs_last_modified_dttm         INTEGER,
+    fs_last_size                  INTEGER,
+    materialisation_last_blob_id  TEXT,
+    target_blob_id                TEXT,
+    target_blob_size              INTEGER,
+    local_has_target_blob         BOOLEAN NOT NULL DEFAULT FALSE,
+    check_last_dttm               INTEGER,
+    check_last_hash               TEXT
 );
 
 -- table: connections

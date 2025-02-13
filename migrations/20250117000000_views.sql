@@ -55,6 +55,31 @@ SELECT
 FROM latest_blob_version
 WHERE has_blob = 1;
 
+-- view: latest_materialisations
+CREATE VIEW latest_materialisations AS
+WITH versioned_materialisations AS (
+    SELECT
+        path,
+        blob_id,
+        valid_from,
+        ROW_NUMBER() OVER (
+            PARTITION BY path
+            ORDER BY valid_from DESC, blob_id DESC
+            ) AS rn
+    FROM materialisations
+),
+     latest_materialisations_version AS (
+         SELECT
+             path,
+             blob_id
+         FROM versioned_materialisations
+         WHERE rn = 1
+     )
+SELECT
+    path,
+    blob_id
+FROM latest_materialisations_version;
+
 -- view: repository_filesystem_available_files
 CREATE VIEW repository_filesystem_available_files AS
 SELECT

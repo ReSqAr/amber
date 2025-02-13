@@ -6,9 +6,14 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
+pub(crate) struct HashWithSize {
+    pub(crate) hash: String,
+    pub(crate) size: u64,
+}
+
 pub(crate) async fn compute_sha256_and_size(
     file_path: impl AsRef<Path> + Clone,
-) -> io::Result<(String, u64)> {
+) -> io::Result<HashWithSize> {
     let mut obs = Observer::with_auto_termination(
         BaseObservable::with_id("sha", file_path.clone().as_ref().display().to_string()),
         log::Level::Trace,
@@ -33,5 +38,8 @@ pub(crate) async fn compute_sha256_and_size(
     }
 
     let hash = hasher.finalize();
-    Ok((format!("{:x}", hash), size))
+    Ok(HashWithSize {
+        hash: format!("{:x}", hash),
+        size,
+    })
 }

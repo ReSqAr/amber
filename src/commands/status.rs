@@ -85,12 +85,13 @@ pub async fn show_status(
             Ok(file) => {
                 let mut obs = BaseObserver::with_id("file", file.path.clone());
 
-                let state = file.state.unwrap_or(VirtualFileState::NeedsCheck);
+                let state = file.state;
                 *count.entry(state.clone()).or_insert(0) += 1;
                 let (level, state) = match state {
                     VirtualFileState::New => (log::Level::Info, "new"),
-                    VirtualFileState::Deleted => (log::Level::Warn, "deleted"),
-                    VirtualFileState::Dirty | VirtualFileState::NeedsCheck => {
+                    VirtualFileState::Missing => (log::Level::Warn, "missing"),
+                    VirtualFileState::Outdated => (log::Level::Info, "outdated"),
+                    VirtualFileState::Altered | VirtualFileState::NeedsCheck => {
                         (log::Level::Error, "broken")
                     }
                     VirtualFileState::Ok => (log::Level::Debug, "verified"),
@@ -116,23 +117,30 @@ fn generate_final_message(
     start_time: tokio::time::Instant,
 ) -> String {
     let new_count = *count.entry(VirtualFileState::New).or_default();
-    let deleted_count = *count.entry(VirtualFileState::Deleted).or_default();
+    let missing_count = *count.entry(VirtualFileState::Missing).or_default();
+    let outdated_count = *count.entry(VirtualFileState::Outdated).or_default();
     let ok_count = *count.entry(VirtualFileState::Ok).or_default();
-    let dirty_count = *count.entry(VirtualFileState::Dirty).or_default();
+    let altered_count = *count.entry(VirtualFileState::Altered).or_default();
     let needs_check_count = *count.entry(VirtualFileState::NeedsCheck).or_default();
 
     let mut parts = Vec::new();
     if new_count > 0 {
         parts.push(format!("{} new files", new_count))
     }
-    if deleted_count > 0 {
-        parts.push(format!("{} deleted files", deleted_count))
+    if missing_count > 0 {
+        parts.push(format!("{} missing files", missing_count))
+    }
+    if outdated_count > 0 {
+        parts.push(format!("{} outdated files", outdated_count))
     }
     if ok_count > 0 {
         parts.push(format!("{} verified files", ok_count))
     }
-    if dirty_count + needs_check_count > 0 {
-        parts.push(format!("{} changed files", dirty_count + needs_check_count))
+    if altered_count + needs_check_count > 0 {
+        parts.push(format!(
+            "{} altered files",
+            altered_count + needs_check_count
+        ))
     }
     if !parts.is_empty() {
         let duration = start_time.elapsed();

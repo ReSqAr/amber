@@ -1,4 +1,3 @@
-use crate::db::models::{InsertBlob, InsertFile};
 use crate::repository::logic::files;
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::errors::InternalError;
@@ -13,28 +12,26 @@ use tokio::fs;
 
 pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
 
+pub(crate) struct Blobify {
+    pub(crate) blob_id: String,
+    pub(crate) blob_size: u64,
+}
+
 pub(crate) async fn blobify(
     local: &(impl Local + Metadata),
     path: &RepoPath,
     skip_deduplication: bool,
     blob_locks: BlobLockMap,
-) -> Result<(Option<InsertFile>, Option<InsertBlob>), InternalError> {
-    let (blob_id, blob_size) = sha256::compute_sha256_and_size(&path).await?;
-    let blob_path = local.blob_path(blob_id.clone());
-
-    let valid_from = chrono::Utc::now();
-    let file = Some(InsertFile {
-        path: path.rel().to_string_lossy().to_string(),
-        blob_id: Some(blob_id.clone()),
-        valid_from,
-    });
-    let blob = Some(InsertBlob {
-        repo_id: local.repo_id().await?,
+) -> Result<Blobify, InternalError> {
+    let sha256::HashWithSize {
+        hash: blob_id,
+        size: blob_size,
+    } = sha256::compute_sha256_and_size(&path).await?;
+    let result = Blobify {
         blob_id: blob_id.clone(),
-        blob_size: blob_size as i64,
-        has_blob: true,
-        valid_from,
-    });
+        blob_size,
+    };
+    let blob_path = local.blob_path(blob_id.clone());
 
     // make path read only
     let mut permissions = fs::metadata(path).await?.permissions();
@@ -61,7 +58,7 @@ pub(crate) async fn blobify(
             .unwrap_or(false)
         {
             files::create_hard_link(path, &blob_path).await?;
-            return Ok((file, blob));
+            return Ok(result);
         }
         // lock is released here as `_lock_guard` goes out of scope
     }
@@ -86,5 +83,5 @@ pub(crate) async fn blobify(
         );
     }
 
-    Ok((file, blob))
+    Ok(result)
 }

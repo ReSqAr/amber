@@ -1,11 +1,13 @@
-use crate::db::models::{VirtualFile, VirtualFileState};
+use crate::db::models::{
+    InsertBlob, InsertFile, InsertMaterialisation, VirtualFile, VirtualFileState,
+};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::blobify::BlobLockMap;
+use crate::repository::logic::blobify::{BlobLockMap, Blobify};
 use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
@@ -115,43 +117,72 @@ pub async fn add_files(
                 .await
         })
     };
+    let (mat_tx, mat_rx) =
+        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddMaterialisations));
+    let db_mat_handle = {
+        let local_repository = repository.clone();
+        tokio::spawn(async move {
+            local_repository
+                .add_materialisation(ReceiverStream::new(mat_rx))
+                .await
+        })
+    };
 
     fs::create_dir_all(&repository.staging_path()).await?;
     let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
 
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
         let state = file_result.state.clone();
-        async move { state.unwrap_or(VirtualFileState::NeedsCheck) == VirtualFileState::New }
+        async move { state == VirtualFileState::New }
     });
 
     let mut count = 0;
     {
         // scope to isolate the effects of the below wild channel cloning
         let blob_locks: BlobLockMap = Arc::new(async_lock::Mutex::new(HashMap::new()));
-        let file_tx_clone = file_tx.clone();
-        let blob_tx_clone = blob_tx.clone();
+        let file_tx = file_tx.clone();
+        let blob_tx = blob_tx.clone();
+        let mat_tx = mat_tx.clone();
         let stream = tokio_stream::StreamExt::map(
             stream,
             |file_result: Result<VirtualFile, InternalError>| {
-                let file_tx_clone = file_tx_clone.clone();
-                let blob_tx_clone = blob_tx_clone.clone();
+                let file_tx = file_tx.clone();
+                let blob_tx = blob_tx.clone();
+                let mat_tx = mat_tx.clone();
                 let local_repository_clone = repository.clone();
                 let blob_locks_clone = blob_locks.clone();
                 async move {
                     let path = local_repository_clone.root().join(file_result?.path);
-                    let (insert_file, insert_blob) = blobify::blobify(
+                    let Blobify { blob_id, blob_size } = blobify::blobify(
                         &local_repository_clone,
                         &path,
                         skip_deduplication,
                         blob_locks_clone,
                     )
                     .await?;
-                    if let Some(file) = insert_file {
-                        file_tx_clone.send(file).await?;
-                    }
-                    if let Some(blob) = insert_blob {
-                        blob_tx_clone.send(blob).await?;
-                    }
+
+                    let valid_from = chrono::Utc::now();
+                    let file = InsertFile {
+                        path: path.rel().to_string_lossy().to_string(),
+                        blob_id: Some(blob_id.clone()),
+                        valid_from,
+                    };
+                    let blob = InsertBlob {
+                        repo_id: local_repository_clone.repo_id().await?,
+                        blob_id: blob_id.clone(),
+                        blob_size: blob_size as i64,
+                        has_blob: true,
+                        valid_from,
+                    };
+                    let mat = InsertMaterialisation {
+                        path: path.rel().to_string_lossy().to_string(),
+                        blob_id: blob_id.clone(),
+                        valid_from,
+                    };
+
+                    file_tx.send(file).await?;
+                    blob_tx.send(blob).await?;
+                    mat_tx.send(mat).await?;
                     Ok::<RepoPath, InternalError>(path)
                 }
             },
@@ -184,8 +215,10 @@ pub async fn add_files(
 
     drop(file_tx);
     drop(blob_tx);
+    drop(mat_tx);
     db_file_handle.await??;
     db_blob_handle.await??;
+    db_mat_handle.await??;
 
     let duration = start_time.elapsed();
     let msg = if count > 0 {

@@ -1,8 +1,9 @@
-use crate::db::models::{FileEqBlobCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
+use crate::db::models::{FileCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::sha256;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
 use futures::{future, Stream, StreamExt};
 use log::{debug, error};
@@ -23,17 +24,30 @@ fn current_timestamp() -> i64 {
 }
 
 async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, InternalError> {
-    let last_result = match vf.blob_id {
-        None => false,
-        Some(blob_id) => {
-            are_hardlinked(&vfs.root().join(vf.path.clone()), &vfs.blob_path(blob_id)).await?
+    let path = vfs.root().join(vf.path.clone());
+
+    let hash = if let Some(blob_id) = vf.materialisation_last_blob_id.clone() {
+        if are_hardlinked(&path, &vfs.blob_path(blob_id.clone())).await? {
+            Some(blob_id)
+        } else {
+            None
         }
+    } else {
+        None
     };
 
-    Ok(Observation::FileEqBlobCheck(FileEqBlobCheck {
+    // fallback
+    let hash = if let Some(hash) = hash {
+        hash
+    } else {
+        let sha256::HashWithSize { hash, .. } = sha256::compute_sha256_and_size(&path).await?;
+        hash
+    };
+
+    Ok(Observation::FileCheck(FileCheck {
         path: vf.path.clone(),
-        last_check_dttm: current_timestamp(),
-        last_result,
+        check_dttm: current_timestamp(),
+        hash,
     }))
 }
 
@@ -127,8 +141,8 @@ pub async fn state(
                 }) => {
                     let observation = Observation::FileSeen(FileSeen {
                         path: rel_path.to_string_lossy().to_string(),
-                        last_seen_id,
-                        last_seen_dttm: current_timestamp(),
+                        seen_id: last_seen_id,
+                        seen_dttm: current_timestamp(),
                         last_modified_dttm: last_modified,
                         size,
                     });
@@ -181,16 +195,17 @@ pub async fn state(
                 Ok(vfs) => {
                     for vf in vfs {
                         match vf.state {
-                            Some(VirtualFileState::New)
-                            | Some(VirtualFileState::Dirty)
-                            | Some(VirtualFileState::Ok)
-                            | Some(VirtualFileState::Deleted) => {
+                            VirtualFileState::New
+                            | VirtualFileState::Altered
+                            | VirtualFileState::Ok
+                            | VirtualFileState::Outdated
+                            | VirtualFileState::Missing => {
                                 debug!("state -> splitter: {:?} ready for output", vf.path);
                                 if let Err(e) = tx_clone.send(Ok(vf)).await {
                                     panic!("failed to send error to output stream: {e}");
                                 }
                             }
-                            Some(VirtualFileState::NeedsCheck) | None => {
+                            VirtualFileState::NeedsCheck => {
                                 debug!("state -> splitter: {:?} needs check", vf.path);
                                 if needs_check_tx_clone.is_closed() {
                                     panic!("programming error: data with needs check was received after shutdown");

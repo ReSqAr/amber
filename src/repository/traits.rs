@@ -29,6 +29,7 @@ pub enum BufferType {
     AddFilesBlobifyFutureFileBuffer,
     AddFilesDBAddFiles,
     AddFilesDBAddBlobs,
+    AddFilesDBAddMaterialisations,
     PrepareTransfer,
     State,
     Walker,
@@ -51,6 +52,10 @@ pub trait Adder {
     fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
+
+    fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    where
+        S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
 }
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileEqBlobCheck, FilePathWithBlobId,
-    FileSeen, InsertBlob, InsertFile, InsertVirtualFile, Observation, Repository, TransferItem,
+    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FilePathWithBlobId,
+    FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation, Repository, TransferItem,
     VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
@@ -417,20 +417,59 @@ impl Database {
         )
     }
 
+    pub async fn add_materialisations<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = InsertMaterialisation> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT INTO materialisations (path, blob_id, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for blob in &chunk {
+                query = query
+                    .bind(&blob.path)
+                    .bind(&blob.blob_id)
+                    .bind(blob.valid_from);
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
+        }
+
+        debug!(
+            "materialisations added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
+        Ok(total_inserted)
+    }
+
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "
                 INSERT OR REPLACE INTO virtual_filesystem (
                     path,
-                    file_last_seen_id,
-                    file_last_seen_dttm,
-                    file_last_modified_dttm,
-                    file_size,
-                    local_has_blob,
-                    blob_id,
-                    blob_size,
-                    last_file_eq_blob_check_dttm,
-                    last_file_eq_blob_result,
-                    state
+                    materialisation_last_blob_id,
+                    target_blob_id,
+                    target_blob_size,
+                    local_has_target_blob
                 )
                 WITH
                     locally_available_blobs AS (
@@ -443,6 +482,7 @@ impl Database {
                     all_files AS (
                         SELECT
                             path,
+                            m.blob_id as materialisation_last_blob_id,
                             CASE
                                 WHEN a.blob_id IS NOT NULL THEN TRUE
                                 ELSE FALSE
@@ -450,28 +490,21 @@ impl Database {
                             f.blob_id,
                             blob_size
                         FROM latest_filesystem_files f
-                            LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
-                )
+                                 LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
+                                 LEFT JOIN latest_materialisations m USING (path)
+                    )
                 SELECT
                     a.path,
-                    vfs.file_last_seen_id,
-                    vfs.file_last_seen_dttm,
-                    vfs.file_last_modified_dttm,
-                    vfs.file_size,
-                    a.local_has_blob,
-                    a.blob_id,
-                    a.blob_size,
-                    vfs.last_file_eq_blob_check_dttm,
-                    CASE
-                        WHEN vfs.blob_id = a.blob_id THEN vfs.last_file_eq_blob_result
-                        ELSE FALSE
-                        END,
-                    vfs.state
+                    a.materialisation_last_blob_id,
+                    a.blob_id as target_blob_id,
+                    a.blob_size as target_blob_size,
+                    a.local_has_blob as local_has_target_blob
                 FROM all_files a
-                     LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
+                         LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
                 WHERE
-                    a.blob_id IS DISTINCT FROM vfs.blob_id
-                    OR a.local_has_blob IS DISTINCT FROM vfs.local_has_blob
+                    a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
+                    OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
+                    OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
                 ;
      ";
 
@@ -486,7 +519,7 @@ impl Database {
     pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
         let query = "
         DELETE FROM virtual_filesystem
-        WHERE file_last_seen_id IS NOT NULL AND file_last_seen_id != ? AND blob_id IS NULL;
+        WHERE fs_last_seen_id IS NOT NULL AND fs_last_seen_id != ? AND target_blob_id IS NULL;
     ";
 
         let result = sqlx::query(query)
@@ -501,28 +534,21 @@ impl Database {
         Ok(())
     }
 
-    pub async fn select_deleted_files_on_virtual_filesystem(
+    pub async fn select_missing_files_on_virtual_filesystem(
         &self,
         last_seen_id: i64,
     ) -> DBOutputStream<'static, VirtualFile> {
         self.stream(
             query(
                 "
-            UPDATE virtual_filesystem
-            SET state = 'deleted'
-            WHERE (file_last_seen_id != ? OR file_last_seen_id IS NULL) AND local_has_blob
-            RETURNING
-                path,
-                file_last_seen_id,
-                file_last_seen_dttm,
-                file_last_modified_dttm,
-                file_size,
-                local_has_blob,
-                blob_id,
-                blob_size,
-                last_file_eq_blob_check_dttm,
-                last_file_eq_blob_result,
-                state;",
+                    SELECT
+                        path,
+                        materialisation_last_blob_id,
+                        target_blob_id,
+                        'missing' as state
+                    FROM virtual_filesystem
+                    WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND local_has_target_blob
+                ;",
             )
             .bind(last_seen_id),
         )
@@ -556,98 +582,102 @@ impl Database {
 
                 let placeholders = observations
                     .iter()
-                    .map(|_| "(?, ?, ?, ?, ?, ?, ?, 'new')")
+                    .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
                     .collect::<Vec<_>>()
                     .join(", ");
 
                 let query_str = format!("
                     INSERT INTO virtual_filesystem (
                         path,
-                        file_last_seen_id,
-                        file_last_seen_dttm,
-                        file_last_modified_dttm,
-                        file_size,
-                        last_file_eq_blob_check_dttm,
-                        last_file_eq_blob_result,
-                        state
+                        fs_last_seen_id,
+                        fs_last_seen_dttm,
+                        fs_last_modified_dttm,
+                        fs_last_size,
+                        check_last_dttm,
+                        check_last_hash
                     )
                     VALUES {}
                     ON CONFLICT(path) DO UPDATE SET
-                        file_last_seen_id = COALESCE(excluded.file_last_seen_id, file_last_seen_id),
-                        file_last_seen_dttm = COALESCE(excluded.file_last_seen_dttm, file_last_seen_dttm),
-                        file_last_modified_dttm = COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm),
-                        file_size = COALESCE(excluded.file_size, file_size),
-                        last_file_eq_blob_check_dttm = COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm),
-                        last_file_eq_blob_result = COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result),
-
-                        state = CASE
-                                    WHEN blob_id IS NULL THEN 'new'
-                                    WHEN COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result, FALSE) = FALSE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm)
-                                        <= COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm) THEN 'dirty'
-                                    WHEN (blob_id IS NOT NULL
-                                        AND COALESCE(excluded.last_file_eq_blob_result, last_file_eq_blob_result, FALSE) = TRUE
-                                        AND COALESCE(excluded.file_last_modified_dttm, file_last_modified_dttm)
-                                        <= COALESCE(excluded.last_file_eq_blob_check_dttm, last_file_eq_blob_check_dttm)) THEN 'ok'
-                                    ELSE 'needs_check'
-                            END
+                        fs_last_seen_id = COALESCE(excluded.fs_last_seen_id, fs_last_seen_id),
+                        fs_last_seen_dttm = COALESCE(excluded.fs_last_seen_dttm, fs_last_seen_dttm),
+                        fs_last_modified_dttm = COALESCE(excluded.fs_last_modified_dttm, fs_last_modified_dttm),
+                        fs_last_size = COALESCE(excluded.fs_last_size, fs_last_size),
+                        check_last_dttm = COALESCE(excluded.check_last_dttm, check_last_dttm),
+                        check_last_hash = COALESCE(excluded.check_last_hash, check_last_hash)
                     RETURNING
                         path,
-                        file_last_seen_id,
-                        file_last_seen_dttm,
-                        file_last_modified_dttm,
-                        file_size,
-                        local_has_blob,
-                        blob_id,
-                        blob_size,
-                        last_file_eq_blob_check_dttm,
-                        last_file_eq_blob_result,
-                        state
+                        materialisation_last_blob_id,
+                        target_blob_id,
+                        CASE
+                            WHEN target_blob_id IS NULL THEN 'new'
+                            WHEN fs_last_modified_dttm <= check_last_dttm THEN ( -- we can trust the check
+                                CASE
+                                    WHEN check_last_hash <> target_blob_id THEN ( -- check says: they are not the same
+                                        CASE
+                                            WHEN check_last_hash = materialisation_last_blob_id THEN 'outdated' -- previously materialised version
+                                            ELSE 'altered'
+                                        END
+                                    )
+                                    WHEN fs_last_size <> target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
+                                    ELSE 'ok' -- hash is the same and the size is the same -> OK
+                                END
+                            )
+                            ELSE 'needs_check' -- check not trustworthy, check again
+                        END AS state
                     ;
                 ", placeholders);
 
                 let mut query = sqlx::query_as::<_, VirtualFile>(&query_str);
 
+                struct InsertVirtualFile {
+                    path: String,
+                    fs_last_seen_id: Option<i64>,
+                    fs_last_seen_dttm: Option<i64>,
+                    fs_last_modified_dttm: Option<i64>,
+                    fs_last_size: Option<i64>,
+                    check_last_dttm: Option<i64>,
+                    check_last_hash: Option<String>,
+                }
                 for observation in observations {
                     let ivf: InsertVirtualFile = match observation {
                         Observation::FileSeen(FileSeen {
                                                   path,
-                                                  last_seen_id,
-                                                  last_seen_dttm,
+                                                  seen_id,
+                                                  seen_dttm,
                                                   last_modified_dttm,
                                                   size,
                                               }) => InsertVirtualFile {
                             path: path.clone(),
-                            file_last_seen_id: (*last_seen_id).into(),
-                            file_last_seen_dttm: (*last_seen_dttm).into(),
-                            file_last_modified_dttm: (*last_modified_dttm).into(),
-                            file_size: (*size).into(),
-                            last_file_eq_blob_check_dttm: None,
-                            last_file_eq_blob_result: None,
+                            fs_last_seen_id: (*seen_id).into(),
+                            fs_last_seen_dttm: (*seen_dttm).into(),
+                            fs_last_modified_dttm: (*last_modified_dttm).into(),
+                            fs_last_size: (*size).into(),
+                            check_last_dttm: None,
+                            check_last_hash: None,
                         },
-                        Observation::FileEqBlobCheck(FileEqBlobCheck {
+                        Observation::FileCheck(FileCheck {
                                                          path,
-                                                         last_check_dttm,
-                                                         last_result,
+                                                         check_dttm,
+                                                         hash,
                                                      }) => InsertVirtualFile {
                             path: path.clone(),
-                            file_last_seen_id: None,
-                            file_last_seen_dttm: None,
-                            file_last_modified_dttm: None,
-                            file_size: None,
-                            last_file_eq_blob_check_dttm: (*last_check_dttm).into(),
-                            last_file_eq_blob_result: (*last_result).into(),
+                            fs_last_seen_id: None,
+                            fs_last_seen_dttm: None,
+                            fs_last_modified_dttm: None,
+                            fs_last_size: None,
+                            check_last_dttm: (*check_dttm).into(),
+                            check_last_hash: hash.clone().into(),
                         },
                     };
 
                     query = query
                         .bind(ivf.path.clone())
-                        .bind(ivf.file_last_seen_id)
-                        .bind(ivf.file_last_seen_dttm)
-                        .bind(ivf.file_last_modified_dttm)
-                        .bind(ivf.file_size)
-                        .bind(ivf.last_file_eq_blob_check_dttm)
-                        .bind(ivf.last_file_eq_blob_result);
+                        .bind(ivf.fs_last_seen_id)
+                        .bind(ivf.fs_last_seen_dttm)
+                        .bind(ivf.fs_last_modified_dttm)
+                        .bind(ivf.fs_last_size)
+                        .bind(ivf.check_last_dttm)
+                        .bind(ivf.check_last_hash);
                 }
 
 

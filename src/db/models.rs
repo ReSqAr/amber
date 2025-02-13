@@ -72,71 +72,53 @@ pub struct FilePathWithBlobId {
     pub blob_id: String,
 }
 
+#[derive(Debug)]
+pub struct InsertMaterialisation {
+    pub path: String,
+    pub blob_id: String,
+    pub valid_from: DateTime<Utc>,
+}
+
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum VirtualFileState {
     New,
-    Dirty,
     Ok,
+    Missing,
+    Altered,
+    Outdated,
     NeedsCheck,
-    Deleted,
 }
 
 #[derive(Debug)]
 pub enum Observation {
     FileSeen(FileSeen),
-    FileEqBlobCheck(FileEqBlobCheck),
+    FileCheck(FileCheck),
 }
 
 #[derive(Debug, FromRow)]
 pub struct FileSeen {
     pub path: String,
-    pub last_seen_id: i64,
-    pub last_seen_dttm: i64,
+    pub seen_id: i64,
+    pub seen_dttm: i64,
     pub last_modified_dttm: i64,
     pub size: i64,
 }
 
 #[derive(Debug, FromRow)]
-pub struct FileEqBlobCheck {
+pub struct FileCheck {
     pub path: String,
-    pub last_check_dttm: i64,
-    pub last_result: bool,
+    pub check_dttm: i64,
+    pub hash: String,
 }
 
 #[derive(Debug, FromRow, Clone)]
 pub struct VirtualFile {
     pub path: String,
+    pub materialisation_last_blob_id: Option<String>,
     #[allow(dead_code)]
-    pub file_last_seen_id: Option<i64>,
-    #[allow(dead_code)]
-    pub file_last_seen_dttm: Option<i64>,
-    #[allow(dead_code)]
-    pub file_last_modified_dttm: Option<i64>,
-    #[allow(dead_code)]
-    pub file_size: Option<i64>,
-    #[allow(dead_code)]
-    pub local_has_blob: bool,
-    #[allow(dead_code)]
-    pub blob_id: Option<String>,
-    #[allow(dead_code)]
-    pub blob_size: Option<i64>,
-    #[allow(dead_code)]
-    pub last_file_eq_blob_check_dttm: Option<i64>,
-    #[allow(dead_code)]
-    pub last_file_eq_blob_result: Option<bool>,
-    pub state: Option<VirtualFileState>,
-}
-
-#[derive(Debug)]
-pub struct InsertVirtualFile {
-    pub path: String,
-    pub file_last_seen_id: Option<i64>,
-    pub file_last_seen_dttm: Option<i64>,
-    pub file_last_modified_dttm: Option<i64>,
-    pub file_size: Option<i64>,
-    pub last_file_eq_blob_check_dttm: Option<i64>,
-    pub last_file_eq_blob_result: Option<bool>,
+    pub target_blob_id: Option<String>,
+    pub state: VirtualFileState,
 }
 
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]

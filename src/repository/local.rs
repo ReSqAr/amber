@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, Observation, Repository,
-    TransferItem, VirtualFile,
+    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, InsertMaterialisation, Observation,
+    Repository, TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::repository::connection::EstablishedConnection;
@@ -215,6 +215,7 @@ impl Config for LocalRepository {
             BufferType::AddFilesBlobifyFutureFileBuffer => 20,
             BufferType::AddFilesDBAddFiles => 1000,
             BufferType::AddFilesDBAddBlobs => 1000,
+            BufferType::AddFilesDBAddMaterialisations => 1000,
             BufferType::PrepareTransfer => 1000,
             BufferType::State => 10000,
             BufferType::StateChecker => 10000,
@@ -249,6 +250,13 @@ impl Adder for LocalRepository {
         S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
+    }
+
+    async fn add_materialisation<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = InsertMaterialisation> + Unpin + Send,
+    {
+        self.db.add_materialisations(s).await
     }
 }
 
@@ -359,7 +367,7 @@ impl VirtualFilesystem for LocalRepository {
         last_seen_id: i64,
     ) -> impl Future<Output = DBOutputStream<'static, VirtualFile>> + Send {
         self.db
-            .select_deleted_files_on_virtual_filesystem(last_seen_id)
+            .select_missing_files_on_virtual_filesystem(last_seen_id)
     }
 
     async fn add_observations(
