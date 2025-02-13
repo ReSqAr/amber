@@ -1,6 +1,7 @@
 pub(crate) mod database;
 pub(crate) mod migrations;
 pub(crate) mod models;
+pub(crate) mod tests;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{ConnectOptions, Error, SqlitePool};
