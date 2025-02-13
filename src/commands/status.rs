@@ -1,10 +1,10 @@
-use crate::db::models::VirtualFileState;
 use crate::flightdeck;
 use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
 use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::state;
+use crate::repository::logic::state::VirtualFileState;
 use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
@@ -67,6 +67,27 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     [LayoutItemBuilderNode::from(status).add_child(file)]
 }
 
+#[derive(Eq, Hash, PartialEq, Debug)]
+enum State {
+    New,
+    Missing,
+    Ok,
+    Altered,
+    Outdated,
+}
+
+impl From<VirtualFileState> for State {
+    fn from(vf: VirtualFileState) -> Self {
+        match vf {
+            VirtualFileState::New => Self::New,
+            VirtualFileState::Missing { .. } => Self::Missing,
+            VirtualFileState::Ok { .. } => Self::Ok,
+            VirtualFileState::Altered { .. } => Self::Altered,
+            VirtualFileState::Outdated { .. } => Self::Outdated,
+        }
+    }
+}
+
 pub async fn show_status(
     local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
 ) -> Result<(), InternalError> {
@@ -74,7 +95,7 @@ pub async fn show_status(
     let mut checker_obs = BaseObserver::without_id("status");
 
     let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
-    let mut count = HashMap::new();
+    let mut count: HashMap<State, i32> = HashMap::new();
 
     let mut total_count: u64 = 0;
     while let Some(file_result) = stream.next().await {
@@ -86,15 +107,13 @@ pub async fn show_status(
                 let mut obs = BaseObserver::with_id("file", file.path.clone());
 
                 let state = file.state;
-                *count.entry(state.clone()).or_insert(0) += 1;
+                *count.entry(state.clone().into()).or_insert(0) += 1;
                 let (level, state) = match state {
                     VirtualFileState::New => (log::Level::Info, "new"),
-                    VirtualFileState::Missing => (log::Level::Warn, "missing"),
-                    VirtualFileState::Outdated => (log::Level::Info, "outdated"),
-                    VirtualFileState::Altered | VirtualFileState::NeedsCheck => {
-                        (log::Level::Error, "broken")
-                    }
-                    VirtualFileState::Ok => (log::Level::Debug, "verified"),
+                    VirtualFileState::Missing { .. } => (log::Level::Warn, "missing"),
+                    VirtualFileState::Outdated { .. } => (log::Level::Info, "outdated"),
+                    VirtualFileState::Altered { .. } => (log::Level::Error, "broken"),
+                    VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
                 };
                 obs.observe_termination(level, state);
             }
@@ -113,15 +132,14 @@ pub async fn show_status(
 }
 
 fn generate_final_message(
-    count: &mut HashMap<VirtualFileState, i32>,
+    count: &mut HashMap<State, i32>,
     start_time: tokio::time::Instant,
 ) -> String {
-    let new_count = *count.entry(VirtualFileState::New).or_default();
-    let missing_count = *count.entry(VirtualFileState::Missing).or_default();
-    let outdated_count = *count.entry(VirtualFileState::Outdated).or_default();
-    let ok_count = *count.entry(VirtualFileState::Ok).or_default();
-    let altered_count = *count.entry(VirtualFileState::Altered).or_default();
-    let needs_check_count = *count.entry(VirtualFileState::NeedsCheck).or_default();
+    let new_count = *count.entry(State::New).or_default();
+    let missing_count = *count.entry(State::Missing).or_default();
+    let outdated_count = *count.entry(State::Outdated).or_default();
+    let ok_count = *count.entry(State::Ok).or_default();
+    let altered_count = *count.entry(State::Altered).or_default();
 
     let mut parts = Vec::new();
     if new_count > 0 {
@@ -136,11 +154,8 @@ fn generate_final_message(
     if ok_count > 0 {
         parts.push(format!("{} verified files", ok_count))
     }
-    if altered_count + needs_check_count > 0 {
-        parts.push(format!(
-            "{} altered files",
-            altered_count + needs_check_count
-        ))
+    if altered_count > 0 {
+        parts.push(format!("{} altered files", altered_count))
     }
     if !parts.is_empty() {
         let duration = start_time.elapsed();

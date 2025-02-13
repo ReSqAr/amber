@@ -113,6 +113,11 @@ pub struct VirtualFile {
     pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }
+#[derive(Debug, FromRow, Clone)]
+pub struct MissingFile {
+    pub path: String,
+    pub target_blob_id: Option<String>,
+}
 
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]

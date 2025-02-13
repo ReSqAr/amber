@@ -1,6 +1,6 @@
-use crate::db::models::{InsertMaterialisation, VirtualFileState};
+use crate::db::models::InsertMaterialisation;
 use crate::flightdeck::base::BaseObserver;
-use crate::repository::logic::state::VirtualFile;
+use crate::repository::logic::state::VirtualFileState;
 use crate::repository::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
@@ -31,32 +31,43 @@ pub async fn materialise(
     {
         let (state_handle, stream) = state::state(local.clone(), WalkerConfig::default()).await?;
 
-        let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
-            let state = file_result.state.clone();
-            async move {
-                match state {
-                    VirtualFileState::New => false,
-                    VirtualFileState::Ok => false,
-                    VirtualFileState::Missing => true,
-                    VirtualFileState::Altered => false,
-                    VirtualFileState::Outdated => true,
-                    VirtualFileState::NeedsCheck => false,
-                }
+        struct ToMaterialise {
+            path: String,
+            target_blob_id: String,
+        }
+
+        let stream = futures::StreamExt::filter_map(stream, |file_result| async move {
+            let file_result = match file_result {
+                Ok(file_result) => file_result,
+                Err(e) => return Some(Err(e)),
+            };
+            let path = file_result.path;
+            let state = file_result.state;
+            match state {
+                VirtualFileState::New => None,
+                VirtualFileState::Ok { .. } => None,
+                VirtualFileState::Missing { target_blob_id } => Some(Ok(ToMaterialise {
+                    path,
+                    target_blob_id,
+                })),
+                VirtualFileState::Altered { .. } => None,
+                VirtualFileState::Outdated { target_blob_id, .. } => Some(Ok(ToMaterialise {
+                    path,
+                    target_blob_id,
+                })),
             }
         });
 
         let mat_tx = mat_tx.clone();
         let stream = tokio_stream::StreamExt::map(
             stream,
-            |file_result: Result<VirtualFile, InternalError>| {
+            |file_result: Result<ToMaterialise, InternalError>| {
                 let mat_tx = mat_tx.clone();
                 async move {
-                    let VirtualFile {
+                    let ToMaterialise {
                         path,
                         target_blob_id,
-                        ..
                     } = file_result?;
-                    let target_blob_id = target_blob_id.unwrap(); // TODO: shouldn't be needed
                     let object_path = local.blob_path(target_blob_id.clone());
                     let target_path = local.root().join(path.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.clone());

@@ -1,5 +1,5 @@
 use crate::db::models;
-use crate::db::models::{FileCheck, FileSeen, Observation, VirtualFileState};
+use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
@@ -24,7 +24,7 @@ fn current_timestamp() -> i64 {
         .as_secs() as i64
 }
 
-async fn check(vfs: &impl Local, vf: VirtualFile) -> Result<Observation, InternalError> {
+async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation, InternalError> {
     let path = vfs.root().join(vf.path.clone());
 
     let hash = if let Some(blob_id) = vf.materialisation_last_blob_id.clone() {
@@ -66,7 +66,7 @@ async fn close(
 
     let start_time = Instant::now();
 
-    let mut deleted_files = vfs.select_deleted_files(last_seen_id).await;
+    let mut deleted_files = vfs.select_missing_files(last_seen_id).await;
     while let Some(r) = deleted_files.next().await {
         match r {
             Ok(vf) => {
@@ -88,21 +88,80 @@ async fn close(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum VirtualFileState {
+    New,
+    Missing {
+        target_blob_id: String,
+    },
+    Ok {
+        materialisation_last_blob_id: String,
+        target_blob_id: String,
+    },
+    Altered {
+        materialisation_last_blob_id: String,
+        target_blob_id: String,
+    },
+    Outdated {
+        materialisation_last_blob_id: String,
+        target_blob_id: String,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub struct VirtualFile {
     pub path: String,
-    pub materialisation_last_blob_id: Option<String>,
-    pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }
 
-impl From<models::VirtualFile> for VirtualFile {
-    fn from(value: models::VirtualFile) -> Self {
+impl TryFrom<models::VirtualFile> for VirtualFile {
+    type Error = ();
+
+    fn try_from(vf: models::VirtualFile) -> Result<Self, Self::Error> {
+        match vf.state {
+            models::VirtualFileState::New => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::New,
+            }),
+            models::VirtualFileState::Ok => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::Ok {
+                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id.unwrap(),
+                },
+            }),
+            models::VirtualFileState::Missing => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::Missing {
+                    target_blob_id: vf.target_blob_id.unwrap(),
+                },
+            }),
+            models::VirtualFileState::Altered => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::Altered {
+                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id.unwrap(),
+                },
+            }),
+            models::VirtualFileState::Outdated => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::Outdated {
+                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id.unwrap(),
+                },
+            }),
+            models::VirtualFileState::NeedsCheck => Err(()),
+        }
+    }
+}
+
+impl From<MissingFile> for VirtualFile {
+    fn from(vf: MissingFile) -> Self {
         Self {
-            path: value.path,
-            materialisation_last_blob_id: value.materialisation_last_blob_id,
-            target_blob_id: value.target_blob_id,
-            state: value.state,
+            path: vf.path,
+            state: VirtualFileState::Missing {
+                target_blob_id: vf.target_blob_id.unwrap(),
+            },
         }
     }
 }
@@ -214,27 +273,21 @@ pub async fn state(
             match data {
                 Ok(vfs) => {
                     for vf in vfs {
-                        match vf.state {
-                            VirtualFileState::New
-                            | VirtualFileState::Altered
-                            | VirtualFileState::Ok
-                            | VirtualFileState::Outdated
-                            | VirtualFileState::Missing => {
-                                debug!("state -> splitter: {:?} ready for output", vf.path);
-                                if let Err(e) = tx_clone.send(Ok(vf.into())).await {
-                                    panic!("failed to send error to output stream: {e}");
-                                }
+                        if let Ok(vf) = <models::VirtualFile as TryInto<VirtualFile>>::try_into(vf.clone())
+                        {
+                            debug!("state -> splitter: {:?} ready for output", vf.path);
+                            if let Err(e) = tx_clone.send(Ok(vf)).await {
+                                panic!("failed to send error to output stream: {e}");
                             }
-                            VirtualFileState::NeedsCheck => {
-                                debug!("state -> splitter: {:?} needs check", vf.path);
-                                if needs_check_tx_clone.is_closed() {
-                                    panic!("programming error: data with needs check was received after shutdown");
-                                }
+                        } else {
+                            debug!("state -> splitter: {:?} needs check", vf.path);
+                            if needs_check_tx_clone.is_closed() {
+                                panic!("programming error: data with needs check was received after shutdown");
+                            }
 
-                                if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
-                                    if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                                        panic!("failed to send error to output stream: {}", e_send);
-                                    }
+                            if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
+                                if let Err(e_send) = tx_clone.send(Err(e.into())).await {
+                                    panic!("failed to send error to output stream: {}", e_send);
                                 }
                             }
                         }
@@ -274,7 +327,7 @@ pub async fn state(
             .map(|vf| {
                 let vfs_clone = vfs_clone.clone();
                 async move {
-                    match check(&vfs_clone, vf.into()).await {
+                    match check(&vfs_clone, vf).await {
                         Ok(observation) => Ok(observation),
                         Err(e) => Err(e),
                     }

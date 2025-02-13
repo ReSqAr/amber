@@ -1,4 +1,4 @@
-use crate::db::models::{InsertBlob, InsertFile, InsertMaterialisation, VirtualFileState};
+use crate::db::models::{InsertBlob, InsertFile, InsertMaterialisation};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -6,7 +6,7 @@ use crate::flightdeck::base::{
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::logic::blobify::{BlobLockMap, Blobify};
-use crate::repository::logic::state::VirtualFile;
+use crate::repository::logic::state::{VirtualFile, VirtualFileState};
 use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;

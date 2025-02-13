@@ -1,5 +1,7 @@
 use crate::db::database::DBOutputStream;
-use crate::db::models::{BlobWithPaths, Connection, Observation, TransferItem, VirtualFile};
+use crate::db::models::{
+    BlobWithPaths, Connection, MissingFile, Observation, TransferItem, VirtualFile,
+};
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
@@ -89,10 +91,10 @@ pub trait VirtualFilesystem {
     async fn refresh(&self) -> Result<(), sqlx::Error>;
     fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
-    fn select_deleted_files(
+    fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = DBOutputStream<'static, VirtualFile>> + Send;
+    ) -> impl Future<Output = DBOutputStream<'static, MissingFile>> + Send;
 
     async fn add_observations(
         &self,

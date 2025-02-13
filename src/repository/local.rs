@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, InsertMaterialisation, Observation, Repository,
-    TransferItem, VirtualFile,
+    Blob, BlobWithPaths, Connection, File, InsertMaterialisation, MissingFile, Observation,
+    Repository, TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::repository::connection::EstablishedConnection;
@@ -351,10 +351,10 @@ impl VirtualFilesystem for LocalRepository {
         self.db.cleanup_virtual_filesystem(last_seen_id)
     }
 
-    fn select_deleted_files(
+    fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = DBOutputStream<'static, VirtualFile>> + Send {
+    ) -> impl Future<Output = DBOutputStream<'static, MissingFile>> + Send {
         self.db
             .select_missing_files_on_virtual_filesystem(last_seen_id)
     }

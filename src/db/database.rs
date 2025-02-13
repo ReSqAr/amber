@@ -1,6 +1,7 @@
 use crate::db::models::{
     Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen, InsertBlob,
-    InsertFile, InsertMaterialisation, Observation, Repository, TransferItem, VirtualFile,
+    InsertFile, InsertMaterialisation, MissingFile, Observation, Repository, TransferItem,
+    VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -522,15 +523,13 @@ impl Database {
     pub async fn select_missing_files_on_virtual_filesystem(
         &self,
         last_seen_id: i64,
-    ) -> DBOutputStream<'static, VirtualFile> {
+    ) -> DBOutputStream<'static, MissingFile> {
         self.stream(
             query(
                 "
                     SELECT
                         path,
-                        materialisation_last_blob_id,
-                        target_blob_id,
-                        'missing' as state
+                        target_blob_id
                     FROM virtual_filesystem
                     WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND local_has_target_blob
                 ;",
