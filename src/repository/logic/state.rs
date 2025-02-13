@@ -1,4 +1,5 @@
-use crate::db::models::{FileCheck, FileSeen, Observation, VirtualFile, VirtualFileState};
+use crate::db::models;
+use crate::db::models::{FileCheck, FileSeen, Observation, VirtualFileState};
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
@@ -69,7 +70,7 @@ async fn close(
     while let Some(r) = deleted_files.next().await {
         match r {
             Ok(vf) => {
-                if let Err(e) = tx.send(Ok(vf)).await {
+                if let Err(e) = tx.send(Ok(vf.into())).await {
                     panic!("failed to send element to output stream: {e}");
                 }
             }
@@ -85,6 +86,25 @@ async fn close(
     debug!("deleted: {:.2?}", duration);
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct VirtualFile {
+    pub path: String,
+    pub materialisation_last_blob_id: Option<String>,
+    pub target_blob_id: Option<String>,
+    pub state: VirtualFileState,
+}
+
+impl From<models::VirtualFile> for VirtualFile {
+    fn from(value: models::VirtualFile) -> Self {
+        Self {
+            path: value.path,
+            materialisation_last_blob_id: value.materialisation_last_blob_id,
+            target_blob_id: value.target_blob_id,
+            state: value.state,
+        }
+    }
 }
 
 pub async fn state(
@@ -201,7 +221,7 @@ pub async fn state(
                             | VirtualFileState::Outdated
                             | VirtualFileState::Missing => {
                                 debug!("state -> splitter: {:?} ready for output", vf.path);
-                                if let Err(e) = tx_clone.send(Ok(vf)).await {
+                                if let Err(e) = tx_clone.send(Ok(vf.into())).await {
                                     panic!("failed to send error to output stream: {e}");
                                 }
                             }
@@ -254,7 +274,7 @@ pub async fn state(
             .map(|vf| {
                 let vfs_clone = vfs_clone.clone();
                 async move {
-                    match check(&vfs_clone, vf).await {
+                    match check(&vfs_clone, vf.into()).await {
                         Ok(observation) => Ok(observation),
                         Err(e) => Err(e),
                     }

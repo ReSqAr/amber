@@ -243,7 +243,7 @@ pub async fn transfer(
         let duration = start_time.elapsed();
         format!("selected {expected_count} blobs for transfer in {duration:.2?}")
     } else {
-        "selected no files transfer".into()
+        "selected no files for transfer".into()
     };
     transfer_obs.observe_state(log::Level::Info, msg);
 
@@ -264,7 +264,7 @@ pub async fn transfer(
         let duration = start_time.elapsed();
         format!("verified {count} blobs in {duration:.2?}")
     } else {
-        "no files verified".into()
+        "no files to be verified".into()
     };
     transfer_obs.observe_state(log::Level::Info, msg);
 

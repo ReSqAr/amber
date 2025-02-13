@@ -66,12 +66,6 @@ impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
     }
 }
 
-#[derive(Debug, FromRow)]
-pub struct FilePathWithBlobId {
-    pub path: String,
-    pub blob_id: String,
-}
-
 #[derive(Debug)]
 pub struct InsertMaterialisation {
     pub path: String,
@@ -116,7 +110,6 @@ pub struct FileCheck {
 pub struct VirtualFile {
     pub path: String,
     pub materialisation_last_blob_id: Option<String>,
-    #[allow(dead_code)]
     pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }

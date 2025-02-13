@@ -79,13 +79,3 @@ SELECT
     path,
     blob_id
 FROM latest_materialisations_version;
-
--- view: repository_filesystem_available_files
-CREATE VIEW repository_filesystem_available_files AS
-SELECT
-    path,
-    blob_id,
-    blob_size,
-    repo_id
-FROM latest_filesystem_files
-    INNER JOIN latest_available_blobs USING (blob_id);

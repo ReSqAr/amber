@@ -1,7 +1,5 @@
 use crate::db::database::DBOutputStream;
-use crate::db::models::{
-    BlobWithPaths, Connection, FilePathWithBlobId, Observation, TransferItem, VirtualFile,
-};
+use crate::db::models::{BlobWithPaths, Connection, Observation, TransferItem, VirtualFile};
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
@@ -85,12 +83,6 @@ pub trait Syncer<T: SyncerParams> {
     fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: Stream<Item = T> + Unpin + Send + 'static;
-}
-
-pub trait Reconciler {
-    fn target_filesystem_state(
-        &self,
-    ) -> impl Stream<Item = Result<FilePathWithBlobId, InternalError>> + Unpin + Send;
 }
 
 pub trait VirtualFilesystem {

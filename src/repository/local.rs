@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, FilePathWithBlobId, InsertMaterialisation, Observation,
-    Repository, TransferItem, VirtualFile,
+    Blob, BlobWithPaths, Connection, File, InsertMaterialisation, Observation, Repository,
+    TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::repository::connection::EstablishedConnection;
@@ -11,8 +11,7 @@ use crate::repository::logic::assimilate::Item;
 use crate::repository::logic::files;
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
-    LastIndicesSyncer, Local, Metadata, Missing, Reconciler, Syncer, SyncerParams,
-    VirtualFilesystem,
+    LastIndicesSyncer, Local, Metadata, Missing, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
@@ -340,16 +339,6 @@ impl Syncer<Blob> for LocalRepository {
         S: Stream<Item = Blob> + Unpin + Send + 'static,
     {
         self.db.merge_blobs(s).err_into()
-    }
-}
-
-impl Reconciler for LocalRepository {
-    fn target_filesystem_state(
-        &self,
-    ) -> impl Stream<Item = Result<FilePathWithBlobId, InternalError>> + Unpin + Send {
-        self.db
-            .target_filesystem_state(self.repo_id.clone())
-            .err_into()
     }
 }
 

@@ -1,7 +1,6 @@
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FilePathWithBlobId,
-    FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation, Repository, TransferItem,
-    VirtualFile,
+    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen, InsertBlob,
+    InsertFile, InsertMaterialisation, Observation, Repository, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -377,20 +376,6 @@ impl Database {
         .await
     }
 
-    pub fn target_filesystem_state(&self, repo_id: String) -> DBOutputStream<FilePathWithBlobId> {
-        self.stream(
-            query(
-                "
-                SELECT
-                    path,
-                    blob_id
-                FROM repository_filesystem_available_files
-                WHERE repo_id = ?;",
-            )
-            .bind(repo_id),
-        )
-    }
-
     pub(crate) fn missing_blobs(
         &self,
         repo_id: String,
@@ -490,8 +475,8 @@ impl Database {
                             f.blob_id,
                             blob_size
                         FROM latest_filesystem_files f
-                                 LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
-                                 LEFT JOIN latest_materialisations m USING (path)
+                            LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
+                            LEFT JOIN latest_materialisations m USING (path)
                     )
                 SELECT
                     a.path,
@@ -500,7 +485,7 @@ impl Database {
                     a.blob_size as target_blob_size,
                     a.local_has_blob as local_has_target_blob
                 FROM all_files a
-                         LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
+                    LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
                 WHERE
                     a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
                     OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
