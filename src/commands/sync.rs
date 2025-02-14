@@ -4,8 +4,8 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::logic::{materialise, sync};
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::{materialise, sync};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;

@@ -1,7 +1,7 @@
 use crate::db::models::InsertMaterialisation;
 use crate::flightdeck::base::BaseObserver;
-use crate::repository::logic::state::VirtualFileState;
-use crate::repository::logic::{files, state};
+use crate::logic::state::VirtualFileState;
+use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;

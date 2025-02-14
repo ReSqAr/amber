@@ -1,5 +1,5 @@
 use crate::db::models::InsertBlob;
-use crate::repository::logic::files;
+use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::pipe::TryForwardIntoExt;

@@ -3,10 +3,10 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::logic::files;
+use crate::logic::transfer::transfer;
+use crate::logic::{materialise, sync};
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::files;
-use crate::repository::logic::transfer::transfer;
-use crate::repository::logic::{materialise, sync};
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;

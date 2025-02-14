@@ -1,10 +1,10 @@
 use crate::grpc::auth::ServerAuth;
 use crate::grpc::definitions;
 use crate::grpc::service::Service;
+use crate::logic::connect;
+use crate::logic::connect::{ServeError, ServeResponse, ServeResult};
+use crate::logic::files;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::connect;
-use crate::repository::logic::connect::{ServeError, ServeResponse, ServeResult};
-use crate::repository::logic::files;
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use log::debug;

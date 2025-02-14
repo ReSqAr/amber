@@ -1,4 +1,4 @@
-use crate::repository::logic::files;
+use crate::logic::files;
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::errors::InternalError;
 use crate::utils::fs::are_hardlinked;

@@ -5,10 +5,10 @@ use crate::db::models::{
     TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
+use crate::logic::assimilate;
+use crate::logic::assimilate::Item;
+use crate::logic::files;
 use crate::repository::connection::EstablishedConnection;
-use crate::repository::logic::assimilate;
-use crate::repository::logic::assimilate::Item;
-use crate::repository::logic::files;
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
     LastIndicesSyncer, Local, Metadata, Missing, RepositoryMetadata, Syncer, SyncerParams,

@@ -4,10 +4,10 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::logic::blobify::{BlobLockMap, Blobify};
+use crate::logic::state::{VirtualFile, VirtualFileState};
+use crate::logic::{blobify, state};
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::blobify::{BlobLockMap, Blobify};
-use crate::repository::logic::state::{VirtualFile, VirtualFileState};
-use crate::repository::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;

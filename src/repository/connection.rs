@@ -1,6 +1,6 @@
 use crate::db::models::ConnectionType;
+use crate::logic::connect;
 use crate::repository::local::LocalRepository;
-use crate::repository::logic::connect;
 use crate::repository::traits::Metadata;
 use crate::repository::wrapper::{ManagedRepository, WrappedRepository};
 use crate::utils::errors::{AppError, InternalError};
