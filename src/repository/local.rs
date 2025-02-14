@@ -444,7 +444,7 @@ impl BlobReceiver for LocalRepository {
     ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
         let transfer_path = self.transfer_path(transfer_id);
         if let Err(e) = fs::create_dir_all(transfer_path.abs()).await {
-            return stream::iter(vec![Err(e.into())]).boxed();
+            return stream::iter([Err(e.into())]).boxed();
         }
 
         self.db

@@ -71,16 +71,14 @@ async fn close(
     let mut deleted_files = vfs.select_missing_files(last_seen_id).await;
     while let Some(r) = deleted_files.next().await {
         match r {
-            Ok(vf) => {
-                if let Err(e) = tx.send(Ok(vf.into())).await {
-                    panic!("failed to send element to output stream: {e}");
-                }
-            }
-            Err(e) => {
-                if let Err(e_send) = tx.send(Err(e.into())).await {
-                    panic!("failed to send error to output stream: {}", e_send);
-                }
-            }
+            Ok(vf) => tx
+                .send(Ok(vf.into()))
+                .await
+                .expect("failed to send element to output stream"),
+            Err(e) => tx
+                .send(Err(e.into()))
+                .await
+                .expect("failed to send error to output stream"),
         }
     }
 
@@ -121,7 +119,7 @@ pub struct VirtualFile {
 }
 
 impl TryFrom<models::VirtualFile> for VirtualFile {
-    type Error = ();
+    type Error = models::VirtualFile;
 
     fn try_from(vf: models::VirtualFile) -> Result<Self, Self::Error> {
         match vf.state {
@@ -160,7 +158,7 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                     local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
-            models::VirtualFileState::NeedsCheck => Err(()),
+            models::VirtualFileState::NeedsCheck => Err(vf),
         }
     }
 }
@@ -250,23 +248,24 @@ pub async fn state(
                     }
 
                     if let Err(e) = obs_tx_clone.send(observation.into()).await {
-                        if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                            panic!("failed to send error to output stream: {}", e_send);
-                        }
+                        tx_clone
+                            .send(Err(e.into()))
+                            .await
+                            .expect("failed to send error to output stream");
                     }
                 }
-                Err(e) => {
-                    if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                        panic!("failed to send error to output stream: {}", e_send);
-                    }
-                }
+                Err(e) => tx_clone
+                    .send(Err(e.into()))
+                    .await
+                    .expect("failed to send error to output stream"),
             }
         }
 
         // close the channels once the stream is exhausted.
-        if let Err(e) = obs_tx_clone.send(Flow::Shutdown).await {
-            panic!("failed to send error to output stream: {e}");
-        }
+        obs_tx_clone
+            .send(Flow::Shutdown)
+            .await
+            .expect("failed to send error to output stream")
     });
 
     // splits the observations by the filesystem walker into:
@@ -284,37 +283,41 @@ pub async fn state(
             match data {
                 Ok(vfs) => {
                     for vf in vfs {
-                        if let Ok(vf) =
-                            <models::VirtualFile as TryInto<VirtualFile>>::try_into(vf.clone())
-                        {
-                            debug!("state -> splitter: {:?} ready for output", vf.path);
-                            if let Err(e) = tx_clone.send(Ok(vf)).await {
-                                panic!("failed to send error to output stream: {e}");
+                        let vf: Result<VirtualFile, _> = vf.try_into();
+                        match vf {
+                            Ok(vf) => {
+                                debug!("state -> splitter: {:?} ready for output", vf.path);
+                                tx_clone
+                                    .send(Ok(vf))
+                                    .await
+                                    .expect("failed to send error to output stream")
                             }
-                        } else {
-                            debug!("state -> splitter: {:?} needs check", vf.path);
-                            if needs_check_tx_clone.is_closed() {
-                                panic!("programming error: data with needs check was received after shutdown");
-                            }
+                            Err(vf) => {
+                                debug!("state -> splitter: {:?} needs check", vf.path);
+                                if needs_check_tx_clone.is_closed() {
+                                    panic!("programming error: data with needs check was received after shutdown");
+                                }
 
-                            if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
-                                if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                                    panic!("failed to send error to output stream: {}", e_send);
+                                if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
+                                    tx_clone
+                                        .send(Err(e.into()))
+                                        .await
+                                        .expect("failed to send error to output stream")
                                 }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                        panic!("failed to send error to output stream: {}", e_send);
-                    }
-                }
+                Err(e) => tx_clone
+                    .send(Err(e.into()))
+                    .await
+                    .expect("failed to send error to output stream"),
             }
             if has_shutdown {
-                if let Err(e) = needs_check_tx_clone.send(Flow::Shutdown).await {
-                    panic!("failed to send shutdown to needs check stream: {e}");
-                }
+                needs_check_tx_clone
+                    .send(Flow::Shutdown)
+                    .await
+                    .expect("failed to send shutdown to needs check stream")
             }
         }
 
@@ -350,16 +353,16 @@ pub async fn state(
                 match result {
                     Ok(observation) => {
                         if let Err(e) = obs_tx_clone.send(observation.into()).await {
-                            if let Err(e_send) = tx_clone.send(Err(e.into())).await {
-                                panic!("failed to send error to output stream: {}", e_send);
-                            }
+                            tx_clone
+                                .send(Err(e.into()))
+                                .await
+                                .expect("failed to send error to output stream")
                         }
                     }
-                    Err(e) => {
-                        if let Err(e_send) = tx_clone.send(Err(e)).await {
-                            panic!("failed to send error to output stream: {}", e_send);
-                        }
-                    }
+                    Err(e) => tx_clone
+                        .send(Err(e))
+                        .await
+                        .expect("failed to send error to output stream"),
                 }
             })
             .await;

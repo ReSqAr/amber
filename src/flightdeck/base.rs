@@ -491,7 +491,8 @@ impl BaseLayoutBuilder {
 
 impl BaseLayoutBuilderBuilder {
     pub fn infallible_build(self) -> BaseLayoutBuilder {
-        self.build().unwrap()
+        let Ok(build) = self.build();
+        build
     }
 
     pub fn termination_action(self, termination_action: TerminationAction) -> Self {
