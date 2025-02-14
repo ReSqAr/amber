@@ -110,13 +110,15 @@ pub struct FileCheck {
 pub struct VirtualFile {
     pub path: String,
     pub materialisation_last_blob_id: Option<String>,
+    pub local_has_target_blob: bool,
     pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }
 #[derive(Debug, FromRow, Clone)]
 pub struct MissingFile {
     pub path: String,
-    pub target_blob_id: Option<String>,
+    pub target_blob_id: String,
+    pub local_has_target_blob: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]

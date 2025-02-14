@@ -529,9 +529,10 @@ impl Database {
                 "
                     SELECT
                         path,
-                        target_blob_id
+                        target_blob_id,
+                        local_has_target_blob
                     FROM virtual_filesystem
-                    WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND local_has_target_blob
+                    WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND target_blob_id IS NOT NULL
                 ;",
             )
             .bind(last_seen_id),
@@ -592,6 +593,7 @@ impl Database {
                         path,
                         materialisation_last_blob_id,
                         target_blob_id,
+                        local_has_target_blob,
                         CASE
                             WHEN target_blob_id IS NULL THEN 'new'
                             WHEN fs_last_modified_dttm <= check_last_dttm THEN ( -- we can trust the check

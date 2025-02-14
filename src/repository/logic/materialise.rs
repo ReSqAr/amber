@@ -46,15 +46,28 @@ pub async fn materialise(
             match state {
                 VirtualFileState::New => None,
                 VirtualFileState::Ok { .. } => None,
-                VirtualFileState::Missing { target_blob_id } => Some(Ok(ToMaterialise {
-                    path,
+                VirtualFileState::Missing {
                     target_blob_id,
-                })),
+                    local_has_target_blob,
+                } => match local_has_target_blob {
+                    true => Some(Ok(ToMaterialise {
+                        path,
+                        target_blob_id,
+                    })),
+                    false => None,
+                },
                 VirtualFileState::Altered { .. } => None,
-                VirtualFileState::Outdated { target_blob_id, .. } => Some(Ok(ToMaterialise {
-                    path,
+                VirtualFileState::Outdated {
                     target_blob_id,
-                })),
+                    local_has_target_blob,
+                    ..
+                } => match local_has_target_blob {
+                    true => Some(Ok(ToMaterialise {
+                        path,
+                        target_blob_id,
+                    })),
+                    false => None,
+                },
             }
         });
 

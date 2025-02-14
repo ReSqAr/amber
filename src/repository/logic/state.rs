@@ -28,7 +28,9 @@ async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation,
     let path = vfs.root().join(vf.path.clone());
 
     let hash = if let Some(blob_id) = vf.materialisation_last_blob_id.clone() {
-        if are_hardlinked(&path, &vfs.blob_path(blob_id.clone())).await? {
+        if vf.local_has_target_blob
+            && are_hardlinked(&path, &vfs.blob_path(blob_id.clone())).await?
+        {
             Some(blob_id)
         } else {
             None
@@ -93,18 +95,22 @@ pub enum VirtualFileState {
     New,
     Missing {
         target_blob_id: String,
+        local_has_target_blob: bool,
     },
     Ok {
         materialisation_last_blob_id: String,
         target_blob_id: String,
+        local_has_target_blob: bool,
     },
     Altered {
         materialisation_last_blob_id: String,
         target_blob_id: String,
+        local_has_target_blob: bool,
     },
     Outdated {
         materialisation_last_blob_id: String,
         target_blob_id: String,
+        local_has_target_blob: bool,
     },
 }
 
@@ -128,12 +134,14 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 state: VirtualFileState::Ok {
                     materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
                     target_blob_id: vf.target_blob_id.unwrap(),
+                    local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
             models::VirtualFileState::Missing => Ok(Self {
                 path: vf.path,
                 state: VirtualFileState::Missing {
                     target_blob_id: vf.target_blob_id.unwrap(),
+                    local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
             models::VirtualFileState::Altered => Ok(Self {
@@ -141,6 +149,7 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 state: VirtualFileState::Altered {
                     materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
                     target_blob_id: vf.target_blob_id.unwrap(),
+                    local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
             models::VirtualFileState::Outdated => Ok(Self {
@@ -148,6 +157,7 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 state: VirtualFileState::Outdated {
                     materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
                     target_blob_id: vf.target_blob_id.unwrap(),
+                    local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
             models::VirtualFileState::NeedsCheck => Err(()),
@@ -160,7 +170,8 @@ impl From<MissingFile> for VirtualFile {
         Self {
             path: vf.path,
             state: VirtualFileState::Missing {
-                target_blob_id: vf.target_blob_id.unwrap(),
+                target_blob_id: vf.target_blob_id,
+                local_has_target_blob: vf.local_has_target_blob,
             },
         }
     }
@@ -273,7 +284,8 @@ pub async fn state(
             match data {
                 Ok(vfs) => {
                     for vf in vfs {
-                        if let Ok(vf) = <models::VirtualFile as TryInto<VirtualFile>>::try_into(vf.clone())
+                        if let Ok(vf) =
+                            <models::VirtualFile as TryInto<VirtualFile>>::try_into(vf.clone())
                         {
                             debug!("state -> splitter: {:?} ready for output", vf.path);
                             if let Err(e) = tx_clone.send(Ok(vf)).await {

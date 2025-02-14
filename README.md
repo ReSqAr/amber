@@ -2,9 +2,6 @@
 - new command behaviour:
   - init:
     - repo name table like blob/file - also support sync
-  - add:
-    - amber add breaks if blob exists but is not available locally and not the same [checker]
-  - sync breaks if upstream blob has changed
   - fsck
   - edit & deletion
 - connections:
