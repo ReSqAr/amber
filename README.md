@@ -1,6 +1,5 @@
 # PROJECT MANAGEMENT
 - new command behaviour:
-  - fsck
   - edit & deletion
 - connections:
   - add support for BlobRepository

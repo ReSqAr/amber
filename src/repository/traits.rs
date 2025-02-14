@@ -1,6 +1,6 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    BlobWithPaths, Connection, MissingFile, Observation, TransferItem, VirtualFile,
+    AvailableBlob, BlobWithPaths, Connection, MissingFile, Observation, TransferItem, VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -12,7 +12,7 @@ pub trait Local {
     fn root(&self) -> RepoPath;
     fn repository_path(&self) -> RepoPath;
     fn blobs_path(&self) -> RepoPath;
-    fn blob_path(&self, blob_id: String) -> RepoPath;
+    fn blob_path(&self, blob_id: &str) -> RepoPath;
     fn staging_path(&self) -> RepoPath;
     fn transfer_path(&self, transfer_id: u32) -> RepoPath;
     fn log_path(&self) -> RepoPath;
@@ -40,13 +40,19 @@ pub enum BufferType {
     Walker,
     StateChecker,
     Materialise,
+    FsckBuffer,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;
 }
 
-pub trait Missing {
-    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send;
+pub trait Availability {
+    fn available(
+        &self,
+    ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static;
+    fn missing(
+        &self,
+    ) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send + 'static;
 }
 
 pub trait Adder {
@@ -101,6 +107,7 @@ pub trait Syncer<T: SyncerParams> {
 }
 
 pub trait VirtualFilesystem {
+    async fn reset(&self) -> Result<(), sqlx::Error>;
     async fn refresh(&self) -> Result<(), sqlx::Error>;
     fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 

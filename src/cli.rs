@@ -42,6 +42,7 @@ enum Commands {
     Push {
         connection_name: String,
     },
+    Fsck {},
     Remote {
         #[command(subcommand)]
         command: RemoteCommands,
@@ -100,6 +101,7 @@ pub async fn run() {
         Commands::Sync { connection_name } => commands::sync::sync(cli.path, connection_name).await,
         Commands::Pull { connection_name } => commands::pull::pull(cli.path, connection_name).await,
         Commands::Push { connection_name } => commands::push::push(cli.path, connection_name).await,
+        Commands::Fsck {} => commands::fsck::fsck(cli.path).await,
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
                 name,

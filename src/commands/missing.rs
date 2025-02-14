@@ -5,7 +5,7 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::traits::{Local, Missing};
+use crate::repository::traits::{Availability, Local};
 use crate::utils::errors::InternalError;
 use log::error;
 use std::path::PathBuf;
@@ -44,7 +44,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     [LayoutItemBuilderNode::from(missing)]
 }
 
-pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), InternalError> {
+pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut missing_obs = BaseObserver::without_id("missing");
 

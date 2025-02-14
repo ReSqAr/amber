@@ -31,7 +31,7 @@ pub(crate) async fn blobify(
         blob_id: blob_id.clone(),
         blob_size,
     };
-    let blob_path = local.blob_path(blob_id.clone());
+    let blob_path = local.blob_path(&blob_id);
 
     // make path read only
     let mut permissions = fs::metadata(path).await?.permissions();

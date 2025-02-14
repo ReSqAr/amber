@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, MissingFile, Observation, Repository, RepositoryName,
-    TransferItem, VirtualFile,
+    AvailableBlob, Blob, BlobWithPaths, Connection, File, MissingFile, Observation, Repository,
+    RepositoryName, TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -10,8 +10,8 @@ use crate::logic::assimilate::Item;
 use crate::logic::files;
 use crate::repository::connection::EstablishedConnection;
 use crate::repository::traits::{
-    Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
-    LastIndicesSyncer, Local, Metadata, Missing, RepositoryMetadata, Syncer, SyncerParams,
+    Adder, Availability, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager,
+    LastIndices, LastIndicesSyncer, Local, Metadata, RepositoryMetadata, Syncer, SyncerParams,
     VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
@@ -177,7 +177,7 @@ impl Local for LocalRepository {
         self.repository_path().join("blobs")
     }
 
-    fn blob_path(&self, blob_id: String) -> RepoPath {
+    fn blob_path(&self, blob_id: &str) -> RepoPath {
         if blob_id.len() > 6 {
             self.blobs_path()
                 .join(&blob_id[0..2])
@@ -223,6 +223,7 @@ impl Config for LocalRepository {
             BufferType::StateChecker => 10000,
             BufferType::Walker => 10000,
             BufferType::Materialise => 100,
+            BufferType::FsckBuffer => 20,
         }
     }
 }
@@ -240,8 +241,16 @@ impl Metadata for LocalRepository {
     }
 }
 
-impl Missing for LocalRepository {
-    fn missing(&self) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send {
+impl Availability for LocalRepository {
+    fn available(
+        &self,
+    ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static {
+        self.db.available_blobs(self.repo_id.clone()).err_into()
+    }
+
+    fn missing(
+        &self,
+    ) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send + 'static {
         self.db.missing_blobs(self.repo_id.clone()).err_into()
     }
 }
@@ -385,6 +394,10 @@ impl Syncer<RepositoryName> for LocalRepository {
 }
 
 impl VirtualFilesystem for LocalRepository {
+    async fn reset(&self) -> Result<(), sqlx::Error> {
+        self.db.truncate_virtual_filesystem().await
+    }
+
     async fn refresh(&self) -> Result<(), sqlx::Error> {
         self.db.refresh_virtual_filesystem().await
     }
@@ -446,7 +459,7 @@ impl BlobSender for LocalRepository {
     {
         let stream = tokio_stream::StreamExt::map(s, |item: TransferItem| {
             async move {
-                let blob_path = self.blob_path(item.blob_id);
+                let blob_path = self.blob_path(&item.blob_id);
                 let transfer_path = self.root().join(item.path); // TODO check in transfer path
                 if let Some(parent) = transfer_path.abs().parent() {
                     fs::create_dir_all(parent).await?;

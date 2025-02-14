@@ -81,7 +81,7 @@ pub async fn materialise(
                         path,
                         target_blob_id,
                     } = file_result?;
-                    let object_path = local.blob_path(target_blob_id.clone());
+                    let object_path = local.blob_path(&target_blob_id);
                     let target_path = local.root().join(path.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.clone());
 

@@ -41,7 +41,7 @@ async fn assimilate_blob(
         }
     }
 
-    let blob_path = local.blob_path(blob_id.clone());
+    let blob_path = local.blob_path(&blob_id);
     {
         let mut locks = blob_locks.lock().await;
         let blob_lock = locks

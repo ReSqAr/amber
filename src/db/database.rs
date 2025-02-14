@@ -1,7 +1,7 @@
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen, InsertBlob,
-    InsertFile, InsertMaterialisation, InsertRepositoryName, MissingFile, Observation, Repository,
-    RepositoryName, TransferItem, VirtualFile,
+    AvailableBlob, Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen,
+    InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, MissingFile, Observation,
+    Repository, RepositoryName, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -508,6 +508,21 @@ impl Database {
         .await
     }
 
+    pub(crate) fn available_blobs(
+        &self,
+        repo_id: String,
+    ) -> impl Stream<Item = Result<AvailableBlob, sqlx::Error>> + Unpin + Send + Sized {
+        self.stream(
+            query(
+                "
+                SELECT repo_id, blob_id, blob_size
+                FROM latest_available_blobs
+                WHERE repo_id = ?",
+            )
+            .bind(repo_id),
+        )
+    }
+
     pub(crate) fn missing_blobs(
         &self,
         repo_id: String,
@@ -590,6 +605,12 @@ impl Database {
         Ok(total_inserted)
     }
 
+    pub async fn truncate_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
+        let query = "DELETE FROM virtual_filesystem;";
+        sqlx::query(query).execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "
                 INSERT OR REPLACE INTO virtual_filesystem (
@@ -644,6 +665,7 @@ impl Database {
 
         Ok(())
     }
+
     pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
         let query = "
         DELETE FROM virtual_filesystem

@@ -73,6 +73,13 @@ pub struct InsertMaterialisation {
     pub valid_from: DateTime<Utc>,
 }
 
+#[derive(Debug, FromRow)]
+pub struct AvailableBlob {
+    pub repo_id: String,
+    pub blob_id: String,
+    pub blob_size: i64,
+}
+
 #[derive(Debug)]
 pub struct BlobWithPaths {
     pub blob_id: String,

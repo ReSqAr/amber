@@ -28,9 +28,7 @@ async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation,
     let path = vfs.root().join(vf.path.clone());
 
     let hash = if let Some(blob_id) = vf.materialisation_last_blob_id.clone() {
-        if vf.local_has_target_blob
-            && are_hardlinked(&path, &vfs.blob_path(blob_id.clone())).await?
-        {
+        if vf.local_has_target_blob && are_hardlinked(&path, &vfs.blob_path(&blob_id)).await? {
             Some(blob_id)
         } else {
             None
