@@ -181,10 +181,10 @@ pub async fn transfer(
     fs::create_dir_all(&transfer_path).await?;
     let rclone_files = transfer_path.join("rclone.files");
 
-    let local_repo_id = local.repo_id().await?;
-    let source_repo_id = source.repo_id().await?;
-    let destination_repo_id = destination.repo_id().await?;
-    let direction = match local_repo_id == source_repo_id {
+    let local_meta = local.current().await?;
+    let source_meta = source.current().await?;
+    let destination_meta = destination.current().await?;
+    let direction = match local_meta.id == source_meta.id {
         true => Direction::Upload,
         false => Direction::Download,
     };
@@ -195,14 +195,14 @@ pub async fn transfer(
             Direction::Download => "download",
         },
         [
-            ("source".into(), source_repo_id.clone()),
-            ("destination".into(), destination_repo_id.clone()),
+            ("source".into(), source_meta.id.clone()),
+            ("destination".into(), destination_meta.id.clone()),
         ],
     );
 
     let start_time = tokio::time::Instant::now();
     let stream = destination
-        .create_transfer_request(transfer_id, source_repo_id)
+        .create_transfer_request(transfer_id, source_meta.id)
         .await;
 
     transfer_obs.observe_state(log::Level::Debug, "preparing");

@@ -80,9 +80,9 @@ where
     S: Stream<Item = Item> + Unpin + Send + 'static,
 {
     let blob_locks: BlobLockMap = Arc::new(Mutex::new(HashMap::new()));
-    let repo_id = local.repo_id().await?;
+    let meta = local.current().await?;
     stream
-        .map(move |i| assimilate_blob(local, repo_id.clone(), i, blob_locks.clone()))
+        .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))
         .buffer_unordered(local.buffer_size(BufferType::Assimilate))
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
         .await

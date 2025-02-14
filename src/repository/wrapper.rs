@@ -3,7 +3,8 @@ use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneClient;
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer, SyncerParams,
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, RepositoryMetadata, Syncer,
+    SyncerParams,
 };
 use crate::utils::errors::InternalError;
 use futures::{Stream, StreamExt};
@@ -16,11 +17,11 @@ pub enum WrappedRepository {
 }
 
 impl Metadata for WrappedRepository {
-    async fn repo_id(&self) -> Result<String, InternalError> {
+    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
         match self {
-            WrappedRepository::Local(local) => local.repo_id().await,
-            WrappedRepository::Grpc(grpc) => grpc.repo_id().await,
-            WrappedRepository::RCloneExporter(rclone) => rclone.repo_id().await,
+            WrappedRepository::Local(local) => local.current().await,
+            WrappedRepository::Grpc(grpc) => grpc.current().await,
+            WrappedRepository::RCloneExporter(rclone) => rclone.current().await,
         }
     }
 }
@@ -42,10 +43,10 @@ pub enum ManagedRepository {
 }
 
 impl Metadata for ManagedRepository {
-    async fn repo_id(&self) -> Result<String, InternalError> {
+    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
         match self {
-            ManagedRepository::Local(local) => local.repo_id().await,
-            ManagedRepository::Grpc(grpc) => grpc.repo_id().await,
+            ManagedRepository::Local(local) => local.current().await,
+            ManagedRepository::Grpc(grpc) => grpc.current().await,
         }
     }
 }

@@ -167,7 +167,7 @@ pub async fn add_files(
                         valid_from,
                     };
                     let blob = InsertBlob {
-                        repo_id: local_repository_clone.repo_id().await?,
+                        repo_id: local_repository_clone.current().await?.id,
                         blob_id: blob_id.clone(),
                         blob_size: blob_size as i64,
                         has_blob: true,

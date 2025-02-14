@@ -71,6 +71,26 @@ impl Database {
             .await
     }
 
+    pub async fn lookup_current_repository_name(
+        &self,
+        repo_id: String,
+    ) -> Result<Option<String>, sqlx::Error> {
+        #[derive(Debug, FromRow)]
+        struct Name {
+            name: String,
+        }
+
+        Ok(
+            sqlx::query_as::<_, Name>(
+                "SELECT name FROM latest_repository_names WHERE repo_id = ?;",
+            )
+            .bind(repo_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(|n| n.name),
+        )
+    }
+
     pub async fn add_files<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = InsertFile> + Unpin,
@@ -646,7 +666,7 @@ impl Database {
                     WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND target_blob_id IS NOT NULL
                 ;",
             )
-            .bind(last_seen_id),
+                .bind(last_seen_id),
         )
     }
 
@@ -673,7 +693,7 @@ impl Database {
                     return match shutting_down {
                         true => ExtFlow::Shutdown(Ok(vec![])),
                         false => ExtFlow::Data(Ok(vec![]))
-                    }
+                    };
                 }
 
                 let placeholders = observations
@@ -753,10 +773,10 @@ impl Database {
                             check_last_hash: None,
                         },
                         Observation::FileCheck(FileCheck {
-                                                         path,
-                                                         check_dttm,
-                                                         hash,
-                                                     }) => InsertVirtualFile {
+                                                   path,
+                                                   check_dttm,
+                                                   hash,
+                                               }) => InsertVirtualFile {
                             path: path.clone(),
                             fs_last_seen_id: None,
                             fs_last_seen_dttm: None,
@@ -864,9 +884,9 @@ impl Database {
             INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
             RETURNING transfer_id, blob_id, path;",
             )
-            .bind(remote_repo_id)
-            .bind(transfer_id)
-            .bind(transfer_staging_path),
+                .bind(remote_repo_id)
+                .bind(transfer_id)
+                .bind(transfer_staging_path),
         )
     }
 

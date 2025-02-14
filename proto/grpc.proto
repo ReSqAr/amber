@@ -6,9 +6,10 @@ package grpc;
 
 
 
-message RepositoryIdRequest {}
-message RepositoryIdResponse {
-  string repo_id = 1;
+message CurrentRepositoryMetadataRequest {}
+message CurrentRepositoryMetadataResponse {
+  string id = 1;
+  string name = 2;
 }
 
 message Repository {
@@ -91,7 +92,7 @@ message FinaliseTransferResponse {
 }
 
 service Grpc {
-  rpc RepositoryId (RepositoryIdRequest) returns (RepositoryIdResponse);
+  rpc CurrentRepositoryMetadata (CurrentRepositoryMetadataRequest) returns (CurrentRepositoryMetadataResponse);
   rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
   rpc MergeFiles (stream File) returns (MergeFilesResponse);
   rpc MergeBlobs (stream Blob) returns (MergeBlobsResponse);

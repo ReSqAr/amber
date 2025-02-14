@@ -7,7 +7,7 @@ use crate::repository::local::LocalRepository;
 use crate::repository::logic::files;
 use crate::repository::logic::transfer::transfer;
 use crate::repository::logic::{materialise, sync};
-use crate::repository::traits::{ConnectionManager, Local};
+use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
@@ -35,10 +35,11 @@ pub async fn pull(
 
         files::cleanup_staging(&local.staging_path()).await?;
 
+        let remote_meta = managed_remote.current().await?;
         let duration = start_time.elapsed();
         let msg = format!(
-            "pulled {} blobs via {} in {duration:.2?}",
-            count, connection_name
+            "pulled {} blobs via {} from {} in {duration:.2?}",
+            count, connection_name, remote_meta.name,
         );
         sync_obs.observe_termination(log::Level::Info, msg);
 

@@ -54,11 +54,11 @@ where
         + Send
         + Sync,
 {
-    let local_repo_id = local.repo_id().await?;
-    let remote_repo_id = remote.repo_id().await?;
+    let local_meta = local.current().await?;
+    let remote_meta = remote.current().await?;
 
-    let local_last_indices = remote.lookup(local_repo_id).await?;
-    let remote_last_indices = local.lookup(remote_repo_id).await?;
+    let local_last_indices = remote.lookup(local_meta.id).await?;
+    let remote_last_indices = local.lookup(remote_meta.id).await?;
 
     {
         let mut o = BaseObserver::with_id("sync:table", "files");

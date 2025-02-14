@@ -23,8 +23,8 @@ impl EstablishedConnection {
     ) -> Result<Self, InternalError> {
         let config = connect::parse_config(connection_type, parameter)?;
         let remote = connect::connect(&config).await?;
-        let repo_id = remote.repo_id().await?;
-        debug!("connected to repository via {name}: {repo_id}");
+        let meta = remote.current().await?;
+        debug!("connected to repository via {name} to {}", meta.name);
         Ok(Self {
             local,
             name,

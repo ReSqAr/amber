@@ -18,8 +18,13 @@ pub trait Local {
     fn log_path(&self) -> RepoPath;
 }
 
+pub struct RepositoryMetadata {
+    pub id: String,
+    pub name: String,
+}
+
 pub trait Metadata {
-    fn repo_id(&self) -> impl Future<Output = Result<String, InternalError>> + Send;
+    fn current(&self) -> impl Future<Output = Result<RepositoryMetadata, InternalError>> + Send;
 }
 
 pub enum BufferType {

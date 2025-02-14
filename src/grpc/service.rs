@@ -1,15 +1,16 @@
 use crate::db;
 use crate::grpc::definitions::{
-    grpc_server, Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest,
-    FinaliseTransferResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
-    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
-    MergeRepositoryNamesResponse, PrepareTransferResponse, Repository, RepositoryIdRequest,
-    RepositoryIdResponse, RepositoryName, SelectBlobsRequest, SelectFilesRequest,
-    SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
-    UpdateLastIndicesRequest, UpdateLastIndicesResponse,
+    grpc_server, Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
+    CurrentRepositoryMetadataResponse, File, FinaliseTransferRequest, FinaliseTransferResponse,
+    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
+    MergeRepositoriesResponse, MergeRepositoryNamesResponse, PrepareTransferResponse, Repository,
+    RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
+    UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, RepositoryMetadata,
+    Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -45,12 +46,15 @@ where
         + Send
         + 'static,
 {
-    async fn repository_id(
+    async fn current_repository_metadata(
         &self,
-        _: Request<RepositoryIdRequest>,
-    ) -> Result<Response<RepositoryIdResponse>, Status> {
-        let repo_id = self.repository.repo_id().await?;
-        Ok(Response::new(RepositoryIdResponse { repo_id }))
+        _: Request<CurrentRepositoryMetadataRequest>,
+    ) -> Result<Response<CurrentRepositoryMetadataResponse>, Status> {
+        let RepositoryMetadata { id, name } = self.repository.current().await?;
+        Ok(Response::new(CurrentRepositoryMetadataResponse {
+            id,
+            name,
+        }))
     }
 
     async fn merge_repositories(

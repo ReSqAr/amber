@@ -11,7 +11,8 @@ use crate::repository::logic::assimilate::Item;
 use crate::repository::logic::files;
 use crate::repository::traits::{
     Adder, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager, LastIndices,
-    LastIndicesSyncer, Local, Metadata, Missing, Syncer, SyncerParams, VirtualFilesystem,
+    LastIndicesSyncer, Local, Metadata, Missing, RepositoryMetadata, Syncer, SyncerParams,
+    VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
@@ -227,8 +228,15 @@ impl Config for LocalRepository {
 }
 
 impl Metadata for LocalRepository {
-    async fn repo_id(&self) -> Result<String, InternalError> {
-        Ok(self.repo_id.clone())
+    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
+        let name = self
+            .db
+            .lookup_current_repository_name(self.repo_id.clone())
+            .await?;
+        Ok(RepositoryMetadata {
+            id: self.repo_id.clone(),
+            name: name.unwrap_or("-".into()),
+        })
     }
 }
 

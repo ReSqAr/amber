@@ -1,10 +1,13 @@
-use crate::repository::traits::Metadata;
+use crate::repository::traits::{Metadata, RepositoryMetadata};
 use crate::utils::errors::InternalError;
 
 pub type RCloneClient = ();
 
 impl Metadata for RCloneClient {
-    async fn repo_id(&self) -> Result<String, InternalError> {
-        Ok("".to_string())
+    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
+        Ok(RepositoryMetadata {
+            id: "".into(),
+            name: "".into(),
+        })
     }
 }

@@ -2,14 +2,14 @@ use crate::db::models;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
-    Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
-    LookupLastIndicesRequest, LookupLastIndicesResponse, PrepareTransferResponse, Repository,
-    RepositoryIdRequest, RepositoryName, SelectBlobsRequest, SelectFilesRequest,
-    SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
-    UpdateLastIndicesRequest,
+    Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
+    FinaliseTransferRequest, FinaliseTransferResponse, LookupLastIndicesRequest,
+    LookupLastIndicesResponse, PrepareTransferResponse, Repository, RepositoryName,
+    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
+    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, RepositoryMetadata, Syncer,
 };
 use crate::utils::errors::InternalError;
 use futures::TryStreamExt;
@@ -51,16 +51,19 @@ impl GRPCClient {
 }
 
 impl Metadata for GRPCClient {
-    async fn repo_id(&self) -> Result<String, InternalError> {
-        let repo_id_request = tonic::Request::new(RepositoryIdRequest {});
-        let remote_repo = self
+    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
+        let repo_id_request = tonic::Request::new(CurrentRepositoryMetadataRequest {});
+        let meta = self
             .client
             .write()
             .await
-            .repository_id(repo_id_request)
+            .current_repository_metadata(repo_id_request)
             .await?
             .into_inner();
-        Ok(remote_repo.repo_id)
+        Ok(RepositoryMetadata {
+            id: meta.id,
+            name: meta.name,
+        })
     }
 }
 

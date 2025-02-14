@@ -6,7 +6,7 @@ use crate::flightdeck::base::{
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::connection::EstablishedConnection;
 use crate::repository::local::LocalRepository;
-use crate::repository::traits::ConnectionManager;
+use crate::repository::traits::{ConnectionManager, Metadata};
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
@@ -55,19 +55,21 @@ pub async fn add(
         let start_time = tokio::time::Instant::now();
         let mut init_obs = BaseObserver::without_id("init");
 
-        add_connection(
+        let connection = add_connection(
             name.clone(),
             connection_type.clone(),
             parameter,
             local_repository,
         )
         .await?;
+        let remote_meta = connection.remote.current().await?;
 
         let duration = start_time.elapsed();
         let msg = format!(
-            "added connection {} ({}) in {duration:.2?}",
+            "added connection via {} ({}) to {} in {duration:.2?}",
             name,
-            render_connection_type(connection_type)
+            render_connection_type(connection_type),
+            remote_meta.name,
         );
         init_obs.observe_termination(log::Level::Info, msg);
 
@@ -102,8 +104,8 @@ async fn add_connection(
     connection_type: ConnectionType,
     parameter: String,
     local_repository: LocalRepository,
-) -> Result<(), InternalError> {
-    EstablishedConnection::connect(
+) -> Result<EstablishedConnection, InternalError> {
+    let established = EstablishedConnection::connect(
         local_repository.clone(),
         name.clone(),
         connection_type.clone(),
@@ -119,5 +121,5 @@ async fn add_connection(
 
     local_repository.add(&connection).await?;
 
-    Ok(())
+    Ok(established)
 }
