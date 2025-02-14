@@ -1,7 +1,9 @@
 # PROJECT MANAGEMENT
 - new command behaviour:
-  - init:
-    - repo name table like blob/file - also support sync
+  - status:
+    - better summary
+  - missing + status:
+    - option: repo name table like blob/file - so it's clear where the files are
   - fsck
   - edit & deletion
 - connections:
