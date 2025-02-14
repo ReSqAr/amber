@@ -3,9 +3,10 @@
   - status:
     - better summary
   - missing + status:
-    - option: repo name table like blob/file - so it's clear where the files are
+    - use repo name table
   - fsck
   - edit & deletion
+  - move logic one level up
 - connections:
   - add support for BlobRepository
   - ssh: which honours ssh config + key auth

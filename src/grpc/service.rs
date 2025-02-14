@@ -2,19 +2,18 @@ use crate::db;
 use crate::grpc::definitions::{
     grpc_server, Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest,
     FinaliseTransferResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
-    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse, PrepareTransferResponse,
-    Repository, RepositoryIdRequest, RepositoryIdResponse, SelectBlobsRequest, SelectFilesRequest,
-    SelectRepositoriesRequest, TransferItem, UpdateLastIndicesRequest, UpdateLastIndicesResponse,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+    MergeRepositoryNamesResponse, PrepareTransferResponse, Repository, RepositoryIdRequest,
+    RepositoryIdResponse, RepositoryName, SelectBlobsRequest, SelectFilesRequest,
+    SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
+    UpdateLastIndicesRequest, UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use db::models::Blob as DbBlob;
-use db::models::File as DbFile;
-use db::models::Repository as DbRepository;
-use db::models::TransferItem as DbTransferItem;
+use db::models;
 use futures::Stream;
 use futures::TryStreamExt;
 use std::pin::Pin;
@@ -36,9 +35,10 @@ where
     T: Metadata
         + Local
         + LastIndicesSyncer
-        + Syncer<DbRepository>
-        + Syncer<DbFile>
-        + Syncer<DbBlob>
+        + Syncer<models::Repository>
+        + Syncer<models::File>
+        + Syncer<models::Blob>
+        + Syncer<models::RepositoryName>
         + BlobSender
         + BlobReceiver
         + Sync
@@ -59,32 +59,46 @@ where
     ) -> Result<Response<MergeRepositoriesResponse>, Status> {
         request
             .into_inner()
-            .map_ok::<DbRepository, _>(Repository::into)
+            .map_ok::<models::Repository, _>(Repository::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
+
     async fn merge_files(
         &self,
         request: Request<Streaming<File>>,
     ) -> Result<Response<MergeFilesResponse>, Status> {
         request
             .into_inner()
-            .map_ok::<DbFile, _>(File::into)
+            .map_ok::<models::File, _>(File::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeFilesResponse {}))
     }
+
     async fn merge_blobs(
         &self,
         request: Request<Streaming<Blob>>,
     ) -> Result<Response<MergeBlobsResponse>, Status> {
         request
             .into_inner()
-            .map_ok::<DbBlob, _>(Blob::into)
+            .map_ok::<models::Blob, _>(Blob::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
             .await?;
         Ok(Response::new(MergeBlobsResponse {}))
+    }
+
+    async fn merge_repository_names(
+        &self,
+        request: Request<Streaming<RepositoryName>>,
+    ) -> Result<Response<MergeRepositoryNamesResponse>, Status> {
+        request
+            .into_inner()
+            .map_ok::<models::RepositoryName, _>(RepositoryName::into)
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
+            .await?;
+        Ok(Response::new(MergeRepositoryNamesResponse {}))
     }
 
     async fn update_last_indices(
@@ -99,9 +113,13 @@ where
         &self,
         request: Request<LookupLastIndicesRequest>,
     ) -> Result<Response<LookupLastIndicesResponse>, Status> {
-        let LastIndices { file, blob } =
+        let LastIndices { file, blob, name } =
             self.repository.lookup(request.into_inner().repo_id).await?;
-        Ok(Response::new(LookupLastIndicesResponse { file, blob }))
+        Ok(Response::new(LookupLastIndicesResponse {
+            file,
+            blob,
+            name,
+        }))
     }
 
     type SelectRepositoriesStream =
@@ -111,10 +129,10 @@ where
         &self,
         _: Request<SelectRepositoriesRequest>,
     ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = <T as Syncer<DbRepository>>::select(&self.repository, ())
+        let stream = <T as Syncer<models::Repository>>::select(&self.repository, ())
             .await
             .err_into()
-            .map_ok::<Repository, _>(DbRepository::into);
+            .map_ok::<Repository, _>(models::Repository::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -125,10 +143,10 @@ where
         request: Request<SelectFilesRequest>,
     ) -> Result<Response<Self::SelectFilesStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = <T as Syncer<DbFile>>::select(&self.repository, last_index)
+        let stream = <T as Syncer<models::File>>::select(&self.repository, last_index)
             .await
             .err_into()
-            .map_ok::<File, _>(DbFile::into);
+            .map_ok::<File, _>(models::File::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -139,10 +157,25 @@ where
         request: Request<SelectBlobsRequest>,
     ) -> Result<Response<Self::SelectBlobsStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = <T as Syncer<DbBlob>>::select(&self.repository, last_index)
+        let stream = <T as Syncer<models::Blob>>::select(&self.repository, last_index)
             .await
             .err_into()
-            .map_ok::<Blob, _>(DbBlob::into);
+            .map_ok::<Blob, _>(models::Blob::into);
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    type SelectRepositoryNamesStream =
+        Pin<Box<dyn Stream<Item = Result<RepositoryName, Status>> + Send + 'static>>;
+
+    async fn select_repository_names(
+        &self,
+        request: Request<SelectRepositoryNamesRequest>,
+    ) -> Result<Response<Self::SelectRepositoryNamesStream>, Status> {
+        let last_index = request.into_inner().last_index;
+        let stream = <T as Syncer<models::RepositoryName>>::select(&self.repository, last_index)
+            .await
+            .err_into()
+            .map_ok::<RepositoryName, _>(models::RepositoryName::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
@@ -152,7 +185,7 @@ where
     ) -> Result<Response<PrepareTransferResponse>, Status> {
         let count = request
             .into_inner()
-            .map_ok::<DbTransferItem, _>(TransferItem::into)
+            .map_ok::<models::TransferItem, _>(TransferItem::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.prepare_transfer(s))
             .await?;
         Ok(Response::new(PrepareTransferResponse { count }))
@@ -174,7 +207,7 @@ where
             .create_transfer_request(transfer_id, repo_id)
             .await
             .err_into()
-            .map_ok::<TransferItem, _>(DbTransferItem::into);
+            .map_ok::<TransferItem, _>(models::TransferItem::into);
         Ok(Response::new(Box::pin(stream)))
     }
 

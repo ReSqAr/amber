@@ -8,16 +8,18 @@ use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
-pub async fn init_repository(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
+pub async fn init_repository(
+    maybe_root: Option<PathBuf>,
+    name: String,
+) -> Result<(), InternalError> {
     let wrapped = async {
-        let start_time = tokio::time::Instant::now();
         let mut init_obs = BaseObserver::without_id("init");
 
-        let local = LocalRepository::create(maybe_root).await?;
+        let local = LocalRepository::create(maybe_root, name.clone()).await?;
 
-        let duration = start_time.elapsed();
         let msg = format!(
-            "initialised repository {} in {duration:.2?}",
+            "initialised repository {} in {}",
+            name,
             local.root().abs().display()
         );
         init_obs.observe_termination(log::Level::Info, msg);

@@ -53,6 +53,13 @@ pub trait Adder {
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
 
+    fn add_repository_names<S>(
+        &self,
+        s: S,
+    ) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    where
+        S: Stream<Item = crate::db::models::InsertRepositoryName> + Unpin + Send;
+
     fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
@@ -62,6 +69,7 @@ pub trait Adder {
 pub struct LastIndices {
     pub file: i32,
     pub blob: i32,
+    pub name: i32,
 }
 
 pub trait LastIndicesSyncer {

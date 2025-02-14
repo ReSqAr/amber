@@ -55,6 +55,31 @@ SELECT
 FROM latest_blob_version
 WHERE has_blob = 1;
 
+-- view: latest_filesystem_files
+CREATE VIEW latest_repository_names AS
+WITH versioned_repository_names AS (
+    SELECT
+        repo_id,
+        name,
+        valid_from,
+        ROW_NUMBER() OVER (
+            PARTITION BY repo_id
+            ORDER BY valid_from DESC, name DESC
+            ) AS rn
+    FROM repository_names
+),
+     latest_repository_names_version AS (
+         SELECT
+             repo_id,
+             name
+         FROM versioned_repository_names
+         WHERE rn = 1
+     )
+SELECT
+    repo_id,
+    name
+FROM latest_repository_names_version;
+
 -- view: latest_materialisations
 CREATE VIEW latest_materialisations AS
 WITH versioned_materialisations AS (

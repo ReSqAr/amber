@@ -1,14 +1,12 @@
-use crate::db::models::Blob as DbBlob;
-use crate::db::models::File as DbFile;
-use crate::db::models::Repository as DbRepository;
-use crate::db::models::TransferItem as DbTransferItem;
+use crate::db::models;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
     Blob, CreateTransferRequestRequest, File, FinaliseTransferRequest, FinaliseTransferResponse,
     LookupLastIndicesRequest, LookupLastIndicesResponse, PrepareTransferResponse, Repository,
-    RepositoryIdRequest, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    TransferItem, UpdateLastIndicesRequest,
+    RepositoryIdRequest, RepositoryName, SelectBlobsRequest, SelectFilesRequest,
+    SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
+    UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, Syncer,
@@ -68,7 +66,7 @@ impl Metadata for GRPCClient {
 
 impl LastIndicesSyncer for GRPCClient {
     async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
-        let LookupLastIndicesResponse { file, blob } = self
+        let LookupLastIndicesResponse { file, blob, name } = self
             .client
             .write()
             .await
@@ -77,7 +75,7 @@ impl LastIndicesSyncer for GRPCClient {
             })
             .await?
             .into_inner();
-        Ok(LastIndices { file, blob })
+        Ok(LastIndices { file, blob, name })
     }
 
     async fn refresh(&self) -> Result<(), InternalError> {
@@ -90,12 +88,12 @@ impl LastIndicesSyncer for GRPCClient {
     }
 }
 
-impl Syncer<DbRepository> for GRPCClient {
+impl Syncer<models::Repository> for GRPCClient {
     fn select(
         &self,
         _params: (),
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbRepository, InternalError>>
+        Output = impl futures::Stream<Item = Result<models::Repository, InternalError>>
                      + Unpin
                      + Send
                      + 'static,
@@ -106,14 +104,14 @@ impl Syncer<DbRepository> for GRPCClient {
             guard
                 .select_repositories(SelectRepositoriesRequest {})
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(DbRepository::from))
+                .map(|r| r.unwrap().err_into().map_ok(models::Repository::from))
                 .await
         }
     }
 
     fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
-        S: futures::Stream<Item = DbRepository> + Unpin + Send + 'static,
+        S: futures::Stream<Item = models::Repository> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -127,12 +125,15 @@ impl Syncer<DbRepository> for GRPCClient {
     }
 }
 
-impl Syncer<DbFile> for GRPCClient {
+impl Syncer<models::File> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbFile, InternalError>> + Unpin + Send + 'static,
+        Output = impl futures::Stream<Item = Result<models::File, InternalError>>
+                     + Unpin
+                     + Send
+                     + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -140,14 +141,14 @@ impl Syncer<DbFile> for GRPCClient {
             guard
                 .select_files(SelectFilesRequest { last_index })
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(DbFile::from))
+                .map(|r| r.unwrap().err_into().map_ok(models::File::from))
                 .await
         }
     }
 
     fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
-        S: futures::Stream<Item = DbFile> + Unpin + Send + 'static,
+        S: futures::Stream<Item = models::File> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -161,12 +162,15 @@ impl Syncer<DbFile> for GRPCClient {
     }
 }
 
-impl Syncer<DbBlob> for GRPCClient {
+impl Syncer<models::Blob> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
     ) -> impl std::future::Future<
-        Output = impl futures::Stream<Item = Result<DbBlob, InternalError>> + Unpin + Send + 'static,
+        Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
+                     + Unpin
+                     + Send
+                     + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -174,14 +178,14 @@ impl Syncer<DbBlob> for GRPCClient {
             guard
                 .select_blobs(SelectBlobsRequest { last_index })
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(DbBlob::from))
+                .map(|r| r.unwrap().err_into().map_ok(models::Blob::from))
                 .await
         }
     }
 
     fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
     where
-        S: futures::Stream<Item = DbBlob> + Unpin + Send + 'static,
+        S: futures::Stream<Item = models::Blob> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -195,13 +199,50 @@ impl Syncer<DbBlob> for GRPCClient {
     }
 }
 
+impl Syncer<models::RepositoryName> for GRPCClient {
+    fn select(
+        &self,
+        last_index: i32,
+    ) -> impl std::future::Future<
+        Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
+                     + Unpin
+                     + Send
+                     + 'static,
+    > {
+        let arc_client = self.client.clone();
+        async move {
+            let mut guard = arc_client.write().await;
+            guard
+                .select_repository_names(SelectRepositoryNamesRequest { last_index })
+                .map_ok(tonic::Response::into_inner)
+                .map(|r| r.unwrap().err_into().map_ok(models::RepositoryName::from))
+                .await
+        }
+    }
+
+    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    where
+        S: futures::Stream<Item = models::RepositoryName> + Unpin + Send + 'static,
+    {
+        let arc_client = self.client.clone();
+        async move {
+            let mut guard = arc_client.write().await;
+            guard
+                .merge_repository_names(s.map(RepositoryName::from))
+                .err_into()
+                .map_ok(|_| ())
+                .await
+        }
+    }
+}
+
 impl BlobSender for GRPCClient {
     fn prepare_transfer<S>(
         &self,
         s: S,
     ) -> impl std::future::Future<Output = Result<u64, InternalError>> + Send
     where
-        S: Stream<Item = DbTransferItem> + Unpin + Send + 'static,
+        S: Stream<Item = models::TransferItem> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -221,7 +262,10 @@ impl BlobReceiver for GRPCClient {
         transfer_id: u32,
         repo_id: String,
     ) -> impl std::future::Future<
-        Output = impl Stream<Item = Result<DbTransferItem, InternalError>> + Unpin + Send + 'static,
+        Output = impl Stream<Item = Result<models::TransferItem, InternalError>>
+                     + Unpin
+                     + Send
+                     + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -232,7 +276,7 @@ impl BlobReceiver for GRPCClient {
                     repo_id,
                 })
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(DbTransferItem::from))
+                .map(|r| r.unwrap().err_into().map_ok(models::TransferItem::from))
                 .await
         }
     }

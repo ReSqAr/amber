@@ -1,4 +1,5 @@
 pub(crate) mod add;
+pub(crate) mod config;
 pub(crate) mod init;
 pub(crate) mod missing;
 pub(crate) mod pull;

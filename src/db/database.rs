@@ -1,7 +1,7 @@
 use crate::db::models::{
     Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen, InsertBlob,
-    InsertFile, InsertMaterialisation, MissingFile, Observation, Repository, TransferItem,
-    VirtualFile,
+    InsertFile, InsertMaterialisation, InsertRepositoryName, MissingFile, Observation, Repository,
+    RepositoryName, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -167,9 +167,56 @@ impl Database {
         Ok(total_inserted)
     }
 
+    pub async fn add_repository_names<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = InsertRepositoryName> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for repository_name in &chunk {
+                let uuid = Uuid::new_v4().to_string();
+                query = query
+                    .bind(uuid)
+                    .bind(&repository_name.repo_id)
+                    .bind(&repository_name.name)
+                    .bind(repository_name.valid_from);
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
+        }
+
+        debug!(
+            "repository_names added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
+        Ok(total_inserted)
+    }
+
     pub async fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
         self.stream(query(
-            "SELECT repo_id, last_file_index, last_blob_index FROM repositories",
+            "SELECT repo_id, last_file_index, last_blob_index, last_name_index FROM repositories",
         ))
     }
 
@@ -191,6 +238,21 @@ impl Database {
                 "
                 SELECT uuid, repo_id, blob_id, blob_size, has_blob, valid_from
                 FROM blobs
+                WHERE id > ?",
+            )
+            .bind(last_index),
+        )
+    }
+
+    pub async fn select_repository_names(
+        &self,
+        last_index: i32,
+    ) -> DBOutputStream<'static, RepositoryName> {
+        self.stream(
+            query(
+                "
+                SELECT uuid, repo_id, name, valid_from
+                FROM repository_names
                 WHERE id > ?",
             )
             .bind(last_index),
@@ -341,12 +403,59 @@ impl Database {
         Ok(())
     }
 
+    pub async fn merge_repository_names<S>(&self, s: S) -> Result<(), sqlx::Error>
+    where
+        S: Stream<Item = RepositoryName> + Unpin + Send,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT OR IGNORE INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for file in &chunk {
+                query = query
+                    .bind(&file.uuid)
+                    .bind(&file.repo_id)
+                    .bind(&file.name)
+                    .bind(file.valid_from)
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
+        }
+
+        debug!(
+            "repository_names merged: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
+        Ok(())
+    }
+
     pub async fn lookup_repository(&self, repo_id: String) -> Result<Repository, sqlx::Error> {
         sqlx::query_as::<_, Repository>(
             "
                 SELECT COALESCE(r.repo_id, ?) as repo_id,
                        COALESCE(r.last_file_index, -1) as last_file_index,
-                       COALESCE(r.last_blob_index, -1) as last_blob_index
+                       COALESCE(r.last_blob_index, -1) as last_blob_index,
+                       COALESCE(r.last_name_index, -1) as last_name_index
                 FROM (SELECT NULL) n
                          LEFT JOIN repositories r ON r.repo_id = ?
                 LIMIT 1
@@ -361,16 +470,18 @@ impl Database {
     pub async fn update_last_indices(&self) -> Result<Repository, sqlx::Error> {
         sqlx::query_as::<_, Repository>(
             "
-            INSERT INTO repositories (repo_id, last_file_index, last_blob_index)
+            INSERT INTO repositories (repo_id, last_file_index, last_blob_index, last_name_index)
             SELECT
                 (SELECT repo_id FROM current_repository LIMIT 1),
                 (SELECT COALESCE(MAX(id), -1) FROM files),
-                (SELECT COALESCE(MAX(id), -1) FROM blobs)
+                (SELECT COALESCE(MAX(id), -1) FROM blobs),
+                (SELECT COALESCE(MAX(id), -1) FROM repository_names)
             ON CONFLICT(repo_id) DO UPDATE
             SET
                 last_file_index = MAX(excluded.last_file_index, repositories.last_file_index),
-                last_blob_index = MAX(excluded.last_blob_index, repositories.last_blob_index)
-            RETURNING repo_id, last_file_index, last_blob_index;
+                last_blob_index = MAX(excluded.last_blob_index, repositories.last_blob_index),
+                last_name_index = MAX(excluded.last_name_index, repositories.last_name_index)
+            RETURNING repo_id, last_file_index, last_blob_index, last_name_index;
             ",
         )
         .fetch_one(&self.pool)

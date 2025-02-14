@@ -1,7 +1,5 @@
-use crate::db::models::{
-    Blob as DbBlob, File as DbFile, Repository as DbRepository, TransferItem as DbTransferItem,
-};
-use crate::grpc::definitions::{Blob, File, Repository, TransferItem};
+use crate::db::models;
+use crate::grpc::definitions::{Blob, File, Repository, RepositoryName, TransferItem};
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 
@@ -17,18 +15,19 @@ fn timestamp_to_datetime(ts: &Option<Timestamp>) -> DateTime<Utc> {
         .unwrap_or_default()
 }
 
-impl From<DbRepository> for Repository {
-    fn from(repo: DbRepository) -> Self {
+impl From<models::Repository> for Repository {
+    fn from(repo: models::Repository) -> Self {
         Repository {
             repo_id: repo.repo_id,
             last_file_index: repo.last_file_index,
             last_blob_index: repo.last_blob_index,
+            last_name_index: repo.last_name_index,
         }
     }
 }
 
-impl From<DbFile> for File {
-    fn from(file: DbFile) -> Self {
+impl From<models::File> for File {
+    fn from(file: models::File) -> Self {
         File {
             uuid: file.uuid,
             path: file.path,
@@ -38,8 +37,8 @@ impl From<DbFile> for File {
     }
 }
 
-impl From<DbBlob> for Blob {
-    fn from(blob: DbBlob) -> Self {
+impl From<models::Blob> for Blob {
+    fn from(blob: models::Blob) -> Self {
         Blob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
@@ -51,19 +50,31 @@ impl From<DbBlob> for Blob {
     }
 }
 
-impl From<Repository> for DbRepository {
-    fn from(repo: Repository) -> Self {
-        DbRepository {
-            repo_id: repo.repo_id,
-            last_file_index: repo.last_file_index,
-            last_blob_index: repo.last_blob_index,
+impl From<models::RepositoryName> for RepositoryName {
+    fn from(repo_name: models::RepositoryName) -> Self {
+        RepositoryName {
+            uuid: repo_name.uuid,
+            repo_id: repo_name.repo_id,
+            name: repo_name.name,
+            valid_from: datetime_to_timestamp(&repo_name.valid_from),
         }
     }
 }
 
-impl From<File> for DbFile {
+impl From<Repository> for models::Repository {
+    fn from(repo: Repository) -> Self {
+        models::Repository {
+            repo_id: repo.repo_id,
+            last_file_index: repo.last_file_index,
+            last_blob_index: repo.last_blob_index,
+            last_name_index: repo.last_name_index,
+        }
+    }
+}
+
+impl From<File> for models::File {
     fn from(file: File) -> Self {
-        DbFile {
+        models::File {
             uuid: file.uuid,
             path: file.path,
             blob_id: file.blob_id,
@@ -72,9 +83,9 @@ impl From<File> for DbFile {
     }
 }
 
-impl From<Blob> for DbBlob {
+impl From<Blob> for models::Blob {
     fn from(blob: Blob) -> Self {
-        DbBlob {
+        models::Blob {
             uuid: blob.uuid,
             repo_id: blob.repo_id,
             blob_id: blob.blob_id,
@@ -85,7 +96,18 @@ impl From<Blob> for DbBlob {
     }
 }
 
-impl From<TransferItem> for DbTransferItem {
+impl From<RepositoryName> for models::RepositoryName {
+    fn from(repo_name: RepositoryName) -> Self {
+        models::RepositoryName {
+            uuid: repo_name.uuid,
+            repo_id: repo_name.repo_id,
+            name: repo_name.name,
+            valid_from: timestamp_to_datetime(&repo_name.valid_from),
+        }
+    }
+}
+
+impl From<TransferItem> for models::TransferItem {
     fn from(i: TransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
@@ -95,8 +117,8 @@ impl From<TransferItem> for DbTransferItem {
     }
 }
 
-impl From<DbTransferItem> for TransferItem {
-    fn from(i: DbTransferItem) -> Self {
+impl From<models::TransferItem> for TransferItem {
+    fn from(i: models::TransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
             blob_id: i.blob_id,

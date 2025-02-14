@@ -1,4 +1,4 @@
-use crate::db::models::{Blob, File, Repository};
+use crate::db::models::{Blob, File, Repository, RepositoryName};
 use crate::flightdeck::base::BaseObserver;
 use crate::repository::traits::{LastIndicesSyncer, Metadata, Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
@@ -40,6 +40,7 @@ where
         + Syncer<Repository>
         + Syncer<File>
         + Syncer<Blob>
+        + Syncer<RepositoryName>
         + Clone
         + Send
         + Sync,
@@ -48,6 +49,7 @@ where
         + Syncer<Repository>
         + Syncer<File>
         + Syncer<Blob>
+        + Syncer<RepositoryName>
         + Clone
         + Send
         + Sync,
@@ -77,6 +79,17 @@ where
             local_last_indices.blob,
             remote,
             remote_last_indices.blob,
+        )
+        .await?;
+        o.observe_termination(log::Level::Info, "synchronised");
+    }
+    {
+        let mut o = BaseObserver::with_id("sync:table", "repository names");
+        sync_table::<RepositoryName, _, _>(
+            local,
+            local_last_indices.name,
+            remote,
+            remote_last_indices.name,
         )
         .await?;
         o.observe_termination(log::Level::Info, "synchronised");

@@ -14,6 +14,7 @@ pub struct Repository {
     pub repo_id: String,
     pub last_file_index: i32,
     pub last_blob_index: i32,
+    pub last_name_index: i32,
 }
 
 #[derive(Debug, FromRow)]
@@ -50,6 +51,28 @@ pub struct InsertBlob {
     pub valid_from: DateTime<Utc>,
 }
 
+#[derive(Debug, FromRow)]
+pub struct RepositoryName {
+    pub uuid: String,
+    pub repo_id: String,
+    pub name: String,
+    pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct InsertRepositoryName {
+    pub repo_id: String,
+    pub name: String,
+    pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct InsertMaterialisation {
+    pub path: String,
+    pub blob_id: String,
+    pub valid_from: DateTime<Utc>,
+}
+
 #[derive(Debug)]
 pub struct BlobWithPaths {
     pub blob_id: String,
@@ -64,13 +87,6 @@ impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
             .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
         Ok(BlobWithPaths { blob_id, paths })
     }
-}
-
-#[derive(Debug)]
-pub struct InsertMaterialisation {
-    pub path: String,
-    pub blob_id: String,
-    pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]

@@ -19,49 +19,55 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize the repository
-    Init {},
-    /// Add files to the repository
+    Init {
+        name: String,
+    },
     Add {
         #[arg(long, default_value_t = false)]
         skip_deduplication: bool,
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
-    /// Show status information
     Status {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
-    /// Show missing files
     Missing {},
-    /// (Hidden) Serve command
-    #[command(hide = true)]
-    Serve {},
-    /// Sync with a remote connection
-    Sync { connection_name: Option<String> },
-    /// Pull data from a remote connection
-    Pull { connection_name: String },
-    /// Push data to a remote connection
-    Push { connection_name: String },
-    /// Manage remotes
+    Sync {
+        connection_name: Option<String>,
+    },
+    Pull {
+        connection_name: String,
+    },
+    Push {
+        connection_name: String,
+    },
     Remote {
         #[command(subcommand)]
         command: RemoteCommands,
     },
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+    #[command(hide = true)]
+    Serve {},
 }
 
 #[derive(Subcommand)]
 enum RemoteCommands {
-    /// Add a new remote
     Add {
         name: String,
         #[arg(value_enum)]
         connection_type: ConnectionType,
         parameter: String,
     },
-    /// List all remotes
     List {},
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    Name { name: String },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -83,7 +89,7 @@ pub async fn run() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init {} => commands::init::init_repository(cli.path).await,
+        Commands::Init { name } => commands::init::init_repository(cli.path, name).await,
         Commands::Add {
             skip_deduplication,
             verbose,
@@ -101,6 +107,9 @@ pub async fn run() {
                 parameter,
             } => commands::remote::add(cli.path, name, connection_type.into(), parameter).await,
             RemoteCommands::List {} => commands::remote::list(cli.path).await,
+        },
+        Commands::Config { command } => match command {
+            ConfigCommands::Name { name } => commands::config::set_name(cli.path, name).await,
         },
     };
 

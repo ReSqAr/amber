@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    Blob, BlobWithPaths, Connection, File, InsertMaterialisation, MissingFile, Observation,
-    Repository, TransferItem, VirtualFile,
+    Blob, BlobWithPaths, Connection, File, MissingFile, Observation, Repository, RepositoryName,
+    TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::repository::connection::EstablishedConnection;
@@ -121,7 +121,7 @@ impl LocalRepository {
         })
     }
 
-    pub async fn create(maybe_root: Option<PathBuf>) -> Result<Self, InternalError> {
+    pub async fn create(maybe_root: Option<PathBuf>, name: String) -> Result<Self, InternalError> {
         let root = if let Some(path) = maybe_root {
             path
         } else {
@@ -151,11 +151,13 @@ impl LocalRepository {
             .get_or_create_current_repository()
             .await
             .expect("failed to create repo id");
-        debug!(
-            "Initialised repository id={} in {}",
-            repo.repo_id,
-            root.display()
-        );
+
+        db.add_repository_names(stream::iter([models::InsertRepositoryName {
+            repo_id: repo.repo_id.clone(),
+            name: name.clone(),
+            valid_from: chrono::Utc::now(),
+        }]))
+        .await?;
 
         Self::new(Some(root)).await
     }
@@ -251,9 +253,16 @@ impl Adder for LocalRepository {
         self.db.add_blobs(s).await
     }
 
+    async fn add_repository_names<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = models::InsertRepositoryName> + Unpin + Send,
+    {
+        self.db.add_repository_names(s).await
+    }
+
     async fn add_materialisation<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
-        S: Stream<Item = InsertMaterialisation> + Unpin + Send,
+        S: Stream<Item = models::InsertMaterialisation> + Unpin + Send,
     {
         self.db.add_materialisations(s).await
     }
@@ -264,11 +273,13 @@ impl LastIndicesSyncer for LocalRepository {
         let Repository {
             last_file_index,
             last_blob_index,
+            last_name_index,
             ..
         } = self.db.lookup_repository(repo_id).await?;
         Ok(LastIndices {
             file: last_file_index,
             blob: last_blob_index,
+            name: last_name_index,
         })
     }
 
@@ -339,6 +350,29 @@ impl Syncer<Blob> for LocalRepository {
         S: Stream<Item = Blob> + Unpin + Send + 'static,
     {
         self.db.merge_blobs(s).err_into()
+    }
+}
+impl SyncerParams for RepositoryName {
+    type Params = i32;
+}
+
+impl Syncer<RepositoryName> for LocalRepository {
+    fn select(
+        &self,
+        last_index: i32,
+    ) -> impl Future<
+        Output = impl Stream<Item = Result<RepositoryName, InternalError>> + Unpin + Send + 'static,
+    > + Send {
+        self.db
+            .select_repository_names(last_index)
+            .map(|s| s.err_into())
+    }
+
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
+    where
+        S: Stream<Item = RepositoryName> + Unpin + Send + 'static,
+    {
+        self.db.merge_repository_names(s).err_into()
     }
 }
 
