@@ -2,8 +2,6 @@
 - new command behaviour:
   - status:
     - better summary
-  - missing + status:
-    - use repo name table
   - fsck
   - edit & deletion
 - connections:

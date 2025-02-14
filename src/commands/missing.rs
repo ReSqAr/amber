@@ -65,6 +65,7 @@ pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), Internal
 
                 repositories_with_blob.sort();
                 repositories_with_blob.dedup();
+                let detail: String = format!("(in {})", repositories_with_blob.join(", "));
 
                 for path in paths {
                     let mut file_obs = BaseObserver::with_id("file", path);
@@ -72,6 +73,7 @@ pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), Internal
                         log::Level::Info,
                         "missing",
                         [
+                            ("detail".into(), detail.clone()),
                             ("blob_id".into(), blob_id.clone()),
                             (
                                 "repositories_with_blob".into(),

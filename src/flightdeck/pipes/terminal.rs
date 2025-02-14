@@ -1,5 +1,4 @@
-use crate::flightdeck::observation::Observation;
-use crate::flightdeck::observation::Value;
+use crate::flightdeck::observation::{Data, Observation, Value};
 use colored::*;
 use tokio::task;
 
@@ -26,19 +25,7 @@ impl TerminalPipe {
             return;
         }
 
-        let msg: Option<String> = obs
-            .data
-            .iter()
-            .filter_map(|data| {
-                if data.key == *"state" {
-                    if let Value::String(s) = data.value.clone() {
-                        return Some(s);
-                    }
-                }
-                None
-            })
-            .next();
-
+        let msg = lookup_key(&obs.data, "state");
         let msg = match msg {
             Some(msg) => msg,
             None => return,
@@ -55,6 +42,12 @@ impl TerminalPipe {
         let msg = match obs.id {
             None => msg,
             Some(id) => format!("{msg} {}", id.bold()).normal(),
+        };
+
+        let msg = if let Some(detail) = lookup_key(&obs.data, "detail") {
+            format!("{msg} {}", detail.normal()).normal()
+        } else {
+            msg
         };
 
         self.buffer.push(msg.to_string() + "\n")
@@ -85,4 +78,17 @@ impl TerminalPipe {
     pub(crate) async fn finish(&mut self) {
         self.flush().await
     }
+}
+
+fn lookup_key(data: &[Data], key: &str) -> Option<String> {
+    data.iter()
+        .filter_map(|data| {
+            if data.key == *key {
+                if let Value::String(s) = data.value.clone() {
+                    return Some(s);
+                }
+            }
+            None
+        })
+        .next()
 }
