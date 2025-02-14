@@ -77,6 +77,7 @@ pub struct InsertMaterialisation {
 pub struct BlobWithPaths {
     pub blob_id: String,
     pub paths: Vec<String>,
+    pub repositories_with_blob: Vec<String>,
 }
 
 impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
@@ -85,7 +86,14 @@ impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
         let paths_json: String = row.try_get("paths")?;
         let paths: Vec<String> = serde_json::from_str(&paths_json)
             .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        Ok(BlobWithPaths { blob_id, paths })
+        let repo_names_json: String = row.try_get("repositories_with_blob")?;
+        let repositories_with_blob: Vec<String> = serde_json::from_str(&repo_names_json)
+            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
+        Ok(BlobWithPaths {
+            blob_id,
+            paths,
+            repositories_with_blob,
+        })
     }
 }
 

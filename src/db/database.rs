@@ -515,19 +515,30 @@ impl Database {
         self.stream(
             query(
                 "
-                WITH filtered_blobs AS (
-                    SELECT blob_id
-                    FROM latest_available_blobs
-                    WHERE repo_id = ?
+                WITH blobs_with_repository_names AS (
+                    SELECT
+                        blob_id,
+                        json_group_array(COALESCE(rn.name, ab.repo_id)) AS repository_names,
+                        MAX(CASE WHEN ab.repo_id = ? THEN 1 ELSE 0 END) AS is_available
+                    FROM latest_available_blobs ab
+                        LEFT JOIN latest_repository_names rn ON ab.repo_id = rn.repo_id
+                    GROUP BY
+                        blob_id
+                ), missing_blobs_with_paths AS (
+                    SELECT
+                        fs.blob_id,
+                        brn.repository_names,
+                        json_group_array(fs.path) AS paths
+                    FROM latest_filesystem_files fs
+                        LEFT JOIN blobs_with_repository_names brn ON fs.blob_id = brn.blob_id
+                    WHERE NOT COALESCE(brn.is_available, FALSE)
+                    GROUP BY fs.blob_id, brn.repository_names
                 )
                 SELECT
-                    f.blob_id,
-                    json_group_array(f.path) AS paths
-                FROM latest_filesystem_files f
-                         LEFT JOIN filtered_blobs b
-                                   ON f.blob_id = b.blob_id
-                WHERE b.blob_id IS NULL
-                GROUP BY f.blob_id;
+                    blob_id,
+                    paths,
+                    COALESCE(repository_names, '[]') AS repositories_with_blob
+                FROM missing_blobs_with_paths;
             ",
             )
             .bind(repo_id),

@@ -54,17 +54,30 @@ pub async fn list_missing_blobs(repository: impl Missing) -> Result<(), Internal
     let mut count_blobs = 0usize;
     while let Some(blob_result) = missing_blobs.next().await {
         match blob_result {
-            Ok(BlobWithPaths { paths, blob_id }) => {
+            Ok(BlobWithPaths {
+                paths,
+                blob_id,
+                mut repositories_with_blob,
+            }) => {
                 count_files += paths.len();
                 count_blobs += 1;
                 missing_obs.observe_position(log::Level::Trace, count_blobs as u64);
+
+                repositories_with_blob.sort();
+                repositories_with_blob.dedup();
 
                 for path in paths {
                     let mut file_obs = BaseObserver::with_id("file", path);
                     file_obs.observe_termination_ext(
                         log::Level::Info,
                         "missing",
-                        [("blob_id".into(), blob_id.clone())],
+                        [
+                            ("blob_id".into(), blob_id.clone()),
+                            (
+                                "repositories_with_blob".into(),
+                                repositories_with_blob.join(","),
+                            ),
+                        ],
                     );
                 }
             }
