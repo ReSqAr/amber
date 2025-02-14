@@ -1,7 +1,5 @@
 # PROJECT MANAGEMENT
 - new command behaviour:
-  - status:
-    - better summary
   - fsck
   - edit & deletion
 - connections:

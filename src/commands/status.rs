@@ -112,7 +112,7 @@ pub async fn show_status(
                     VirtualFileState::New => (log::Level::Info, "new"),
                     VirtualFileState::Missing { .. } => (log::Level::Warn, "missing"),
                     VirtualFileState::Outdated { .. } => (log::Level::Info, "outdated"),
-                    VirtualFileState::Altered { .. } => (log::Level::Error, "broken"),
+                    VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
                     VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
                 };
                 obs.observe_termination(level, state);
@@ -142,6 +142,9 @@ fn generate_final_message(
     let altered_count = *count.entry(State::Altered).or_default();
 
     let mut parts = Vec::new();
+    if altered_count > 0 {
+        parts.push(format!("{} altered files", altered_count))
+    }
     if new_count > 0 {
         parts.push(format!("{} new files", new_count))
     }
@@ -152,14 +155,11 @@ fn generate_final_message(
         parts.push(format!("{} outdated files", outdated_count))
     }
     if ok_count > 0 {
-        parts.push(format!("{} verified files", ok_count))
-    }
-    if altered_count > 0 {
-        parts.push(format!("{} altered files", altered_count))
+        parts.push(format!("{} materialised files", ok_count))
     }
     if !parts.is_empty() {
         let duration = start_time.elapsed();
-        format!("{} in {duration:.2?}", parts.join(" "))
+        format!("detected {} in {duration:.2?}", parts.join(", "))
     } else {
         "no files detected".into()
     }
