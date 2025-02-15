@@ -26,18 +26,21 @@ pub(crate) async fn rm(
 
         let msg = format!("deleted {} files", result.deleted);
         let msg = if result.not_found > 0 {
-            format!("skipped {} already deleted files, {}", result.not_found, msg)  
-        } else { 
+            format!(
+                "skipped {} already deleted files, {}",
+                result.not_found, msg
+            )
+        } else {
             msg
         };
         obs.observe_termination(log::Level::Info, msg);
         Ok(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, None).await
+    flightdeck::flightdeck(wrapped, rm_root_builders(&root_path), log_path, None, None).await
 }
 
-fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+fn rm_root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     let root = root_path.display().to_string() + "/";
 
     let file = BaseLayoutBuilderBuilder::default()
@@ -123,10 +126,7 @@ async fn rm_files(
         }
     }
 
-    Ok(RmResult {
-        deleted,
-        not_found,
-    })
+    Ok(RmResult { deleted, not_found })
 }
 
 pub(crate) async fn mv(
@@ -135,5 +135,124 @@ pub(crate) async fn mv(
     destination: PathBuf,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
-    todo!()
+    let log_path = local.log_path().abs().clone();
+
+    let wrapped = async {
+        let mut obs = BaseObserver::without_id("fs:mv");
+
+        mv_file(&local, source.clone(), destination.clone()).await?;
+
+        let msg = format!(
+            "moved {} to {}",
+            source.to_string_lossy(),
+            destination.to_string_lossy()
+        );
+        obs.observe_termination(log::Level::Info, msg);
+        Ok(())
+    };
+
+    flightdeck::flightdeck(wrapped, [], log_path, None, None).await
+}
+
+async fn mv_file(
+    local: &LocalRepository,
+    source: PathBuf,
+    destination: PathBuf,
+) -> Result<(), InternalError> {
+    let root_path = local.root().abs().clone().canonicalize()?;
+
+    if !fs::metadata(&source)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        return Err(AppError::SourceDoesNotExist(source.to_string_lossy().into()).into());
+    }
+    if fs::metadata(&destination)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        return Err(AppError::DestinationDoesExist(destination.to_string_lossy().into()).into());
+    }
+
+    let mut obs = BaseObserver::with_id(
+        "fs:mv:file",
+        source
+            .strip_prefix(root_path.clone())
+            .unwrap_or(&*source)
+            .to_string_lossy(),
+    );
+
+    let source = source.canonicalize()?;
+    let source = if let Ok(relative) = source.strip_prefix(&root_path) {
+        relative
+    } else {
+        return Err(AppError::FileNotPartOfRepository(source.to_string_lossy().into()).into());
+    };
+    let source = local.root().join(source);
+
+    let destination = std::path::absolute(destination)?;
+    let destination = if let Ok(relative) = destination.strip_prefix(&root_path) {
+        relative
+    } else {
+        return Err(AppError::FileNotPartOfRepository(destination.to_string_lossy().into()).into());
+    };
+    let destination = local.root().join(destination);
+
+    let blob_id = match local.lookup_last_materialisation(&source).await? {
+        None => {
+            return Err(
+                AppError::FileNotPartOfRepository(source.rel().to_string_lossy().into()).into(),
+            )
+        }
+        Some(blob_id) => blob_id,
+    };
+
+    let rel_source = source.rel().clone().to_string_lossy().to_string();
+    let rel_destination = destination.rel().clone().to_string_lossy().to_string();
+    local
+        .add_files(stream::iter([
+            InsertFile {
+                path: rel_source.clone(),
+                blob_id: None,
+                valid_from: chrono::Utc::now(),
+            },
+            InsertFile {
+                path: rel_destination.clone(),
+                blob_id: Some(blob_id.clone()),
+                valid_from: chrono::Utc::now(),
+            },
+        ]))
+        .await?;
+
+    fs::rename(&source, &destination).await?;
+    obs.observe_termination_ext(
+        log::Level::Info,
+        "moved",
+        [
+            ("source".into(), source.abs().to_string_lossy().to_string()),
+            (
+                "destination".into(),
+                destination.abs().to_string_lossy().to_string(),
+            ),
+        ],
+    );
+
+    local
+        .add_materialisation(stream::iter([
+            InsertMaterialisation {
+                path: rel_source,
+                blob_id: None,
+                valid_from: chrono::Utc::now(),
+            },
+            InsertMaterialisation {
+                path: rel_destination,
+                blob_id: Some(blob_id.clone()),
+                valid_from: chrono::Utc::now(),
+            },
+        ]))
+        .await?;
+
+    Ok(())
 }

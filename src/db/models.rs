@@ -74,6 +74,13 @@ pub struct InsertMaterialisation {
 }
 
 #[derive(Debug, FromRow)]
+pub struct Materialisation {
+    #[allow(dead_code)]
+    pub path: String,
+    pub blob_id: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
 pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,

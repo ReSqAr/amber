@@ -1,6 +1,6 @@
 # PROJECT MANAGEMENT
 - new command behaviour:
-  - edit & deletion
+  - edit
 - connections:
   - add support for BlobRepository
 

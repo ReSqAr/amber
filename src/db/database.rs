@@ -1,7 +1,7 @@
 use crate::db::models::{
     AvailableBlob, Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen,
-    InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, MissingFile, Observation,
-    Repository, RepositoryName, TransferItem, VirtualFile,
+    InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Materialisation,
+    MissingFile, Observation, Repository, RepositoryName, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -603,6 +603,18 @@ impl Database {
             total_attempted, total_inserted
         );
         Ok(total_inserted)
+    }
+
+    pub async fn lookup_last_materialisation(
+        &self,
+        path: String,
+    ) -> Result<Option<Materialisation>, sqlx::Error> {
+        sqlx::query_as::<_, Materialisation>(
+            "SELECT path, blob_id FROM latest_materialisations WHERE path = ?;",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     pub async fn truncate_virtual_filesystem(&self) -> Result<(), sqlx::Error> {

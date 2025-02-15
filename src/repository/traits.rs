@@ -74,6 +74,11 @@ pub trait Adder {
     fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
+
+    async fn lookup_last_materialisation(
+        &self,
+        path: &RepoPath,
+    ) -> Result<Option<String>, InternalError>;
 }
 
 #[derive(Debug)]

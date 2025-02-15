@@ -22,6 +22,10 @@ pub enum AppError {
     FileNotPartOfRepository(String),
     #[error("unable to parse '{raw}': {message}")]
     Parse { message: String, raw: String },
+    #[error("source {0} does not exist")]
+    SourceDoesNotExist(String),
+    #[error("destination {0} does already exist")]
+    DestinationDoesExist(String),
 }
 
 #[derive(Error, Debug)]

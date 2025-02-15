@@ -283,6 +283,19 @@ impl Adder for LocalRepository {
     {
         self.db.add_materialisations(s).await
     }
+
+    async fn lookup_last_materialisation(
+        &self,
+        path: &RepoPath,
+    ) -> Result<Option<String>, InternalError> {
+        let result = self
+            .db
+            .lookup_last_materialisation(path.rel().to_string_lossy().to_string())
+            .await
+            .map_err(InternalError::from)?;
+
+        Ok(result.and_then(|b| b.blob_id))
+    }
 }
 
 impl LastIndicesSyncer for LocalRepository {

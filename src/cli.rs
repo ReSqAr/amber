@@ -28,9 +28,11 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    #[command(alias = "rm")]
     Remove {
         files: Vec<PathBuf>,
     },
+    #[command(alias = "mv")]
     Move {
         source: PathBuf,
         destination: PathBuf,
