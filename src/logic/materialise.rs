@@ -33,7 +33,7 @@ pub async fn materialise(
 
         struct ToMaterialise {
             path: String,
-            target_blob_id: String,
+            target_blob_id: Option<String>,
         }
 
         let stream = futures::StreamExt::filter_map(stream, |file_result| async move {
@@ -52,7 +52,7 @@ pub async fn materialise(
                 } => match local_has_target_blob {
                     true => Some(Ok(ToMaterialise {
                         path,
-                        target_blob_id,
+                        target_blob_id: Some(target_blob_id),
                     })),
                     false => None,
                 },
@@ -81,38 +81,44 @@ pub async fn materialise(
                         path,
                         target_blob_id,
                     } = file_result?;
-                    let object_path = local.blob_path(&target_blob_id);
                     let target_path = local.root().join(path.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.clone());
 
-                    if fs::metadata(&target_path)
-                        .await
-                        .map(|m| m.is_file())
-                        .unwrap_or(false)
-                    {
-                        files::forced_atomic_hard_link(
-                            local,
-                            &object_path,
-                            &target_path,
-                            &target_blob_id,
-                        )
-                        .await?;
+                    if let Some(target_blob_id) = target_blob_id.clone() {
+                        let object_path = local.blob_path(&target_blob_id);
+                        if fs::metadata(&target_path)
+                            .await
+                            .map(|m| m.is_file())
+                            .unwrap_or(false)
+                        {
+                            files::forced_atomic_hard_link(
+                                local,
+                                &object_path,
+                                &target_path,
+                                &target_blob_id,
+                            )
+                            .await?;
+                        } else {
+                            files::create_hard_link(&object_path, &target_path).await?;
+                        }
+
+                        o.observe_termination_ext(
+                            log::Level::Info,
+                            "materialised",
+                            [("blob_id".into(), target_blob_id.clone())],
+                        );
                     } else {
-                        files::create_hard_link(&object_path, &target_path).await?;
+                        fs::remove_file(&target_path).await?;
+                        o.observe_termination(log::Level::Info, "deleted");
                     }
 
                     let mat = InsertMaterialisation {
                         path: path.clone(),
-                        blob_id: target_blob_id.clone(),
+                        blob_id: target_blob_id,
                         valid_from: chrono::Utc::now(),
                     };
                     mat_tx.send(mat).await?;
 
-                    o.observe_termination_ext(
-                        log::Level::Info,
-                        "materialised",
-                        [("blob_id".into(), target_blob_id.clone())],
-                    );
                     Ok::<(), InternalError>(())
                 }
             },

@@ -51,7 +51,7 @@ CREATE TABLE repository_names
 CREATE TABLE materialisations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     path        TEXT        NOT NULL,
-    blob_id     TEXT        NOT NULL,
+    blob_id     TEXT,
     valid_from  DATETIME    NOT NULL
 );
 

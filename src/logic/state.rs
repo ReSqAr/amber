@@ -100,12 +100,12 @@ pub enum VirtualFileState {
     },
     Altered {
         materialisation_last_blob_id: String,
-        target_blob_id: String,
+        target_blob_id: Option<String>,
         local_has_target_blob: bool,
     },
     Outdated {
         materialisation_last_blob_id: String,
-        target_blob_id: String,
+        target_blob_id: Option<String>,
         local_has_target_blob: bool,
     },
 }
@@ -144,7 +144,7 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 path: vf.path,
                 state: VirtualFileState::Altered {
                     materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
-                    target_blob_id: vf.target_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id,
                     local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
@@ -152,7 +152,7 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 path: vf.path,
                 state: VirtualFileState::Outdated {
                     materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
-                    target_blob_id: vf.target_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id,
                     local_has_target_blob: vf.local_has_target_blob,
                 },
             }),

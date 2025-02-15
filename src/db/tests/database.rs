@@ -81,7 +81,7 @@ mod tests {
 
     struct TestMaterialisation {
         path: String,
-        blob_id: String,
+        blob_id: Option<String>,
         valid_from: DateTime<Utc>,
     }
 
@@ -426,7 +426,63 @@ mod tests {
         ];
         let mtrlstns = [TestMaterialisation {
             path: "test".into(),
-            blob_id: "old".to_string(),
+            blob_id: Some("old".to_string()),
+            valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
+        }];
+        let seen_files = [FileSeen {
+            path: "test".into(),
+            seen_id: 42,
+            seen_dttm: BEGINNING + 20,
+            last_modified_dttm: BEGINNING + 20,
+            size: 42,
+        }];
+        let eq_blob_check = [FileCheck {
+            path: "test".into(),
+            check_dttm: BEGINNING + 20,
+            hash: "old".into(),
+        }];
+        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
+
+        let new_obs = [Observation::FileSeen(FileSeen {
+            path: "test".into(),
+            seen_id: 42,
+            seen_dttm: BEGINNING + 40,
+            last_modified_dttm: BEGINNING + 20,
+            size: 42,
+        })];
+
+        let state_map = apply_observations(&db, new_obs).await;
+
+        assert_eq!(
+            state_map.get("test"),
+            Some(&VirtualFileState::Outdated),
+            "Expected file 'test' to be in Outdated state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deleted() {
+        let files = [
+            TestFile {
+                path: "test".into(),
+                blob_id: Some("old".into()),
+                valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
+            },
+            TestFile {
+                path: "test".into(),
+                blob_id: None,
+                valid_from: Utc.timestamp_opt(BEGINNING + 30, 0).unwrap(),
+            },
+        ];
+        let blobs = [TestBlob {
+            blob_id: "old".into(),
+            blob_size: 42,
+            has_blob: true,
+            valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
+        }];
+        let mtrlstns = [TestMaterialisation {
+            path: "test".into(),
+            blob_id: Some("old".to_string()),
             valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
         }];
         let seen_files = [FileSeen {

@@ -175,7 +175,7 @@ pub async fn add_files(
                     };
                     let mat = InsertMaterialisation {
                         path: path.rel().to_string_lossy().to_string(),
-                        blob_id: blob_id.clone(),
+                        blob_id: Some(blob_id.clone()),
                         valid_from,
                     };
 

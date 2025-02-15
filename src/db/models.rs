@@ -69,7 +69,7 @@ pub struct InsertRepositoryName {
 #[derive(Debug)]
 pub struct InsertMaterialisation {
     pub path: String,
-    pub blob_id: String,
+    pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 

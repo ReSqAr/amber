@@ -640,19 +640,20 @@ impl Database {
                             blob_size
                         FROM latest_filesystem_files f
                             LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
-                            LEFT JOIN latest_materialisations m USING (path)
+                            FULL OUTER JOIN latest_materialisations m USING (path)
                     )
                 SELECT
-                    a.path,
+                    path,
                     a.materialisation_last_blob_id,
                     a.blob_id as target_blob_id,
                     a.blob_size as target_blob_size,
                     a.local_has_blob as local_has_target_blob
                 FROM all_files a
-                    LEFT JOIN virtual_filesystem vfs ON vfs.path = a.path
+                    FULL OUTER JOIN virtual_filesystem vfs USING (path)
                 WHERE
                     a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
                     OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
+                    OR a.blob_size IS DISTINCT FROM vfs.target_blob_size
                     OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
                 ;
      ";
@@ -759,16 +760,16 @@ impl Database {
                         target_blob_id,
                         local_has_target_blob,
                         CASE
-                            WHEN target_blob_id IS NULL THEN 'new'
+                            WHEN target_blob_id IS NULL AND materialisation_last_blob_id is NULL THEN 'new'
                             WHEN fs_last_modified_dttm <= check_last_dttm THEN ( -- we can trust the check
                                 CASE
-                                    WHEN check_last_hash <> target_blob_id THEN ( -- check says: they are not the same
+                                    WHEN check_last_hash IS DISTINCT FROM target_blob_id THEN ( -- check says: they are not the same
                                         CASE
                                             WHEN check_last_hash = materialisation_last_blob_id THEN 'outdated' -- previously materialised version
                                             ELSE 'altered'
                                         END
                                     )
-                                    WHEN fs_last_size <> target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
+                                    WHEN fs_last_size IS DISTINCT FROM target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
                                     ELSE 'ok' -- hash is the same and the size is the same -> OK
                                 END
                             )
