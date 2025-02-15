@@ -11,6 +11,7 @@ use futures::stream;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use uuid::Uuid;
 
 pub(crate) async fn rm(
     maybe_root: Option<PathBuf>,
@@ -113,13 +114,21 @@ async fn rm_files(
                 .await?;
 
             if soft {
-                let mut permissions = fs::metadata(&file).await?.permissions();
+                fs::create_dir_all(&local.staging_path()).await?;
+                let staging_path = local
+                    .staging_path()
+                    .join(Uuid::now_v7().to_string())
+                    .abs()
+                    .clone();
+                fs::copy(&file, &staging_path).await?;
+                let mut permissions = fs::metadata(&staging_path).await?.permissions();
                 let current_mode = permissions.mode();
                 let user_write_bit = 0o200;
                 if current_mode & user_write_bit == 0 {
                     permissions.set_mode(current_mode | user_write_bit);
-                    fs::set_permissions(&file, permissions).await?;
+                    fs::set_permissions(&staging_path, permissions).await?;
                 }
+                fs::rename(&staging_path, &file).await?;
                 obs.observe_termination(log::Level::Info, "deleted [soft]");
             } else {
                 fs::remove_file(&path).await?;
