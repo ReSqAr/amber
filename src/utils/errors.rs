@@ -54,6 +54,10 @@ pub enum InternalError {
     RClone(i32),
     #[error("ssh connection error: {0}")]
     Ssh(String),
+    #[error("ssh error: {0}")]
+    Russh(#[from] russh::Error),
+    #[error("ssh credentials error: {0}")]
+    RusshKeys(#[from] russh::keys::Error),
     #[error("serialisation error: {e} (object: {object})")]
     SerialisationError { object: String, e: String },
     #[error("unable to get exclusive lock on repository")]

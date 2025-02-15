@@ -22,13 +22,20 @@ impl LocalConfig {
         None
     }
 }
+
+#[derive(Clone, Debug)]
+pub enum SshAuth {
+    Password(String),
+    Agent,
+}
+
 #[derive(Debug, Clone)]
 pub struct SshConfig {
     pub remote_name: String,
     pub host: String,
     pub port: Option<u16>,
     pub user: String,
-    pub password: Option<String>,
+    pub auth: SshAuth,
     pub remote_path: PathBuf,
 }
 
@@ -67,7 +74,7 @@ impl SshConfig {
             host,
             port,
             user,
-            password,
+            auth,
             ..
         } = self;
         let mut lines = vec![
@@ -79,9 +86,14 @@ impl SshConfig {
         if let Some(port) = port {
             lines.push(format!("port = {port}"));
         }
-        if let Some(password) = password {
-            lines.push(format!("pass = {}", rclone_obscure_password(password)));
+
+        match auth {
+            SshAuth::Password(password) => {
+                lines.push(format!("pass = {}", rclone_obscure_password(password)))
+            }
+            SshAuth::Agent => lines.push("key_use_agent = true".into()),
         }
+
         lines.push("".into());
         Some(lines.join("\n"))
     }

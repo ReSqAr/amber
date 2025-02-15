@@ -6,6 +6,8 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::rclone;
 use log::{debug, error, warn};
 use russh::client::AuthResult;
+use russh::keys::agent::client::AgentClient;
+use russh::keys::Algorithm;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -36,12 +38,18 @@ impl LocalConfig {
 }
 
 #[derive(Clone, Debug)]
+pub enum SshAuth {
+    Password(String),
+    Agent,
+}
+
+#[derive(Clone, Debug)]
 pub struct SshConfig {
     application: String,
     host: String,
     port: Option<u16>,
     user: String,
-    password: Option<String>,
+    auth: SshAuth,
     remote_path: String,
 }
 
@@ -53,9 +61,9 @@ impl SshConfig {
                 raw: parameter.clone(),
             })?;
 
-        let (user, password) = match user_and_password.split_once(':') {
-            Some((u, p)) => (u.to_string(), Some(p.to_string())),
-            None => (user_and_password.to_string(), None),
+        let (user, auth) = match user_and_password.split_once(':') {
+            Some((u, p)) => (u.to_string(), SshAuth::Password(p.to_string())),
+            None => (user_and_password.to_string(), SshAuth::Agent),
         };
 
         let slash_pos = remainder.find('/').ok_or_else(|| AppError::Parse {
@@ -75,14 +83,14 @@ impl SshConfig {
             None => (host_part.to_string(), None),
         };
 
-        debug!("parameter={parameter} => user={user}, password={password:?}, host={host}, port={port:?} remote_path={remote_path}");
+        debug!("parameter={parameter} => user={user}, auth={auth:?}, host={host}, port={port:?} remote_path={remote_path}");
 
         Ok(Self {
             application: "amber".into(),
             host,
             port,
             user,
-            password,
+            auth,
             remote_path: remote_path.to_string(),
         })
     }
@@ -93,7 +101,10 @@ impl SshConfig {
             host: self.host.clone(),
             port: self.port,
             user: self.user.clone(),
-            password: self.password.clone(),
+            auth: match self.auth.clone() {
+                SshAuth::Password(pw) => rclone::SshAuth::Password(pw),
+                SshAuth::Agent => rclone::SshAuth::Agent,
+            },
             remote_path: self.remote_path.clone().into(),
         })
     }
@@ -191,19 +202,53 @@ async fn setup_app_via_ssh(
     .await
     .map_err(|e| InternalError::Ssh(format!("Connection failed: {}", e)))?;
 
-    if let Some(pwd) = ssh_config.password.clone() {
-        let auth_result = session
-            .authenticate_password(&ssh_config.user, &pwd)
-            .await
-            .map_err(|e| InternalError::Ssh(format!("Authentication failed: {}", e)))?;
+    match ssh_config.auth {
+        SshAuth::Password(pwd) => {
+            let auth_result = session
+                .authenticate_password(&ssh_config.user, &pwd)
+                .await
+                .map_err(|e| InternalError::Ssh(format!("Authentication failed: {}", e)))?;
 
-        if auth_result != AuthResult::Success {
-            return Err(InternalError::Ssh("Authentication failed.".into()));
+            if auth_result != AuthResult::Success {
+                return Err(InternalError::Ssh("Authentication failed.".into()));
+            }
         }
-    } else {
-        return Err(InternalError::Ssh(
-            "No authentication method provided.".into(),
-        ));
+        SshAuth::Agent => {
+            let mut client = AgentClient::connect_env()
+                .await
+                .map_err(InternalError::RusshKeys)?;
+            let identities = client.request_identities().await?;
+            let user = ssh_config.user;
+
+            let mut authenticated = false;
+            let hash_alg = session.best_supported_rsa_hash().await?.flatten();
+            let identity_len = identities.len();
+            for pubkey in identities {
+                let hash_alg = match pubkey.algorithm() {
+                    Algorithm::Dsa | Algorithm::Rsa { .. } => hash_alg,
+                    _ => None, // upstream bug
+                };
+
+                let auth_result = session
+                    .authenticate_publickey_with(&user, pubkey, hash_alg, &mut client)
+                    .await
+                    .map_err(|e| {
+                        InternalError::Ssh(format!("authentication via ssh-agent failed: {}", e))
+                    })?;
+
+                if auth_result == AuthResult::Success {
+                    authenticated = true;
+                    break;
+                }
+            }
+
+            if !authenticated {
+                return Err(InternalError::Ssh(format!(
+                    "ssh key authentication failed - unable to authenticate using any of the {} stored identities in ssh-agent",
+                    identity_len
+                )));
+            }
+        }
     }
 
     let remote_command = format!(

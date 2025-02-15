@@ -3,13 +3,14 @@
   - edit & deletion
 - connections:
   - add support for BlobRepository
-  - ssh: which honours ssh config + key auth
 - optimisation:
   - optimise buffer sizes - automatically via gen.py script + trying all kind of variants - needs config reader
 - add documentation folder with knowledge base articles on:
   - large scale testing
   - ssh testing
 
+known issues:
+- ssh does not support RSA (?!) due to likely an upstream bug
 
 # Pull & Push
 
