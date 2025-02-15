@@ -670,7 +670,7 @@ impl Database {
     pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
         let query = "
         DELETE FROM virtual_filesystem
-        WHERE fs_last_seen_id IS NOT NULL AND fs_last_seen_id != ? AND target_blob_id IS NULL;
+        WHERE fs_last_seen_id IS DISTINCT FROM ? AND target_blob_id IS NULL AND materialisation_last_blob_id IS NULL;
     ";
 
         let result = sqlx::query(query)

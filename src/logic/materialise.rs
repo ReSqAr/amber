@@ -84,32 +84,41 @@ pub async fn materialise(
                     let target_path = local.root().join(path.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.clone());
 
-                    if let Some(target_blob_id) = target_blob_id.clone() {
-                        let object_path = local.blob_path(&target_blob_id);
-                        if fs::metadata(&target_path)
-                            .await
-                            .map(|m| m.is_file())
-                            .unwrap_or(false)
-                        {
-                            files::forced_atomic_hard_link(
-                                local,
-                                &object_path,
-                                &target_path,
-                                &target_blob_id,
-                            )
-                            .await?;
-                        } else {
-                            files::create_hard_link(&object_path, &target_path).await?;
-                        }
+                    match target_blob_id.clone() {
+                        Some(target_blob_id) => {
+                            let object_path = local.blob_path(&target_blob_id);
+                            if fs::metadata(&target_path)
+                                .await
+                                .map(|m| m.is_file())
+                                .unwrap_or(false)
+                            {
+                                files::forced_atomic_hard_link(
+                                    local,
+                                    &object_path,
+                                    &target_path,
+                                    &target_blob_id,
+                                )
+                                .await?;
+                            } else {
+                                files::create_hard_link(&object_path, &target_path).await?;
+                            }
 
-                        o.observe_termination_ext(
-                            log::Level::Info,
-                            "materialised",
-                            [("blob_id".into(), target_blob_id.clone())],
-                        );
-                    } else {
-                        fs::remove_file(&target_path).await?;
-                        o.observe_termination(log::Level::Info, "deleted");
+                            o.observe_termination_ext(
+                                log::Level::Info,
+                                "materialised",
+                                [("blob_id".into(), target_blob_id.clone())],
+                            );
+                        }
+                        None => {
+                            if fs::metadata(&target_path)
+                                .await
+                                .map(|m| m.is_file())
+                                .unwrap_or(false)
+                            {
+                                fs::remove_file(&target_path).await?;
+                                o.observe_termination(log::Level::Info, "deleted");
+                            }
+                        }
                     }
 
                     let mat = InsertMaterialisation {
