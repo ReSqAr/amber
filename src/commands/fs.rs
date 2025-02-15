@@ -114,6 +114,8 @@ async fn rm_files(
                 .await?;
 
             if soft {
+                // when soft deleting we want to make the file writable again.
+                // that also means we need to break any hard links.
                 fs::create_dir_all(&local.staging_path()).await?;
                 let staging_path = local
                     .staging_path()
