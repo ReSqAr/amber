@@ -8,12 +8,14 @@ use amber::flightdeck::base::{
 };
 use amber::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use futures::stream;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
 pub(crate) async fn rm(
     maybe_root: Option<PathBuf>,
     files: Vec<PathBuf>,
+    soft: bool,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let root_path = local.root().abs().clone();
@@ -22,7 +24,7 @@ pub(crate) async fn rm(
     let wrapped = async {
         let mut obs = BaseObserver::without_id("fs:rm");
 
-        let result = rm_files(&local, files).await?;
+        let result = rm_files(&local, files, soft).await?;
 
         let msg = format!("deleted {} files", result.deleted);
         let msg = if result.not_found > 0 {
@@ -73,6 +75,7 @@ struct RmResult {
 async fn rm_files(
     local: &(impl Adder + Local),
     files: Vec<PathBuf>,
+    soft: bool,
 ) -> Result<RmResult, InternalError> {
     let root_path = local.root().abs().clone().canonicalize()?;
 
@@ -109,9 +112,20 @@ async fn rm_files(
                 }]))
                 .await?;
 
-            fs::remove_file(&path).await?;
+            if soft {
+                let mut permissions = fs::metadata(&file).await?.permissions();
+                let current_mode = permissions.mode();
+                let user_write_bit = 0o200;
+                if current_mode & user_write_bit == 0 {
+                    permissions.set_mode(current_mode | user_write_bit);
+                    fs::set_permissions(&file, permissions).await?;
+                }
+                obs.observe_termination(log::Level::Info, "deleted [soft]");
+            } else {
+                fs::remove_file(&path).await?;
+                obs.observe_termination(log::Level::Info, "deleted");
+            }
             deleted += 1;
-            obs.observe_termination(log::Level::Info, "deleted");
 
             local
                 .add_materialisation(stream::iter([InsertMaterialisation {

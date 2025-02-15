@@ -1,6 +1,4 @@
 # PROJECT MANAGEMENT
-- new command behaviour:
-  - edit
 - connections:
   - add support for BlobRepository
 

@@ -31,6 +31,8 @@ enum Commands {
     #[command(alias = "rm")]
     Remove {
         files: Vec<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        soft: bool,
     },
     #[command(alias = "mv")]
     Move {
@@ -104,7 +106,7 @@ pub async fn run() {
             skip_deduplication,
             verbose,
         } => commands::add::add(cli.path, skip_deduplication, verbose).await,
-        Commands::Remove { files } => commands::fs::rm(cli.path, files).await,
+        Commands::Remove { files, soft } => commands::fs::rm(cli.path, files, soft).await,
         Commands::Move {
             source,
             destination,
