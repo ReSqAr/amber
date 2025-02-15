@@ -54,19 +54,31 @@ pub async fn materialise(
                         path,
                         target_blob_id: Some(target_blob_id),
                     })),
-                    false => None,
+                    false => {
+                        BaseObserver::with_id("materialise:file", path)
+                            .observe_termination(log::Level::Warn, "unavailable");
+                        None
+                    }
                 },
                 VirtualFileState::Altered { .. } => None,
                 VirtualFileState::Outdated {
                     target_blob_id,
                     local_has_target_blob,
                     ..
-                } => match local_has_target_blob {
-                    true => Some(Ok(ToMaterialise {
+                } => match (local_has_target_blob, target_blob_id) {
+                    (true, Some(target_blob_id)) => Some(Ok(ToMaterialise {
                         path,
-                        target_blob_id,
+                        target_blob_id: Some(target_blob_id),
                     })),
-                    false => None,
+                    (_, None) => Some(Ok(ToMaterialise {
+                        path,
+                        target_blob_id: None,
+                    })),
+                    (false, Some(_)) => {
+                        BaseObserver::with_id("materialise:file", path)
+                            .observe_termination(log::Level::Warn, "unavailable");
+                        None
+                    }
                 },
             }
         });
