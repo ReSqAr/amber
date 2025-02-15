@@ -18,6 +18,8 @@ pub enum AppError {
     RepositoryAlreadyInitialised(),
     #[error("connection {0} not found")]
     ConnectionNotFound(String),
+    #[error("file {0} is not part of the repository")]
+    FileNotPartOfRepository(String),
     #[error("unable to parse '{raw}': {message}")]
     Parse { message: String, raw: String },
 }

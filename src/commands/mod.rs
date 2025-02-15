@@ -1,5 +1,6 @@
 pub(crate) mod add;
 pub(crate) mod config;
+pub(crate) mod fs;
 pub(crate) mod fsck;
 pub(crate) mod init;
 pub(crate) mod missing;

@@ -115,7 +115,7 @@ impl LocalRepository {
         debug!("db connected");
 
         Ok(Self {
-            root,
+            root: root.canonicalize()?,
             repo_id: repo.repo_id,
             db,
             _lock: Arc::new(lock),

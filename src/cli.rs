@@ -28,6 +28,13 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    Remove {
+        files: Vec<PathBuf>,
+    },
+    Move {
+        source: PathBuf,
+        destination: PathBuf,
+    },
     Status {
         #[arg(long, default_value_t = false)]
         verbose: bool,
@@ -95,6 +102,11 @@ pub async fn run() {
             skip_deduplication,
             verbose,
         } => commands::add::add(cli.path, skip_deduplication, verbose).await,
+        Commands::Remove { files } => commands::fs::rm(cli.path, files).await,
+        Commands::Move {
+            source,
+            destination,
+        } => commands::fs::mv(cli.path, source, destination).await,
         Commands::Status { verbose } => commands::status::status(cli.path, verbose).await,
         Commands::Missing {} => commands::missing::missing(cli.path).await,
         Commands::Serve {} => commands::serve::serve(cli.path).await,
