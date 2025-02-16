@@ -9,7 +9,7 @@ use crate::grpc::definitions::{
     SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, RepositoryMetadata, Syncer,
+    LastIndices, LastIndicesSyncer, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
 use futures::TryStreamExt;
@@ -239,13 +239,13 @@ impl Syncer<models::RepositoryName> for GRPCClient {
     }
 }
 
-impl BlobSender for GRPCClient {
+impl Sender<models::BlobTransferItem> for GRPCClient {
     fn prepare_transfer<S>(
         &self,
         s: S,
     ) -> impl std::future::Future<Output = Result<u64, InternalError>> + Send
     where
-        S: Stream<Item = models::TransferItem> + Unpin + Send + 'static,
+        S: Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -259,13 +259,13 @@ impl BlobSender for GRPCClient {
     }
 }
 
-impl BlobReceiver for GRPCClient {
+impl Receiver<models::BlobTransferItem> for GRPCClient {
     fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: String,
     ) -> impl std::future::Future<
-        Output = impl Stream<Item = Result<models::TransferItem, InternalError>>
+        Output = impl Stream<Item = Result<models::BlobTransferItem, InternalError>>
                      + Unpin
                      + Send
                      + 'static,
@@ -279,7 +279,7 @@ impl BlobReceiver for GRPCClient {
                     repo_id,
                 })
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::TransferItem::from))
+                .map(|r| r.unwrap().err_into().map_ok(models::BlobTransferItem::from))
                 .await
         }
     }

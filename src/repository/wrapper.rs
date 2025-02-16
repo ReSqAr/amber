@@ -1,9 +1,9 @@
-use crate::db::models::TransferItem;
+use crate::db::models::BlobTransferItem;
 use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, RepositoryMetadata, Syncer,
+    LastIndices, LastIndicesSyncer, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
     SyncerParams,
 };
 use crate::utils::errors::InternalError;
@@ -99,10 +99,10 @@ where
     }
 }
 
-impl BlobSender for ManagedRepository {
+impl Sender<BlobTransferItem> for ManagedRepository {
     async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
-        S: Stream<Item = TransferItem> + Unpin + Send + 'static,
+        S: Stream<Item =BlobTransferItem> + Unpin + Send + 'static,
     {
         match self {
             ManagedRepository::Local(local) => local.prepare_transfer(s).await,
@@ -111,12 +111,12 @@ impl BlobSender for ManagedRepository {
     }
 }
 
-impl BlobReceiver for ManagedRepository {
+impl Receiver<BlobTransferItem> for ManagedRepository {
     async fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: String,
-    ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
         match self {
             ManagedRepository::Local(local) => local
                 .create_transfer_request(transfer_id, repo_id)

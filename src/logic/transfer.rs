@@ -1,8 +1,8 @@
 use crate::connection::EstablishedConnection;
-use crate::db::models::TransferItem;
+use crate::db::models::BlobTransferItem;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
-use crate::repository::traits::{BlobReceiver, BlobSender, BufferType, Config, Local, Metadata};
+use crate::repository::traits::{BufferType, Config, Local, Metadata, Receiver, Sender};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
@@ -33,10 +33,10 @@ fn write_rclone_files_clone(
     rclone_files: PathBuf,
 ) -> (
     JoinHandle<Result<(), InternalError>>,
-    mpsc::Sender<TransferItem>,
+    mpsc::Sender<BlobTransferItem>,
 ) {
     let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriter);
-    let (tx, rx) = mpsc::channel::<TransferItem>(channel_buffer_size);
+    let (tx, rx) = mpsc::channel::<BlobTransferItem>(channel_buffer_size);
 
     let writer_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesStream);
     let writing_task = tokio::spawn(async move {
@@ -168,8 +168,8 @@ async fn execute_rclone(
 
 pub async fn transfer(
     local: &(impl Metadata + Local + Send + Sync + Clone + Config + 'static),
-    source: &(impl Metadata + BlobSender + Send + Sync + Clone + 'static),
-    destination: &(impl Metadata + BlobReceiver + Send + Sync + Clone + 'static),
+    source: &(impl Metadata + Sender<BlobTransferItem> + Send + Sync + Clone + 'static),
+    destination: &(impl Metadata + Receiver<BlobTransferItem> + Send + Sync + Clone + 'static),
     connection: EstablishedConnection,
 ) -> Result<u64, InternalError> {
     let mut rng = rand::rng();

@@ -3,16 +3,15 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, Connection, File, MissingFile, Observation,
-    Repository, RepositoryName, TransferItem, VirtualFile,
+    Repository, RepositoryName, BlobTransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
 use crate::repository::traits::{
-    Adder, Availability, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager,
-    LastIndices, LastIndicesSyncer, Local, Metadata, RepositoryMetadata, Syncer, SyncerParams,
-    VirtualFilesystem,
+    Adder, Availability, BufferType, Config, ConnectionManager, LastIndices, LastIndicesSyncer,
+    Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams, VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
@@ -466,12 +465,12 @@ impl ConnectionManager for LocalRepository {
     }
 }
 
-impl BlobSender for LocalRepository {
+impl Sender<BlobTransferItem> for LocalRepository {
     async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
-        S: Stream<Item = TransferItem> + Unpin + Send + 'static,
+        S: Stream<Item =BlobTransferItem> + Unpin + Send + 'static,
     {
-        let stream = tokio_stream::StreamExt::map(s, |item: TransferItem| {
+        let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| {
             async move {
                 let blob_path = self.blob_path(&item.blob_id);
                 let transfer_path = self.root().join(item.path); // TODO check in transfer path
@@ -484,11 +483,8 @@ impl BlobSender for LocalRepository {
             }
         });
 
-        // Allow multiple hard link operations to run concurrently
-        let stream = futures::StreamExt::buffer_unordered(
-            stream,
-            self.buffer_size(BufferType::PrepareTransfer),
-        );
+        // allow multiple hard link operations to run concurrently
+        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
 
         let mut count = 0;
         pin_mut!(stream);
@@ -505,12 +501,12 @@ impl BlobSender for LocalRepository {
     }
 }
 
-impl BlobReceiver for LocalRepository {
+impl Receiver<BlobTransferItem> for LocalRepository {
     async fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: String,
-    ) -> impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
         let transfer_path = self.transfer_path(transfer_id);
         if let Err(e) = fs::create_dir_all(transfer_path.abs()).await {
             return stream::iter([Err(e.into())]).boxed();

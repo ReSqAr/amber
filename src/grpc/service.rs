@@ -9,8 +9,7 @@ use crate::grpc::definitions::{
     UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
-    BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Local, Metadata, RepositoryMetadata,
-    Syncer,
+    LastIndices, LastIndicesSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -40,8 +39,8 @@ where
         + Syncer<models::File>
         + Syncer<models::Blob>
         + Syncer<models::RepositoryName>
-        + BlobSender
-        + BlobReceiver
+        + Sender<models::BlobTransferItem>
+        + Receiver<models::BlobTransferItem>
         + Sync
         + Send
         + 'static,
@@ -189,7 +188,7 @@ where
     ) -> Result<Response<PrepareTransferResponse>, Status> {
         let count = request
             .into_inner()
-            .map_ok::<models::TransferItem, _>(TransferItem::into)
+            .map_ok::<models::BlobTransferItem, _>(TransferItem::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.prepare_transfer(s))
             .await?;
         Ok(Response::new(PrepareTransferResponse { count }))
@@ -211,7 +210,7 @@ where
             .create_transfer_request(transfer_id, repo_id)
             .await
             .err_into()
-            .map_ok::<TransferItem, _>(models::TransferItem::into);
+            .map_ok::<TransferItem, _>(models::BlobTransferItem::into);
         Ok(Response::new(Box::pin(stream)))
     }
 

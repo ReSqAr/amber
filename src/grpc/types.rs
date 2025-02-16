@@ -109,7 +109,7 @@ impl From<RepositoryName> for models::RepositoryName {
     }
 }
 
-impl From<TransferItem> for models::TransferItem {
+impl From<TransferItem> for models::BlobTransferItem {
     fn from(i: TransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
@@ -119,8 +119,8 @@ impl From<TransferItem> for models::TransferItem {
     }
 }
 
-impl From<models::TransferItem> for TransferItem {
-    fn from(i: models::TransferItem) -> Self {
+impl From<models::BlobTransferItem> for TransferItem {
+    fn from(i: models::BlobTransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
             blob_id: i.blob_id,

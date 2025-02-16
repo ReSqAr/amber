@@ -1,7 +1,6 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, MissingFile, Observation, TransferItem,
-    VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, MissingFile, Observation, VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -138,20 +137,18 @@ pub trait ConnectionManager {
     ) -> Result<crate::connection::EstablishedConnection, InternalError>;
 }
 
-pub trait BlobSender {
+pub trait Sender<T> {
     fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
     where
-        S: Stream<Item = TransferItem> + Unpin + Send + 'static;
+        S: Stream<Item = T> + Unpin + Send + 'static;
 }
 
-pub trait BlobReceiver {
+pub trait Receiver<T> {
     fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: String,
-    ) -> impl Future<
-        Output = impl Stream<Item = Result<TransferItem, InternalError>> + Unpin + Send + 'static,
-    > + Send;
+    ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
 
     fn finalise_transfer(
         &self,

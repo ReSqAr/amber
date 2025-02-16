@@ -1,7 +1,7 @@
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, Connection, CurrentRepository, File, FileCheck,
     FileSeen, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Materialisation,
-    MissingFile, Observation, Repository, RepositoryName, TransferItem, VirtualFile,
+    MissingFile, Observation, Repository, RepositoryName, BlobTransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -900,7 +900,7 @@ impl Database {
         transfer_id: u32,
         remote_repo_id: String,
         transfer_staging_path: String,
-    ) -> DBOutputStream<'static, TransferItem> {
+    ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream(
             query(
                 "
@@ -943,7 +943,7 @@ impl Database {
     pub(crate) async fn select_transfer(
         &self,
         transfer_id: u32,
-    ) -> DBOutputStream<'static, TransferItem> {
+    ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream(
             query("SELECT transfer_id, blob_id, path FROM transfers WHERE transfer_id = ?;")
                 .bind(transfer_id),
