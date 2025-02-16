@@ -42,6 +42,9 @@ pub enum BufferType {
     StateChecker,
     Materialise,
     FsckBuffer,
+    FsckMaterialiseBuffer,
+    FsckRcloneFilesWriter,
+    FsckRcloneFilesStream,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;
