@@ -59,7 +59,14 @@ pub async fn fsck(
             };
         } else {
             fsck_blobs(&local).await?;
+
+            let start_time = tokio::time::Instant::now();
+            let mut vfs_obs = BaseObserver::without_id("vfs:reset");
+            vfs_obs.observe_state(log::Level::Debug, "resetting...");
             local.reset().await?;
+            let duration = start_time.elapsed();
+            vfs_obs.observe_termination(log::Level::Debug, format!("reset in {:.2?}", duration));
+
             find_altered_files(local).await?;
         }
 
@@ -99,7 +106,7 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("done".into()),
-                false => msg.unwrap_or("fsck".into()),
+                false => msg.unwrap_or("checking blobs...".into()),
             },
         )))
         .style(Style::Template {
@@ -185,11 +192,11 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("done".into()),
-                false => msg.unwrap_or("checking".into()),
+                false => msg.unwrap_or("checking files...".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
@@ -314,6 +321,17 @@ pub async fn find_altered_files(
             altered_count += 1;
             BaseObserver::with_id("file", file.path.clone())
                 .observe_termination(log::Level::Error, "altered");
+        } else {
+            BaseObserver::with_id("file", file.path.clone()).observe_termination(
+                log::Level::Debug,
+                match file.state {
+                    VirtualFileState::New => "new",
+                    VirtualFileState::Missing { .. } => "missing",
+                    VirtualFileState::Ok { .. } => "ok",
+                    VirtualFileState::Altered { .. } => "altered",
+                    VirtualFileState::Outdated { .. } => "outdated",
+                },
+            );
         }
     }
 
