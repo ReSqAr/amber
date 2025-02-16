@@ -4,7 +4,6 @@ WITH versioned_files AS (
     SELECT
         path,
         blob_id,
-        valid_from,
         ROW_NUMBER() OVER (
             PARTITION BY path
             ORDER BY valid_from DESC, blob_id DESC

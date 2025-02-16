@@ -1,10 +1,7 @@
 # PROJECT MANAGEMENT
 - connections:
   - add support for BlobRepository
-    - Pull & Push & Fsck & Missing
-    - start of with base64 rclone config
-    - where is the UUID for the repo? deduced by the name
-      - does it have a repo line? doesn't need to? repo = managed repo
+    - Fsck & Missing
 
 - add documentation folder with knowledge base articles on:
   - large scale testing

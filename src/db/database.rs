@@ -1,7 +1,8 @@
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CurrentRepository,
-    File, FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName,
-    Materialisation, MissingFile, Observation, Repository, RepositoryName, VirtualFile,
+    File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
+    InsertRepositoryName, Materialisation, MissingFile, Observation, Repository, RepositoryName,
+    VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -904,7 +905,7 @@ impl Database {
         self.stream(
             query(
                 "
-            INSERT INTO transfers (transfer_id, blob_id, path)
+            INSERT INTO transfers (transfer_id, blob_id, blob_size, path)
             WITH
                 local_blobs AS (
                     SELECT blob_id
@@ -912,7 +913,9 @@ impl Database {
                     INNER JOIN current_repository USING (repo_id)
                 ),
                 remote_blobs AS (
-                    SELECT blob_id
+                    SELECT
+                        blob_id,
+                        blob_size
                     FROM latest_available_blobs
                     WHERE repo_id = ?
                 ),
@@ -925,6 +928,7 @@ impl Database {
             SELECT
                 ? AS transfer_id,
                 m.blob_id,
+                rb.blob_size,
                 CASE
                     WHEN length(m.blob_id) > 6
                         THEN substr(m.blob_id, 1, 2) || '/' || substr(m.blob_id, 3, 2) || '/' || substr(m.blob_id, 5)
@@ -945,6 +949,63 @@ impl Database {
     ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream(
             query("SELECT transfer_id, blob_id, path FROM transfers WHERE transfer_id = ?;")
+                .bind(transfer_id),
+        )
+    }
+
+    pub(crate) async fn populate_missing_files_for_transfer(
+        &self,
+        transfer_id: u32,
+        local_repo_id: String,
+        remote_repo_id: String,
+    ) -> DBOutputStream<'static, FileTransferItem> {
+        self.stream(
+            query(
+                "
+            INSERT INTO transfers (transfer_id, blob_id, blob_size, path)
+            WITH
+                local_blobs AS (
+                    SELECT blob_id
+                    FROM latest_available_blobs
+                    WHERE repo_id = ?
+                ),
+                remote_blobs AS (
+                    SELECT
+                        blob_id,
+                        blob_size
+                    FROM latest_available_blobs
+                    WHERE repo_id = ?
+                ),
+                missing_file_blob_ids AS (
+                    SELECT
+                        f.blob_id,
+                        MIN(f.path) as path
+                    FROM latest_filesystem_files f
+                    LEFT JOIN local_blobs lb ON f.blob_id = lb.blob_id
+                    WHERE lb.blob_id IS NULL
+                    GROUP BY f.blob_id
+                )
+            SELECT
+                ? AS transfer_id,
+                m.blob_id,
+                rb.blob_size,
+                m.path
+            FROM missing_file_blob_ids m
+            INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
+            RETURNING transfer_id, blob_id, blob_size, path;",
+            )
+            .bind(local_repo_id)
+            .bind(remote_repo_id)
+            .bind(transfer_id),
+        )
+    }
+
+    pub(crate) async fn select_files_transfer(
+        &self,
+        transfer_id: u32,
+    ) -> DBOutputStream<'static, FileTransferItem> {
+        self.stream(
+            query("SELECT transfer_id, blob_id, blob_size, path FROM transfers WHERE transfer_id = ?;")
                 .bind(transfer_id),
         )
     }

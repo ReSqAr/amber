@@ -5,6 +5,16 @@ use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::rclone;
 use base64::Engine;
+use rand::distr::Alphanumeric;
+use rand::Rng;
+
+pub fn generate_name() -> String {
+    rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect()
+}
 
 #[derive(Clone, Debug)]
 pub struct RCloneConfig {
@@ -34,6 +44,7 @@ impl RCloneConfig {
 
     pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
         rclone::RcloneTarget::RClone(rclone::RCloneConfig {
+            name: generate_name(),
             config: self.config.clone(),
             remote_path,
         })
@@ -44,7 +55,7 @@ impl RCloneConfig {
         local: &LocalRepository,
         name: &str,
     ) -> Result<WrappedRepository, InternalError> {
-        let repository = RCloneStore::new(local, name).await?;
+        let repository = RCloneStore::new(local, name, &self.remote_path).await?;
         Ok(WrappedRepository::RClone(repository))
     }
 }

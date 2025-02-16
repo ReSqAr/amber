@@ -87,6 +87,7 @@ pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
     pub blob_size: i64,
+    #[allow(dead_code)] // TODO
     pub path: Option<String>,
 }
 
@@ -198,5 +199,6 @@ pub struct BlobTransferItem {
 pub struct FileTransferItem {
     pub transfer_id: u32,
     pub blob_id: String,
+    pub blob_size: i64,
     pub path: String,
 }

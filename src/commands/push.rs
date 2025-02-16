@@ -1,3 +1,4 @@
+use crate::db::models::{BlobTransferItem, FileTransferItem};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -9,7 +10,7 @@ use crate::logic::transfer::transfer;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::repository::wrapper::WrappedRepository;
-use crate::utils::errors::{AppError, InternalError};
+use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 
 pub async fn push(
@@ -32,17 +33,14 @@ pub async fn push(
         let count = match remote {
             WrappedRepository::Local(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer(&local, &local, &remote, connection).await?
+                transfer::<BlobTransferItem>(&local, &local, &remote, connection).await?
             }
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer(&local, &local, &remote, connection).await?
+                transfer::<BlobTransferItem>(&local, &local, &remote, connection).await?
             }
-            WrappedRepository::RClone(_) => {
-                return Err(InternalError::App(AppError::UnsupportedOperation {
-                    connection_name: connection_name.to_string(),
-                    operation: "push".to_string(),
-                }))
+            WrappedRepository::RClone(remote) => {
+                transfer::<FileTransferItem>(&local, &local, &remote, connection).await?
             }
         };
 

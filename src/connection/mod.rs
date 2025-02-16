@@ -54,8 +54,10 @@ impl Config {
 }
 
 pub struct EstablishedConnection {
+    #[allow(dead_code)]
     pub name: String,
     pub config: Config,
+    #[allow(dead_code)]
     pub local: LocalRepository,
     pub remote: WrappedRepository,
 }

@@ -162,6 +162,10 @@ impl LocalRepository {
 
         Self::new(Some(root)).await
     }
+
+    pub(crate) fn db(&self) -> &Database {
+        &self.db
+    }
 }
 
 impl Local for LocalRepository {
@@ -486,12 +490,6 @@ impl RcloneTargetPath for LocalRepository {
     }
 }
 
-impl TransferItem for FileTransferItem {
-    fn path(&self) -> String {
-        self.path.clone()
-    }
-}
-
 impl Sender<BlobTransferItem> for LocalRepository {
     async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
@@ -548,6 +546,80 @@ impl Receiver<BlobTransferItem> for LocalRepository {
         let rclone_target_path = self.rclone_target_path(transfer_id);
         self.db
             .select_blobs_transfer(transfer_id)
+            .await
+            .map_ok(move |r| Item {
+                path: rclone_target_path.join(r.path),
+                expected_blob_id: Some(r.blob_id),
+            })
+            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
+                assimilate::assimilate(self, s).await
+            })
+            .await
+    }
+}
+
+impl TransferItem for FileTransferItem {
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+impl Sender<FileTransferItem> for LocalRepository {
+    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
+    where
+        S: Stream<Item = FileTransferItem> + Unpin + Send + 'static,
+    {
+        let stream = tokio_stream::StreamExt::map(s, |item: FileTransferItem| async move {
+            let blob_path = self.blob_path(&item.blob_id);
+            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path);
+            if let Some(parent) = transfer_path.abs().parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            fs::hard_link(blob_path, transfer_path).await?;
+            Result::<(), InternalError>::Ok(())
+        });
+
+        // allow multiple hard link operations to run concurrently
+        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
+
+        let mut count = 0;
+        pin_mut!(stream);
+        while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
+            match maybe_path {
+                Ok(()) => count += 1,
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(count)
+    }
+}
+
+impl Receiver<FileTransferItem> for LocalRepository {
+    async fn create_transfer_request(
+        &self,
+        transfer_id: u32,
+        repo_id: String,
+    ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
+        let rclone_target_path = self.rclone_target_path(transfer_id);
+        if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
+            return stream::iter([Err(e.into())]).boxed();
+        }
+
+        self.db
+            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id)
+            .await
+            .err_into()
+            .boxed()
+    }
+
+    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
+        let rclone_target_path = self.rclone_target_path(transfer_id);
+        self.db
+            .select_files_transfer(transfer_id)
             .await
             .map_ok(move |r| Item {
                 path: rclone_target_path.join(r.path),
