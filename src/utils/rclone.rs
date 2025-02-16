@@ -23,6 +23,22 @@ impl LocalConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RCloneConfig {
+    pub config: String,
+    pub remote_path: PathBuf,
+}
+
+impl RCloneConfig {
+    fn to_rclone_arg(&self) -> String {
+        format!("remote:{}", self.remote_path.display())
+    }
+
+    fn to_config_section(&self) -> Option<String> {
+        Some(format!("[remote]\n{}\n", self.config))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SshAuth {
     Password(String),
@@ -102,6 +118,7 @@ impl SshConfig {
 #[derive(Debug, Clone)]
 pub enum RcloneTarget {
     Local(LocalConfig),
+    RClone(RCloneConfig),
     Ssh(SshConfig),
 }
 
@@ -109,6 +126,7 @@ impl RcloneTarget {
     pub fn to_rclone_arg(&self) -> String {
         match self {
             RcloneTarget::Local(cfg) => cfg.to_rclone_arg(),
+            RcloneTarget::RClone(cfg) => cfg.to_rclone_arg(),
             RcloneTarget::Ssh(cfg) => cfg.to_rclone_arg(),
         }
     }
@@ -116,6 +134,7 @@ impl RcloneTarget {
     pub fn to_config_section(&self) -> Option<String> {
         match self {
             RcloneTarget::Local(cfg) => cfg.to_config_section(),
+            RcloneTarget::RClone(cfg) => cfg.to_config_section(),
             RcloneTarget::Ssh(cfg) => cfg.to_config_section(),
         }
     }

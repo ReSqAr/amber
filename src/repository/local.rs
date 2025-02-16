@@ -1,3 +1,4 @@
+use crate::connection::EstablishedConnection;
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
@@ -8,7 +9,6 @@ use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
-use crate::repository::connection::EstablishedConnection;
 use crate::repository::traits::{
     Adder, Availability, BlobReceiver, BlobSender, BufferType, Config, ConnectionManager,
     LastIndices, LastIndicesSyncer, Local, Metadata, RepositoryMetadata, Syncer, SyncerParams,
@@ -459,7 +459,7 @@ impl ConnectionManager for LocalRepository {
             ..
         })) = self.lookup_by_name(&name).await
         {
-            EstablishedConnection::connect(self.clone(), name, connection_type, parameter).await
+            EstablishedConnection::new(self.clone(), name, connection_type, parameter).await
         } else {
             Err(AppError::ConnectionNotFound(name).into())
         }

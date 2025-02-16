@@ -167,6 +167,7 @@ pub struct MissingFile {
 pub enum ConnectionType {
     Local,
     Ssh,
+    RClone,
 }
 
 impl Display for ConnectionType {
@@ -174,6 +175,7 @@ impl Display for ConnectionType {
         match self {
             ConnectionType::Local => write!(f, "local"),
             ConnectionType::Ssh => write!(f, "ssh"),
+            ConnectionType::RClone => write!(f, "rclone"),
         }
     }
 }

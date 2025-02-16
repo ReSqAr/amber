@@ -1,7 +1,7 @@
+use crate::connection::EstablishedConnection;
 use crate::db::models::TransferItem;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
-use crate::repository::connection::EstablishedConnection;
 use crate::repository::traits::{BlobReceiver, BlobSender, BufferType, Config, Local, Metadata};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;

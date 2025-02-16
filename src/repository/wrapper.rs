@@ -1,7 +1,7 @@
 use crate::db::models::TransferItem;
 use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
-use crate::repository::rclone::RCloneClient;
+use crate::repository::rclone::RCloneStore;
 use crate::repository::traits::{
     BlobReceiver, BlobSender, LastIndices, LastIndicesSyncer, Metadata, RepositoryMetadata, Syncer,
     SyncerParams,
@@ -12,8 +12,7 @@ use futures::{Stream, StreamExt};
 pub enum WrappedRepository {
     Local(LocalRepository),
     Grpc(GRPCClient),
-    #[allow(dead_code)] // TODO
-    RCloneExporter(RCloneClient),
+    RClone(RCloneStore),
 }
 
 impl Metadata for WrappedRepository {
@@ -21,7 +20,7 @@ impl Metadata for WrappedRepository {
         match self {
             WrappedRepository::Local(local) => local.current().await,
             WrappedRepository::Grpc(grpc) => grpc.current().await,
-            WrappedRepository::RCloneExporter(rclone) => rclone.current().await,
+            WrappedRepository::RClone(rclone) => rclone.current().await,
         }
     }
 }
@@ -31,7 +30,7 @@ impl WrappedRepository {
         match self {
             WrappedRepository::Local(local) => Some(ManagedRepository::Local(local.clone())),
             WrappedRepository::Grpc(grpc) => Some(ManagedRepository::Grpc(grpc.clone())),
-            WrappedRepository::RCloneExporter(_) => None,
+            WrappedRepository::RClone(_) => None,
         }
     }
 }

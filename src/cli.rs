@@ -85,6 +85,7 @@ enum ConfigCommands {
 #[derive(Clone, Debug, ValueEnum)]
 enum ConnectionType {
     Local,
+    RClone,
     Ssh,
 }
 
@@ -92,6 +93,7 @@ impl From<ConnectionType> for db::models::ConnectionType {
     fn from(val: ConnectionType) -> Self {
         match val {
             ConnectionType::Local => db::models::ConnectionType::Local,
+            ConnectionType::RClone => db::models::ConnectionType::RClone,
             ConnectionType::Ssh => db::models::ConnectionType::Ssh,
         }
     }

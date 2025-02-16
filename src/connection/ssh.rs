@@ -1,9 +1,7 @@
-use crate::db::models::ConnectionType;
 use crate::repository::grpc::GRPCClient;
-use crate::repository::local::LocalRepository;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use crate::utils::rclone;
+use crate::utils::{port, rclone};
 use log::{debug, error, warn};
 use russh::client::AuthResult;
 use russh::keys::agent::client::AgentClient;
@@ -13,29 +11,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-
-#[derive(Clone, Debug)]
-pub struct LocalConfig {
-    root: String,
-}
-
-impl LocalConfig {
-    pub(crate) fn from_parameter(parameter: String) -> Result<Self, InternalError> {
-        Ok(Self { root: parameter })
-    }
-
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
-        rclone::RcloneTarget::Local(rclone::LocalConfig {
-            path: self.root.clone().into(),
-        })
-    }
-
-    pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
-        let LocalConfig { root } = self;
-        let repository = LocalRepository::new(Some(root.clone().into())).await?;
-        Ok(WrappedRepository::Local(repository))
-    }
-}
 
 #[derive(Clone, Debug)]
 pub enum SshAuth {
@@ -112,7 +87,7 @@ impl SshConfig {
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
         let (tx, mut rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>(100);
         let ssh_config = self.clone();
-        let local_port = find_available_port().await?;
+        let local_port = port::find_available_port().await?;
         debug!("local_port: {local_port}");
 
         // dedicated thread for SSH operations
@@ -142,12 +117,6 @@ impl SshConfig {
 
         Ok(WrappedRepository::Grpc(repository))
     }
-}
-
-pub(crate) async fn find_available_port() -> Result<u16, InternalError> {
-    use tokio::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    Ok(listener.local_addr()?.port())
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -349,38 +318,4 @@ async fn setup_app_via_ssh(
         port: local_port,
         auth_key,
     })
-}
-
-#[derive(Clone, Debug)]
-pub enum ConnectionConfig {
-    Local(LocalConfig),
-    Ssh(SshConfig),
-}
-
-impl ConnectionConfig {
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
-        match self {
-            ConnectionConfig::Local(local_config) => local_config.as_rclone_target(),
-            ConnectionConfig::Ssh(ssh_config) => ssh_config.as_rclone_target(),
-        }
-    }
-}
-
-pub fn parse_config(
-    connection_type: ConnectionType,
-    parameter: String,
-) -> Result<ConnectionConfig, InternalError> {
-    match connection_type {
-        ConnectionType::Local => Ok(ConnectionConfig::Local(LocalConfig::from_parameter(
-            parameter,
-        )?)),
-        ConnectionType::Ssh => Ok(ConnectionConfig::Ssh(SshConfig::from_parameter(parameter)?)),
-    }
-}
-
-pub async fn connect(config: &ConnectionConfig) -> Result<WrappedRepository, InternalError> {
-    match config.clone() {
-        ConnectionConfig::Local(local_config) => local_config.connect().await,
-        ConnectionConfig::Ssh(ssh_config) => ssh_config.connect().await,
-    }
 }

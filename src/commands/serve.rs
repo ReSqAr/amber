@@ -1,12 +1,12 @@
+use crate::connection::ssh::{ServeError, ServeResponse, ServeResult};
 use crate::grpc::auth::ServerAuth;
 use crate::grpc::definitions;
 use crate::grpc::service::Service;
-use crate::logic::connect;
-use crate::logic::connect::{ServeError, ServeResponse, ServeResult};
 use crate::logic::files;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
+use crate::utils::port;
 use log::debug;
 use rand::distr::Alphanumeric;
 use rand::Rng;
@@ -46,7 +46,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
     let staging_path = local_repository.staging_path();
 
     let auth_key = generate_auth_key();
-    let port = connect::find_available_port().await?;
+    let port = port::find_available_port().await?;
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
     let report = ServeResult::Success(ServeResponse {

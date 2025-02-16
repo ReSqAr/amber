@@ -3,6 +3,10 @@
   - add support for BlobRepository
     - Pull & Push & Fsck & Missing
     - start of with base64 rclone config
+    - where is the UUID for the repo?
+      - does it have a repo line?
+      - remote file with UUID?
+        - what about set up multiple times?
 
 - add documentation folder with knowledge base articles on:
   - large scale testing

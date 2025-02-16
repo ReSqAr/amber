@@ -135,7 +135,7 @@ pub trait ConnectionManager {
     async fn connect(
         &self,
         name: String,
-    ) -> Result<crate::repository::connection::EstablishedConnection, InternalError>;
+    ) -> Result<crate::connection::EstablishedConnection, InternalError>;
 }
 
 pub trait BlobSender {

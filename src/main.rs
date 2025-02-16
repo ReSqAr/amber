@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod connection;
 mod db;
 mod flightdeck;
 mod grpc;

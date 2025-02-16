@@ -1,10 +1,10 @@
+use crate::connection::EstablishedConnection;
 use crate::db::models::{Connection, ConnectionType};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
-use crate::repository::connection::EstablishedConnection;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Metadata};
 use crate::utils::errors::InternalError;
@@ -13,6 +13,7 @@ use std::path::PathBuf;
 fn render_connection_type(connection_type: ConnectionType) -> String {
     match connection_type {
         ConnectionType::Local => "local".into(),
+        ConnectionType::RClone => "rclone".into(),
         ConnectionType::Ssh => "ssh".into(),
     }
 }
@@ -105,7 +106,7 @@ async fn add_connection(
     parameter: String,
     local_repository: LocalRepository,
 ) -> Result<EstablishedConnection, InternalError> {
-    let established = EstablishedConnection::connect(
+    let established = EstablishedConnection::new(
         local_repository.clone(),
         name.clone(),
         connection_type.clone(),
