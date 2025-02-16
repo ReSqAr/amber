@@ -43,7 +43,9 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
-    Missing {},
+    Missing {
+        connection_name: Option<String>,
+    },
     Sync {
         connection_name: Option<String>,
     },
@@ -114,7 +116,9 @@ pub async fn run() {
             destination,
         } => commands::fs::mv(cli.path, source, destination).await,
         Commands::Status { verbose } => commands::status::status(cli.path, verbose).await,
-        Commands::Missing {} => commands::missing::missing(cli.path).await,
+        Commands::Missing { connection_name } => {
+            commands::missing::missing(cli.path, connection_name).await
+        }
         Commands::Serve {} => commands::serve::serve(cli.path).await,
         Commands::Sync { connection_name } => commands::sync::sync(cli.path, connection_name).await,
         Commands::Pull { connection_name } => commands::pull::pull(cli.path, connection_name).await,

@@ -558,7 +558,8 @@ impl Database {
                     blob_id,
                     paths,
                     COALESCE(repository_names, '[]') AS repositories_with_blob
-                FROM missing_blobs_with_paths;
+                FROM missing_blobs_with_paths
+                ORDER BY paths;
             ",
             )
             .bind(repo_id),

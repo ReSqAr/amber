@@ -10,7 +10,7 @@ pub enum AppError {
         expected: String,
         actual: String,
     },
-    #[error("{connection_name} does not support {operation}")]
+    #[error("{connection_name} does not support '{operation}'")]
     UnsupportedOperation {
         connection_name: String,
         operation: String,

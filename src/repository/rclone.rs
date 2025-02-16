@@ -1,11 +1,13 @@
-use crate::db::models::{FileTransferItem, InsertBlob};
+use crate::db::models::{
+    AvailableBlob, BlobAssociatedToFiles, FileTransferItem, InsertBlob, InsertRepositoryName,
+};
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{
-    Adder, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender,
+    Adder, Availability, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use futures::{pin_mut, Stream, StreamExt, TryStreamExt};
+use futures::{pin_mut, stream, Stream, StreamExt, TryStreamExt};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -22,10 +24,20 @@ impl RCloneStore {
         name: &str,
         path: &str,
     ) -> Result<Self, InternalError> {
+        let repo_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_ref()).to_string();
+        local
+            .db()
+            .add_repository_names(stream::iter([InsertRepositoryName {
+                repo_id: repo_id.clone(),
+                name: name.into(),
+                valid_from: chrono::Utc::now(),
+            }]))
+            .await?;
+
         Ok(Self {
             local: local.clone(),
             name: name.into(),
-            repo_id: Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_ref()).to_string(),
+            repo_id,
             path: path.into(),
         })
     }
@@ -95,5 +107,26 @@ impl Receiver<FileTransferItem> for RCloneStore {
                 self.local.add_blobs(s).await
             })
             .await
+    }
+}
+
+impl Availability for RCloneStore {
+    fn available(
+        &self,
+    ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static {
+        self.local
+            .db()
+            .available_blobs(self.repo_id.clone())
+            .err_into()
+    }
+
+    fn missing(
+        &self,
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static
+    {
+        self.local
+            .db()
+            .missing_blobs(self.repo_id.clone())
+            .err_into()
     }
 }

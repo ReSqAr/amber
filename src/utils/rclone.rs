@@ -32,7 +32,7 @@ pub struct RCloneConfig {
 
 impl RCloneConfig {
     fn to_rclone_arg(&self) -> String {
-        format!("{}:{}", self.name, self.remote_path) 
+        format!("{}:{}", self.name, self.remote_path)
     }
 
     fn to_config_section(&self) -> Option<String> {

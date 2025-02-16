@@ -1,7 +1,7 @@
 # PROJECT MANAGEMENT
 - connections:
   - add support for BlobRepository
-    - Fsck & Missing
+    - Fsck
 
 - add documentation folder with knowledge base articles on:
   - large scale testing

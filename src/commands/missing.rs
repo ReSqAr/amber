@@ -5,19 +5,41 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
-use crate::repository::traits::{Availability, Local};
-use crate::utils::errors::InternalError;
+use crate::repository::traits::{Availability, ConnectionManager, Local};
+use crate::repository::wrapper::WrappedRepository;
+use crate::utils::errors::{AppError, InternalError};
 use log::error;
 use std::path::PathBuf;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-pub async fn missing(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root).await?;
-    let log_path = local_repository.log_path().abs().clone();
+pub async fn missing(
+    maybe_root: Option<PathBuf>,
+    connection_name: Option<String>,
+) -> Result<(), InternalError> {
+    let local = LocalRepository::new(maybe_root).await?;
+    let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        list_missing_blobs(local_repository).await?;
+        if let Some(connection_name) = connection_name {
+            let connection = local.connect(connection_name.clone()).await?;
+            let remote = connection.remote.clone();
+            match remote {
+                WrappedRepository::Local(_) | WrappedRepository::Grpc(_) => {
+                    return Err(InternalError::App(AppError::UnsupportedOperation {
+                        connection_name,
+                        operation: "missing".into(),
+                    }))
+                }
+
+                WrappedRepository::RClone(remote) => {
+                    list_missing_blobs(remote).await?;
+                }
+            };
+        } else {
+            list_missing_blobs(local).await?;
+        }
+
         Ok::<(), InternalError>(())
     };
 
@@ -65,7 +87,11 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
 
                 repositories_with_blob.sort();
                 repositories_with_blob.dedup();
-                let detail: String = format!("(in {})", repositories_with_blob.join(", "));
+                let detail: String = if !repositories_with_blob.is_empty() {
+                    format!("(exists in: {})", repositories_with_blob.join(", "))
+                } else {
+                    "(lost - no known location)".into()
+                };
 
                 for path in paths {
                     let mut file_obs = BaseObserver::with_id("file", path);
