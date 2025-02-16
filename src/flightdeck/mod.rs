@@ -1,4 +1,4 @@
-use crate::flightdeck::global::GLOBAL_LOGGER;
+use crate::flightdeck::global::{send_shutdown_signal, Flow, GLOBAL_LOGGER};
 use crate::flightdeck::observation::Message;
 use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
@@ -7,7 +7,6 @@ use pipes::Pipes;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::sync::broadcast;
 
 pub mod base;
 pub mod global;
@@ -17,28 +16,6 @@ pub mod observer;
 pub mod pipes;
 
 const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
-pub struct NotifyOnDrop {
-    pub tx: broadcast::Sender<()>,
-}
-
-impl NotifyOnDrop {
-    pub fn new(tx: broadcast::Sender<()>) -> Self {
-        Self { tx }
-    }
-}
-
-impl Drop for NotifyOnDrop {
-    fn drop(&mut self) {
-        let _ = self.tx.send(());
-    }
-}
-
-pub fn notify_on_drop() -> (NotifyOnDrop, broadcast::Receiver<()>) {
-    let (tx, rx) = broadcast::channel::<()>(2);
-    let guard = NotifyOnDrop::new(tx);
-    (guard, rx)
-}
 
 #[derive(Default)]
 pub struct FlightDeck {
@@ -52,8 +29,6 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     file_level_filter: Option<log::LevelFilter>,
     terminal_level_filter: Option<log::LevelFilter>,
 ) -> Result<(), E> {
-    let (drop_to_notify, notify) = notify_on_drop();
-
     let multi = if std::io::stdout().is_terminal() {
         let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
         Some(indicatif::MultiProgress::with_draw_target(draw_target))
@@ -82,15 +57,15 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
             }
         };
 
-        flightdeck.run(notify).await;
+        flightdeck.run().await;
     });
 
-    wrapped.await?;
+    let result = wrapped.await;
 
-    drop(drop_to_notify);
+    send_shutdown_signal();
     join_handle.await?;
 
-    Ok(())
+    result
 }
 
 impl FlightDeck {
@@ -142,28 +117,32 @@ impl FlightDeck {
         }
     }
 
-    pub async fn run(&mut self, mut shutdown: broadcast::Receiver<()>) {
+    pub async fn run(&mut self) {
         let mut rx_guard = GLOBAL_LOGGER.rx.lock().await;
         let mut interval = tokio::time::interval(FLUSH_INTERVAL);
 
         loop {
             tokio::select! {
-                _ = shutdown.recv() => {
-                    while let Ok(Message { level, observation }) = rx_guard.try_recv() {
-                        self.manager.observe(level, observation.clone()).await;
-                    }
-
-                    self.manager.finish().await;
-                    break;
-                },
-
                 msg = rx_guard.recv() => {
-                    if let Some(Message { level, observation }) = msg {
-                        self.manager.observe(level, observation.clone()).await;
-                    } else {
-                        self.manager.finish().await;
-                        break;
-                    }
+                    match msg {
+                        Some(Flow::Data(Message { level, observation })) => {
+                            self.manager.observe(level, observation.clone()).await;
+                        },
+                        Some(Flow::Shutdown) => {
+                            while let Ok(msg) = rx_guard.try_recv() {
+                                if let Flow::Data(Message { level, observation }) = msg {
+                                    self.manager.observe(level, observation.clone()).await;
+                                }
+                            }
+                            self.manager.flush().await;
+                            self.manager.finish().await;
+                            break;
+                        }
+                        None => {
+                            self.manager.finish().await;
+                            break;
+                        }
+                    };
                 },
 
                 _ = interval.tick() => {

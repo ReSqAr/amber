@@ -14,8 +14,8 @@ pub trait Local {
     fn blobs_path(&self) -> RepoPath;
     fn blob_path(&self, blob_id: &str) -> RepoPath;
     fn staging_path(&self) -> RepoPath;
-    fn transfer_path(&self, transfer_id: u32) -> RepoPath;
-    fn rclone_target_path(&self, transfer_id: u32) -> RepoPath;
+    fn staging_id_path(&self, staging_id: u32) -> RepoPath;
+    fn rclone_target_path(&self, staging_id: u32) -> RepoPath;
     fn log_path(&self) -> RepoPath;
 }
 
@@ -64,6 +64,10 @@ pub trait Adder {
     fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
+
+    fn observe_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    where
+        S: Stream<Item = crate::db::models::ObservedBlob> + Unpin + Send;
 
     fn add_repository_names<S>(
         &self,

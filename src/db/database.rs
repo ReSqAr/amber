@@ -1,8 +1,8 @@
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CurrentRepository,
     File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
-    InsertRepositoryName, Materialisation, MissingFile, Observation, Repository, RepositoryName,
-    VirtualFile,
+    InsertRepositoryName, Materialisation, MissingFile, Observation, ObservedBlob, Repository,
+    RepositoryName, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -172,6 +172,66 @@ impl Database {
                     .bind(&blob.repo_id)
                     .bind(&blob.blob_id)
                     .bind(blob.blob_size)
+                    .bind(blob.has_blob)
+                    .bind(&blob.path)
+                    .bind(blob.valid_from);
+            }
+
+            let result = query.execute(&self.pool).await?;
+            total_inserted += result.rows_affected();
+            total_attempted += chunk.len() as u64;
+        }
+
+        debug!(
+            "blobs added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
+        Ok(total_inserted)
+    }
+    pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = ObservedBlob> + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
+
+        while let Some(chunk) = chunk_stream.next().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = chunk
+                .iter()
+                .map(|_| "(?, ?, ?, ?, ?)")
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let query_str = format!(
+                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from)
+                    WITH VS(uuid, repo_id, has_blob, path, valid_from) AS (
+                        VALUES {}
+                    )
+                    SELECT
+                        uuid,
+                        repo_id,
+                        blob_id,
+                        blob_size,
+                        has_blob,
+                        path,
+                        valid_from
+                    FROM VS
+                    INNER JOIN latest_available_blobs USING (repo_id, path)",
+                placeholders
+            );
+
+            let mut query = sqlx::query(&query_str);
+
+            for blob in &chunk {
+                let uuid = Uuid::new_v4().to_string();
+                query = query
+                    .bind(uuid)
+                    .bind(&blob.repo_id)
                     .bind(blob.has_blob)
                     .bind(&blob.path)
                     .bind(blob.valid_from);

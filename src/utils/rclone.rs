@@ -178,9 +178,28 @@ pub enum RcloneEvent {
     Error(String),
     Stats(RcloneStats),
     Copied(String),
+    Ok(String),
+    Fail(String),
+    #[allow(dead_code)]
+    UnknownDebugMessage(String),
 }
 
-pub async fn run_rclone_operation<F>(
+pub enum Operation {
+    Copy,
+    Check,
+}
+
+impl Operation {
+    pub fn to_rclone_arg(&self) -> String {
+        match self {
+            Operation::Copy => "copy".into(),
+            Operation::Check => "check".into(),
+        }
+    }
+}
+
+pub async fn run_rclone<F>(
+    operation: Operation,
     temp_path: &Path,
     file_list_path: &Path,
     source: RcloneTarget,
@@ -210,9 +229,14 @@ where
     let source_arg = source.to_rclone_arg();
     let dest_arg = destination.to_rclone_arg();
 
+    let log_level = match operation {
+        Operation::Copy => "INFO",
+        Operation::Check => "DEBUG",
+    };
+
     let mut command = Command::new("rclone");
     command
-        .arg("copy")
+        .arg(operation.to_rclone_arg())
         .arg("--config")
         .arg(&config_path)
         .arg("--files-from")
@@ -221,7 +245,7 @@ where
         .arg("--stats")
         .arg("1s")
         .arg("--log-level")
-        .arg("INFO")
+        .arg(log_level)
         .arg(&source_arg)
         .arg(&dest_arg)
         .stdout(std::process::Stdio::piped())
@@ -253,38 +277,13 @@ where
         }
     };
 
-    let parse_and_callback = |channel: &str, line: String, callback: &mut F| {
-        match serde_json::from_str::<RcloneJsonLog>(&line) {
-            Ok(json_log) => {
-                let event = if "error" == json_log.level.as_str() {
-                    RcloneEvent::Error(json_log.msg)
-                } else if let Some(stats) = json_log.stats {
-                    RcloneEvent::Stats(stats)
-                } else if json_log.msg.starts_with("Copied") {
-                    if let Some(object) = json_log.object {
-                        RcloneEvent::Copied(object)
-                    } else {
-                        RcloneEvent::UnknownMessage(line)
-                    }
-                } else {
-                    RcloneEvent::UnknownMessage(line)
-                };
-                callback(event);
-            }
-            Err(parse_err) => {
-                debug!("Failed to parse rclone {channel} JSON: {parse_err}");
-                callback(RcloneEvent::UnknownMessage(line));
-            }
-        }
-    };
-
     loop {
         tokio::select! {
             // Read a line from stdout
             stdout_line = stdout_reader.next_line() => {
                 match stdout_line {
                     Ok(Some(line)) => {
-                        parse_and_callback("stdout", line, &mut callback);
+                        callback(parse_rclone_line("stdout", &line));
                     },
                     Ok(None) => {
                         break;
@@ -298,7 +297,7 @@ where
             stderr_line = stderr_reader.next_line() => {
                 match stderr_line {
                     Ok(Some(line)) => {
-                        parse_and_callback("stderr", line, &mut callback);
+                        callback(parse_rclone_line("stderr", &line));
                     },
                     Ok(None) => {
                         break;
@@ -321,4 +320,40 @@ where
     }
 
     Ok(())
+}
+
+fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
+    match serde_json::from_str::<RcloneJsonLog>(line) {
+        Ok(json_log) => {
+            if "error" == json_log.level {
+                if let Some(object) = json_log.object {
+                    RcloneEvent::Fail(object)
+                } else {
+                    RcloneEvent::Error(json_log.msg)
+                }
+            } else if let Some(stats) = json_log.stats {
+                RcloneEvent::Stats(stats)
+            } else if json_log.msg.starts_with("Copied") {
+                if let Some(object) = json_log.object {
+                    RcloneEvent::Copied(object)
+                } else {
+                    RcloneEvent::UnknownMessage(line.into())
+                }
+            } else if "OK" == json_log.msg {
+                if let Some(object) = json_log.object {
+                    RcloneEvent::Ok(object)
+                } else {
+                    RcloneEvent::UnknownMessage(line.into())
+                }
+            } else if "debug" == json_log.level {
+                RcloneEvent::UnknownDebugMessage(line.into())
+            } else {
+                RcloneEvent::UnknownMessage(line.into())
+            }
+        }
+        Err(parse_err) => {
+            debug!("Failed to parse rclone {channel} JSON: {parse_err}");
+            RcloneEvent::UnknownMessage(line.into())
+        }
+    }
 }

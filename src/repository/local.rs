@@ -3,7 +3,8 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, File,
-    FileTransferItem, MissingFile, Observation, Repository, RepositoryName, VirtualFile,
+    FileTransferItem, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
+    VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -196,12 +197,12 @@ impl Local for LocalRepository {
         self.repository_path().join("staging")
     }
 
-    fn transfer_path(&self, transfer_id: u32) -> RepoPath {
-        self.staging_path().join(format!("t{}", transfer_id))
+    fn staging_id_path(&self, staging_id: u32) -> RepoPath {
+        self.staging_path().join(format!("t{}", staging_id))
     }
 
-    fn rclone_target_path(&self, transfer_id: u32) -> RepoPath {
-        self.transfer_path(transfer_id).join("files")
+    fn rclone_target_path(&self, staging_id: u32) -> RepoPath {
+        self.staging_id_path(staging_id).join("files")
     }
 
     fn log_path(&self) -> RepoPath {
@@ -232,6 +233,9 @@ impl Config for LocalRepository {
             BufferType::Walker => 10000,
             BufferType::Materialise => 100,
             BufferType::FsckBuffer => 20,
+            BufferType::FsckMaterialiseBuffer => 100,
+            BufferType::FsckRcloneFilesWriter => 10000,
+            BufferType::FsckRcloneFilesStream => 1000,
         }
     }
 }
@@ -277,6 +281,13 @@ impl Adder for LocalRepository {
         S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
+    }
+
+    async fn observe_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    where
+        S: Stream<Item = ObservedBlob> + Unpin + Send,
+    {
+        self.db.observe_blobs(s).await
     }
 
     async fn add_repository_names<S>(&self, s: S) -> Result<u64, sqlx::Error>

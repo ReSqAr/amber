@@ -53,6 +53,14 @@ pub struct InsertBlob {
     pub valid_from: DateTime<Utc>,
 }
 
+#[derive(Debug)]
+pub struct ObservedBlob {
+    pub repo_id: String,
+    pub has_blob: bool,
+    pub path: String,
+    pub valid_from: DateTime<Utc>,
+}
+
 #[derive(Debug, FromRow)]
 pub struct RepositoryName {
     pub uuid: String,
@@ -87,7 +95,6 @@ pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
     pub blob_size: i64,
-    #[allow(dead_code)] // TODO
     pub path: Option<String>,
 }
 

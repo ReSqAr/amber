@@ -6,7 +6,7 @@ use crate::repository::traits::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::rclone::{run_rclone_operation, RcloneEvent, RcloneStats, RcloneTarget};
+use crate::utils::rclone::{run_rclone, Operation, RcloneEvent, RcloneStats, RcloneTarget};
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -28,7 +28,7 @@ enum Direction {
 }
 
 fn write_rclone_files_clone<T: TransferItem>(
-    local: &(impl Local + Config),
+    local: &impl Config,
     rclone_files: PathBuf,
 ) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<T>) {
     let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriter);
@@ -66,7 +66,7 @@ async fn execute_rclone(
     destination: RcloneTarget,
     rclone_files_path: &Path,
     expected_count: u64,
-) -> Result<Result<u64, InternalError>, InternalError> {
+) -> Result<u64, InternalError> {
     let count = Arc::new(AtomicU64::new(0));
     let start_time = tokio::time::Instant::now();
     let mut obs = Observer::without_id("rclone");
@@ -133,16 +133,27 @@ async fn execute_rclone(
                 );
                 obs.observe_state(log::Level::Debug, msg);
             }
+            RcloneEvent::Ok(_) => {}
+            RcloneEvent::Fail(_) => {}
+            RcloneEvent::UnknownDebugMessage(_) => {}
         };
     };
 
-    run_rclone_operation(temp_path, rclone_files_path, source, destination, callback).await?;
+    run_rclone(
+        Operation::Copy,
+        temp_path,
+        rclone_files_path,
+        source,
+        destination,
+        callback,
+    )
+    .await?;
 
     let final_count = count.load(Ordering::Relaxed);
     let duration = start_time.elapsed();
     let msg = format!("copied {} blobs in {duration:.2?}", final_count);
     Observer::without_id("rclone").observe_termination(log::Level::Info, msg);
-    Ok(Ok(final_count))
+    Ok(final_count)
 }
 
 pub async fn transfer<T: TransferItem>(
@@ -151,12 +162,11 @@ pub async fn transfer<T: TransferItem>(
     destination: &(impl Metadata + Receiver<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
     connection: EstablishedConnection,
 ) -> Result<u64, InternalError> {
-    let mut rng = rand::rng();
-    let transfer_id: u32 = rng.random();
+    let transfer_id: u32 = rand::rng().random();
 
     let mut transfer_obs = BaseObserver::without_id("transfer");
 
-    let transfer_path = local.transfer_path(transfer_id);
+    let transfer_path = local.staging_id_path(transfer_id);
     fs::create_dir_all(&transfer_path).await?;
     let rclone_files = transfer_path.join("rclone.files");
 
@@ -205,9 +215,8 @@ pub async fn transfer<T: TransferItem>(
             log::Level::Debug,
             BaseObservation::TerminalState("done".into()),
         );
-        let rclone_files_clone = rclone_files.clone();
         let (writing_task, tx) =
-            write_rclone_files_clone::<T>(local, rclone_files_clone.abs().clone());
+            write_rclone_files_clone::<T>(local, rclone_files.clone().abs().clone());
         let count = stream
             .then(move |t| {
                 let tx = tx.clone();
@@ -242,13 +251,13 @@ pub async fn transfer<T: TransferItem>(
 
     transfer_obs.observe_state(log::Level::Debug, "copying");
     execute_rclone(
-        &local.transfer_path(transfer_id).abs().clone(),
+        &local.staging_id_path(transfer_id).abs().clone(),
         rclone_source,
         rclone_destination,
         rclone_files.abs(),
         expected_count,
     )
-    .await??;
+    .await?;
 
     let start_time = tokio::time::Instant::now();
     transfer_obs.observe_state(log::Level::Debug, "verifying");
@@ -263,7 +272,7 @@ pub async fn transfer<T: TransferItem>(
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
 
-    // TODO: cleanup staging folder - local + remote
+    // TODO: cleanup staging folder - source
 
     Ok(count)
 }
