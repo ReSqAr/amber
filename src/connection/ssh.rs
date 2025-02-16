@@ -70,7 +70,7 @@ impl SshConfig {
         })
     }
 
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
+    pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
         rclone::RcloneTarget::Ssh(rclone::SshConfig {
             remote_name: "remote".into(),
             host: self.host.clone(),
@@ -80,7 +80,7 @@ impl SshConfig {
                 SshAuth::Password(pw) => rclone::SshAuth::Password(pw),
                 SshAuth::Agent => rclone::SshAuth::Agent,
             },
-            remote_path: self.remote_path.clone().into(),
+            remote_path,
         })
     }
 

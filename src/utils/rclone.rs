@@ -3,19 +3,19 @@ use aes::cipher::{KeyIvInit, StreamCipher};
 use base64::Engine;
 use log::debug;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct LocalConfig {
-    pub path: PathBuf,
+    pub path: String,
 }
 
 impl LocalConfig {
     fn to_rclone_arg(&self) -> String {
-        self.path.display().to_string()
+        self.path.clone()
     }
 
     fn to_config_section(&self) -> Option<String> {
@@ -26,12 +26,12 @@ impl LocalConfig {
 #[derive(Debug, Clone)]
 pub struct RCloneConfig {
     pub config: String,
-    pub remote_path: PathBuf,
+    pub remote_path: String,
 }
 
 impl RCloneConfig {
     fn to_rclone_arg(&self) -> String {
-        format!("remote:{}", self.remote_path.display())
+        format!("remote:{}", self.remote_path)
     }
 
     fn to_config_section(&self) -> Option<String> {
@@ -52,7 +52,7 @@ pub struct SshConfig {
     pub port: Option<u16>,
     pub user: String,
     pub auth: SshAuth,
-    pub remote_path: PathBuf,
+    pub remote_path: String,
 }
 
 const RCLONE_KEY: [u8; 32] = [
@@ -81,7 +81,7 @@ fn rclone_obscure_password(input: &str) -> String {
 
 impl SshConfig {
     fn to_rclone_arg(&self) -> String {
-        format!("{}:{}", self.remote_name, self.remote_path.display())
+        format!("{}:{}", self.remote_name, self.remote_path)
     }
 
     fn to_config_section(&self) -> Option<String> {

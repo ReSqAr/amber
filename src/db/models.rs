@@ -193,3 +193,10 @@ pub struct BlobTransferItem {
     pub blob_id: String,
     pub path: String,
 }
+
+#[derive(Debug, FromRow, Clone)]
+pub struct FileTransferItem {
+    pub transfer_id: u32,
+    pub blob_id: String,
+    pub path: String,
+}

@@ -2,6 +2,7 @@ use crate::db::models::InsertBlob;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
 use crate::utils::errors::{AppError, InternalError};
+use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
 use async_lock::Mutex;
@@ -15,7 +16,7 @@ pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
 
 #[derive(Debug)]
 pub struct Item {
-    pub path: String,
+    pub path: RepoPath,
     pub expected_blob_id: Option<String>,
 }
 
@@ -25,7 +26,7 @@ async fn assimilate_blob(
     item: Item,
     blob_locks: BlobLockMap,
 ) -> Result<InsertBlob, InternalError> {
-    let file_path = local.root().join(item.path);
+    let file_path = item.path;
     let sha256::HashWithSize {
         hash: blob_id,
         size: blob_size,

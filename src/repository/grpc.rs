@@ -4,12 +4,13 @@ use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
     Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
     FinaliseTransferRequest, FinaliseTransferResponse, LookupLastIndicesRequest,
-    LookupLastIndicesResponse, PrepareTransferResponse, Repository, RepositoryName,
-    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    LookupLastIndicesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
+    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
-    LastIndices, LastIndicesSyncer, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
+    LastIndices, LastIndicesSyncer, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata,
+    Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
 use futures::TryStreamExt;
@@ -236,6 +237,20 @@ impl Syncer<models::RepositoryName> for GRPCClient {
                 .map_ok(|_| ())
                 .await
         }
+    }
+}
+
+impl RcloneTargetPath for GRPCClient {
+    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError> {
+        let rclone_path_request = tonic::Request::new(RclonePathRequest { transfer_id });
+        let RclonePathResponse { path } = self
+            .client
+            .write()
+            .await
+            .rclone_path(rclone_path_request)
+            .await?
+            .into_inner();
+        Ok(path)
     }
 }
 

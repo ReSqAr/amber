@@ -1,15 +1,15 @@
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
+use crate::repository::traits::RcloneTargetPath;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::rclone;
 use base64::Engine;
-use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct RCloneConfig {
     pub config: String,
-    pub remote_path: PathBuf,
+    pub remote_path: String,
 }
 
 impl RCloneConfig {
@@ -32,10 +32,10 @@ impl RCloneConfig {
         })
     }
 
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
+    pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
         rclone::RcloneTarget::RClone(rclone::RCloneConfig {
             config: self.config.clone(),
-            remote_path: self.remote_path.clone(),
+            remote_path,
         })
     }
 
@@ -46,5 +46,11 @@ impl RCloneConfig {
     ) -> Result<WrappedRepository, InternalError> {
         let repository = RCloneStore::new(local, name).await?;
         Ok(WrappedRepository::RClone(repository))
+    }
+}
+
+impl RcloneTargetPath for RCloneConfig {
+    async fn rclone_path(&self, _transfer_id: u32) -> Result<String, InternalError> {
+        Ok(self.remote_path.clone())
     }
 }

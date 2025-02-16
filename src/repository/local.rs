@@ -2,8 +2,8 @@ use crate::connection::EstablishedConnection;
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, Connection, File, MissingFile, Observation,
-    Repository, RepositoryName, BlobTransferItem, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, File,
+    FileTransferItem, MissingFile, Observation, Repository, RepositoryName, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -11,7 +11,8 @@ use crate::logic::assimilate::Item;
 use crate::logic::files;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, ConnectionManager, LastIndices, LastIndicesSyncer,
-    Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams, VirtualFilesystem,
+    Local, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
+    TransferItem, VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
@@ -193,6 +194,10 @@ impl Local for LocalRepository {
 
     fn transfer_path(&self, transfer_id: u32) -> RepoPath {
         self.staging_path().join(format!("t{}", transfer_id))
+    }
+
+    fn rclone_target_path(&self, transfer_id: u32) -> RepoPath {
+        self.transfer_path(transfer_id).join("files")
     }
 
     fn log_path(&self) -> RepoPath {
@@ -465,22 +470,42 @@ impl ConnectionManager for LocalRepository {
     }
 }
 
+impl TransferItem for BlobTransferItem {
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+impl RcloneTargetPath for LocalRepository {
+    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError> {
+        Ok(self
+            .rclone_target_path(transfer_id)
+            .abs()
+            .to_string_lossy()
+            .into_owned())
+    }
+}
+
+impl TransferItem for FileTransferItem {
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+}
+
 impl Sender<BlobTransferItem> for LocalRepository {
     async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
     where
-        S: Stream<Item =BlobTransferItem> + Unpin + Send + 'static,
+        S: Stream<Item = BlobTransferItem> + Unpin + Send + 'static,
     {
-        let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| {
-            async move {
-                let blob_path = self.blob_path(&item.blob_id);
-                let transfer_path = self.root().join(item.path); // TODO check in transfer path
-                if let Some(parent) = transfer_path.abs().parent() {
-                    fs::create_dir_all(parent).await?;
-                }
-
-                fs::hard_link(blob_path, transfer_path).await?;
-                Result::<(), InternalError>::Ok(())
+        let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| async move {
+            let blob_path = self.blob_path(&item.blob_id);
+            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path);
+            if let Some(parent) = transfer_path.abs().parent() {
+                fs::create_dir_all(parent).await?;
             }
+
+            fs::hard_link(blob_path, transfer_path).await?;
+            Result::<(), InternalError>::Ok(())
         });
 
         // allow multiple hard link operations to run concurrently
@@ -507,28 +532,25 @@ impl Receiver<BlobTransferItem> for LocalRepository {
         transfer_id: u32,
         repo_id: String,
     ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
-        let transfer_path = self.transfer_path(transfer_id);
-        if let Err(e) = fs::create_dir_all(transfer_path.abs()).await {
+        let rclone_target_path = self.rclone_target_path(transfer_id);
+        if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
             return stream::iter([Err(e.into())]).boxed();
         }
 
         self.db
-            .populate_missing_blobs_for_transfer(
-                transfer_id,
-                repo_id,
-                transfer_path.join("files").rel().to_string_lossy().into(),
-            )
+            .populate_missing_blobs_for_transfer(transfer_id, repo_id)
             .await
             .err_into()
             .boxed()
     }
 
     async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
+        let rclone_target_path = self.rclone_target_path(transfer_id);
         self.db
-            .select_transfer(transfer_id)
+            .select_blobs_transfer(transfer_id)
             .await
-            .map_ok(|r| Item {
-                path: r.path,
+            .map_ok(move |r| Item {
+                path: rclone_target_path.join(r.path),
                 expected_blob_id: Some(r.blob_id),
             })
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {

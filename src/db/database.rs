@@ -1,7 +1,7 @@
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, Connection, CurrentRepository, File, FileCheck,
-    FileSeen, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Materialisation,
-    MissingFile, Observation, Repository, RepositoryName, BlobTransferItem, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CurrentRepository,
+    File, FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName,
+    Materialisation, MissingFile, Observation, Repository, RepositoryName, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
@@ -295,7 +295,7 @@ impl Database {
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?)")
+                .map(|_| "(?, ?, ?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -895,11 +895,11 @@ impl Database {
             .fetch_all(&self.pool)
             .await
     }
+
     pub(crate) async fn populate_missing_blobs_for_transfer(
         &self,
         transfer_id: u32,
         remote_repo_id: String,
-        transfer_staging_path: String,
     ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream(
             query(
@@ -925,7 +925,7 @@ impl Database {
             SELECT
                 ? AS transfer_id,
                 m.blob_id,
-                ? || '/' || CASE
+                CASE
                     WHEN length(m.blob_id) > 6
                         THEN substr(m.blob_id, 1, 2) || '/' || substr(m.blob_id, 3, 2) || '/' || substr(m.blob_id, 5)
                     ELSE  m.blob_id
@@ -936,11 +936,10 @@ impl Database {
             )
                 .bind(remote_repo_id)
                 .bind(transfer_id)
-                .bind(transfer_staging_path),
         )
     }
 
-    pub(crate) async fn select_transfer(
+    pub(crate) async fn select_blobs_transfer(
         &self,
         transfer_id: u32,
     ) -> DBOutputStream<'static, BlobTransferItem> {

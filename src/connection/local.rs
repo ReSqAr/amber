@@ -13,10 +13,8 @@ impl LocalConfig {
         Ok(Self { root: parameter })
     }
 
-    pub(crate) fn as_rclone_target(&self) -> rclone::RcloneTarget {
-        rclone::RcloneTarget::Local(rclone::LocalConfig {
-            path: self.root.clone().into(),
-        })
+    pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
+        rclone::RcloneTarget::Local(rclone::LocalConfig { path: remote_path })
     }
 
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {

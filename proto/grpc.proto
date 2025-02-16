@@ -72,6 +72,13 @@ message SelectRepositoryNamesRequest {
     int32 last_index = 1;
 }
 
+message RclonePathRequest {
+    uint32 transfer_id = 1;
+}
+message RclonePathResponse {
+    string path = 1;
+}
+
 message TransferItem {
     uint32 transfer_id = 1;
     string blob_id = 2;
@@ -106,6 +113,7 @@ service Grpc {
   rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);
   rpc SelectRepositoryNames (SelectRepositoryNamesRequest) returns (stream RepositoryName);
 
+  rpc RclonePath(RclonePathRequest) returns (RclonePathResponse);
   rpc PrepareTransfer(stream TransferItem) returns (PrepareTransferResponse);
   rpc CreateTransferRequest(CreateTransferRequestRequest) returns (stream TransferItem);
   rpc FinaliseTransfer(FinaliseTransferRequest) returns (FinaliseTransferResponse);

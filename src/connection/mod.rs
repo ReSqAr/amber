@@ -44,11 +44,11 @@ impl Config {
         }
     }
 
-    pub(crate) fn as_rclone_target(&self) -> utils::rclone::RcloneTarget {
+    pub(crate) fn as_rclone_target(&self, remote_path: String) -> utils::rclone::RcloneTarget {
         match self {
-            Config::Local(local_config) => local_config.as_rclone_target(),
-            Config::RClone(rclone_config) => rclone_config.as_rclone_target(),
-            Config::Ssh(ssh_config) => ssh_config.as_rclone_target(),
+            Config::Local(local_config) => local_config.as_rclone_target(remote_path),
+            Config::RClone(rclone_config) => rclone_config.as_rclone_target(remote_path),
+            Config::Ssh(ssh_config) => ssh_config.as_rclone_target(remote_path),
         }
     }
 }
@@ -79,8 +79,11 @@ impl EstablishedConnection {
         })
     }
 
-    pub(crate) fn remote_rclone_target(&self) -> utils::rclone::RcloneTarget {
-        self.config.as_rclone_target()
+    pub(crate) fn local_rclone_target(&self, path: String) -> utils::rclone::RcloneTarget {
+        utils::rclone::RcloneTarget::Local(utils::rclone::LocalConfig { path })
+    }
+    pub(crate) fn remote_rclone_target(&self, remote_path: String) -> utils::rclone::RcloneTarget {
+        self.config.as_rclone_target(remote_path)
     }
 
     pub(crate) fn get_managed_repo(&self) -> Result<ManagedRepository, InternalError> {

@@ -3,10 +3,10 @@ use crate::grpc::definitions::{
     grpc_server, Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
     CurrentRepositoryMetadataResponse, File, FinaliseTransferRequest, FinaliseTransferResponse,
     LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
-    MergeRepositoriesResponse, MergeRepositoryNamesResponse, PrepareTransferResponse, Repository,
-    RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
-    UpdateLastIndicesResponse,
+    MergeRepositoriesResponse, MergeRepositoryNamesResponse, PrepareTransferResponse,
+    RclonePathRequest, RclonePathResponse, Repository, RepositoryName, SelectBlobsRequest,
+    SelectFilesRequest, SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
+    UpdateLastIndicesRequest, UpdateLastIndicesResponse,
 };
 use crate::repository::traits::{
     LastIndices, LastIndicesSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
@@ -180,6 +180,16 @@ where
             .err_into()
             .map_ok::<RepositoryName, _>(models::RepositoryName::into);
         Ok(Response::new(Box::pin(stream)))
+    }
+
+    async fn rclone_path(
+        &self,
+        request: Request<RclonePathRequest>,
+    ) -> Result<Response<RclonePathResponse>, Status> {
+        let RclonePathRequest { transfer_id } = request.into_inner();
+        let path = self.repository.rclone_target_path(transfer_id);
+        let path = path.abs().to_string_lossy().into_owned();
+        Ok(Response::new(RclonePathResponse { path }))
     }
 
     async fn prepare_transfer(

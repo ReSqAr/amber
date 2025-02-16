@@ -69,8 +69,8 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                true => msg.unwrap_or("done".into()),
-                false => msg.unwrap_or("adding".into()),
+                true => msg.unwrap_or("added files".into()),
+                false => msg.unwrap_or("adding files".into()),
             },
         )))
         .style(Style::Template {

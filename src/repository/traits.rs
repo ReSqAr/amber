@@ -15,6 +15,7 @@ pub trait Local {
     fn blob_path(&self, blob_id: &str) -> RepoPath;
     fn staging_path(&self) -> RepoPath;
     fn transfer_path(&self, transfer_id: u32) -> RepoPath;
+    fn rclone_target_path(&self, transfer_id: u32) -> RepoPath;
     fn log_path(&self) -> RepoPath;
 }
 
@@ -137,13 +138,21 @@ pub trait ConnectionManager {
     ) -> Result<crate::connection::EstablishedConnection, InternalError>;
 }
 
-pub trait Sender<T> {
+pub trait RcloneTargetPath {
+    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError>;
+}
+
+pub trait TransferItem: Send + Sync + Clone + 'static {
+    fn path(&self) -> String;
+}
+
+pub trait Sender<T: TransferItem> {
     fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
     where
         S: Stream<Item = T> + Unpin + Send + 'static;
 }
 
-pub trait Receiver<T> {
+pub trait Receiver<T: TransferItem> {
     fn create_transfer_request(
         &self,
         transfer_id: u32,
