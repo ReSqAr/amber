@@ -4,18 +4,21 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::logic::state;
+use crate::logic::state::VirtualFileState;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{
-    Availability, BufferType, Config, Local, Syncer, VirtualFilesystem,
+    Adder, Availability, BufferType, Config, Local, Metadata, Syncer, VirtualFilesystem,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
+use crate::utils::walker::WalkerConfig;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
-use tokio::time::Instant;
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 pub async fn fsck(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
@@ -28,6 +31,8 @@ pub async fn fsck(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
 
         local_repository.reset().await?;
 
+        find_altered_files(local_repository).await?;
+
         Ok::<(), InternalError>(())
     };
 
@@ -37,7 +42,7 @@ pub async fn fsck(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
 fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
     let root = root_path.display().to_string() + "/";
 
-    let file = BaseLayoutBuilderBuilder::default()
+    let sha = BaseLayoutBuilderBuilder::default()
         .type_key("sha")
         .limit(5)
         .termination_action(TerminationAction::Remove)
@@ -73,7 +78,44 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(fsck_blobs).add_child(file)]
+    let file = BaseLayoutBuilderBuilder::default()
+        .type_key("file")
+        .limit(5)
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
+            let path = id.unwrap_or("<missing>".into());
+            match done {
+                true => format!("checked {}", path),
+                false => format!("checking {}", path),
+            }
+        })))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}{spinner:.green} {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    let status = BaseLayoutBuilderBuilder::default()
+        .type_key("status")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                true => msg.unwrap_or("done".into()),
+                false => msg.unwrap_or("checking".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    [
+        LayoutItemBuilderNode::from(fsck_blobs).add_child(sha),
+        LayoutItemBuilderNode::from(status).add_child(file),
+    ]
 }
 
 fn current_timestamp() -> i64 {
@@ -86,7 +128,7 @@ fn current_timestamp() -> i64 {
 async fn fsck_blobs(
     local: &(impl Config + Local + Availability + Syncer<Blob> + Sync + Send + Clone + 'static),
 ) -> Result<(), InternalError> {
-    let start_time = Instant::now();
+    let start_time = tokio::time::Instant::now();
 
     let count = Arc::new(Mutex::new(0u64));
     let obs = Arc::new(Mutex::new(BaseObserver::without_id("fsck:blobs")));
@@ -165,6 +207,41 @@ async fn fsck_blobs(
     let duration = start_time.elapsed();
     let msg = format!("checked {} blobs in {duration:.2?}", *count.lock().await);
     obs.lock().await.observe_termination(log::Level::Info, msg);
+
+    Ok(())
+}
+
+pub async fn find_altered_files(
+    local: impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static,
+) -> Result<(), InternalError> {
+    let start_time = tokio::time::Instant::now();
+    let mut checker_obs = BaseObserver::without_id("status");
+
+    let (handle, mut stream) = state::state(local, WalkerConfig::default()).await?;
+
+    let mut count: u64 = 0;
+    let mut altered_count: u64 = 0;
+    while let Some(file_result) = stream.next().await {
+        count += 1;
+        checker_obs.observe_position(log::Level::Trace, count);
+
+        let file = file_result?;
+        if let VirtualFileState::Altered { .. } = file.state {
+            altered_count += 1;
+            BaseObserver::with_id("file", file.path.clone())
+                .observe_termination(log::Level::Error, "altered");
+        }
+    }
+
+    handle.await??;
+
+    let final_msg = if altered_count > 0 {
+        let duration = start_time.elapsed();
+        format!("detected {} broken files in {duration:.2?}", altered_count)
+    } else {
+        "found no broken files".into()
+    };
+    checker_obs.observe_termination(log::Level::Info, final_msg);
 
     Ok(())
 }

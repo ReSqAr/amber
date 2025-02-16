@@ -11,8 +11,6 @@ use log::{debug, error};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tokio::time;
-use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use utils::fs::are_hardlinked;
 
@@ -59,12 +57,12 @@ async fn close(
 ) -> Result<(), InternalError> {
     debug!("close: closing virtual filesystem");
 
-    let start_time = Instant::now();
+    let start_time = tokio::time::Instant::now();
     vfs.cleanup(last_seen_id).await?;
     let duration = start_time.elapsed();
     debug!("cleanup: {:.2?}", duration);
 
-    let start_time = Instant::now();
+    let start_time = tokio::time::Instant::now();
 
     let mut deleted_files = vfs.select_missing_files(last_seen_id).await;
     while let Some(r) = deleted_files.next().await {
@@ -186,7 +184,7 @@ pub async fn state(
     let root = vfs.root();
     let last_seen_id = current_timestamp();
 
-    let start_time = Instant::now();
+    let start_time = tokio::time::Instant::now();
     vfs.refresh().await?;
     debug!("virtual filesystem refreshed");
     let duration = start_time.elapsed();
@@ -235,13 +233,13 @@ pub async fn state(
 
                     // we have a loop in the streams, this gives the checker observations priority
                     // otherwise we run into deadlocks
-                    let max_delay = time::Duration::from_millis(10);
-                    let mut current_delay = time::Duration::from_millis(1);
+                    let max_delay = tokio::time::Duration::from_millis(10);
+                    let mut current_delay = tokio::time::Duration::from_millis(1);
                     loop {
                         if obs_tx_clone.capacity() > obs_tx_clone.max_capacity() / 2 {
                             break;
                         }
-                        time::sleep(current_delay).await;
+                        tokio::time::sleep(current_delay).await;
                         current_delay = std::cmp::min(current_delay * 2, max_delay);
                     }
 
