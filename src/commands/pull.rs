@@ -8,7 +8,8 @@ use crate::logic::transfer::transfer;
 use crate::logic::{materialise, sync};
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
-use crate::utils::errors::InternalError;
+use crate::repository::wrapper::WrappedRepository;
+use crate::utils::errors::{AppError, InternalError};
 use std::path::PathBuf;
 
 pub async fn pull(
@@ -24,18 +25,31 @@ pub async fn pull(
 
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
         let connection = local.connect(connection_name.clone()).await?;
-        let managed_remote = connection.get_managed_repo()?;
+        let remote = connection.remote.clone();
+        let remote_meta = remote.current().await?;
         connect_obs.observe_termination(log::Level::Info, "connected");
 
-        sync::sync_repositories(&local, &managed_remote).await?;
-
-        let count = transfer(&local, &managed_remote, &local, connection).await?;
+        let count = match remote {
+            WrappedRepository::Local(remote) => {
+                sync::sync_repositories(&local, &remote).await?;
+                transfer(&local, &remote, &local, connection).await?
+            }
+            WrappedRepository::Grpc(remote) => {
+                sync::sync_repositories(&local, &remote).await?;
+                transfer(&local, &remote, &local, connection).await?
+            }
+            WrappedRepository::RClone(_) => {
+                return Err(InternalError::App(AppError::UnsupportedOperation {
+                    connection_name: connection_name.to_string(),
+                    operation: "pull".to_string(),
+                }))
+            }
+        };
 
         materialise::materialise(&local).await?;
 
         files::cleanup_staging(&local.staging_path()).await?;
 
-        let remote_meta = managed_remote.current().await?;
         let duration = start_time.elapsed();
         let msg = format!(
             "pulled {} blobs via {} from {} in {duration:.2?}",

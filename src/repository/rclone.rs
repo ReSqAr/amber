@@ -3,6 +3,7 @@ use crate::repository::traits::{Metadata, RepositoryMetadata};
 use crate::utils::errors::InternalError;
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct RCloneStore {
     local: LocalRepository,
     name: String,

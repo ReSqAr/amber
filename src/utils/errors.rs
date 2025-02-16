@@ -10,8 +10,11 @@ pub enum AppError {
         expected: String,
         actual: String,
     },
-    #[error("{connection_name} does not support requested operation")]
-    NotManagedRemote { connection_name: String },
+    #[error("{connection_name} does not support {operation}")]
+    UnsupportedOperation {
+        connection_name: String,
+        operation: String,
+    },
     #[error("the repository is not initialised")]
     RepositoryNotInitialised(),
     #[error("the repository is already initialised")]

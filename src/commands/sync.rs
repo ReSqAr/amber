@@ -7,7 +7,8 @@ use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::{materialise, sync};
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local};
-use crate::utils::errors::InternalError;
+use crate::repository::wrapper::WrappedRepository;
+use crate::utils::errors::{AppError, InternalError};
 use std::path::PathBuf;
 
 pub async fn sync(
@@ -117,10 +118,23 @@ async fn connect_sync_materialise(
     if let Some(connection_name) = connection_name {
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
         let connection = local.connect(connection_name.clone()).await?;
-        let managed_remote = connection.get_managed_repo()?;
+        let remote = connection.remote.clone();
         connect_obs.observe_termination(log::Level::Info, "connected");
 
-        sync::sync_repositories(&local, &managed_remote).await?;
+        match remote {
+            WrappedRepository::Local(remote) => {
+                sync::sync_repositories(&local, &remote).await?;
+            }
+            WrappedRepository::Grpc(remote) => {
+                sync::sync_repositories(&local, &remote).await?;
+            }
+            WrappedRepository::RClone(_) => {
+                return Err(InternalError::App(AppError::UnsupportedOperation {
+                    connection_name: connection_name.to_string(),
+                    operation: "sync".to_string(),
+                }))
+            }
+        };
     }
 
     materialise::materialise(&local).await?;

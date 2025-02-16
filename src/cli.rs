@@ -134,7 +134,7 @@ pub async fn run() {
     };
 
     if let Err(err) = result {
-        eprintln!("\nan error occurred: {}", err);
+        eprintln!("\nerror: {}", err);
         process::exit(1);
     }
 }
