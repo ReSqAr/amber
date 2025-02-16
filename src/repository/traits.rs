@@ -1,6 +1,7 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    AvailableBlob, BlobWithPaths, Connection, MissingFile, Observation, TransferItem, VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, MissingFile, Observation, TransferItem,
+    VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -52,7 +53,7 @@ pub trait Availability {
     ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static;
     fn missing(
         &self,
-    ) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send + 'static;
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static;
 }
 
 pub trait Adder {

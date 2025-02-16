@@ -171,6 +171,7 @@ pub async fn add_files(
                         blob_id: blob_id.clone(),
                         blob_size: blob_size as i64,
                         has_blob: true,
+                        path: None,
                         valid_from,
                     };
                     let mat = InsertMaterialisation {

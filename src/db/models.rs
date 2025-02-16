@@ -39,6 +39,7 @@ pub struct Blob {
     pub blob_id: String,
     pub blob_size: i64,
     pub has_blob: bool,
+    pub path: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -48,6 +49,7 @@ pub struct InsertBlob {
     pub blob_id: String,
     pub blob_size: i64,
     pub has_blob: bool,
+    pub path: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -85,16 +87,17 @@ pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
     pub blob_size: i64,
+    pub path: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct BlobWithPaths {
+pub struct BlobAssociatedToFiles {
     pub blob_id: String,
     pub paths: Vec<String>,
     pub repositories_with_blob: Vec<String>,
 }
 
-impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
+impl<'r> FromRow<'r, SqliteRow> for BlobAssociatedToFiles {
     fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
         let blob_id: String = row.try_get("blob_id")?;
         let paths_json: String = row.try_get("paths")?;
@@ -103,7 +106,7 @@ impl<'r> FromRow<'r, SqliteRow> for BlobWithPaths {
         let repo_names_json: String = row.try_get("repositories_with_blob")?;
         let repositories_with_blob: Vec<String> = serde_json::from_str(&repo_names_json)
             .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        Ok(BlobWithPaths {
+        Ok(BlobAssociatedToFiles {
             blob_id,
             paths,
             repositories_with_blob,

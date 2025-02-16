@@ -1,4 +1,4 @@
-use crate::db::models::BlobWithPaths;
+use crate::db::models::BlobAssociatedToFiles;
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -54,7 +54,7 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
     let mut count_blobs = 0usize;
     while let Some(blob_result) = missing_blobs.next().await {
         match blob_result {
-            Ok(BlobWithPaths {
+            Ok(BlobAssociatedToFiles {
                 paths,
                 blob_id,
                 mut repositories_with_blob,

@@ -68,6 +68,7 @@ async fn assimilate_blob(
         blob_id,
         blob_size: blob_size as i64,
         has_blob: true,
+        path: None,
         valid_from: chrono::Utc::now(),
     })
 }

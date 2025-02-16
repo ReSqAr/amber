@@ -50,6 +50,7 @@ mod tests {
                 blob_id: tb.blob_id,
                 blob_size: tb.blob_size,
                 has_blob: tb.has_blob,
+                path: None,
                 valid_from: tb.valid_from,
             })
             .collect();

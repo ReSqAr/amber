@@ -32,7 +32,8 @@ message Blob {
     string blob_id = 3;
     int64 blob_size = 4;
     bool has_blob = 5;
-    google.protobuf.Timestamp valid_from = 6;
+    optional string path = 6;
+    google.protobuf.Timestamp valid_from = 7;
 }
 
 message RepositoryName {

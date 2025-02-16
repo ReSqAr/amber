@@ -45,6 +45,7 @@ impl From<models::Blob> for Blob {
             blob_id: blob.blob_id,
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
+            path: blob.path,
             valid_from: datetime_to_timestamp(&blob.valid_from),
         }
     }
@@ -91,6 +92,7 @@ impl From<Blob> for models::Blob {
             blob_id: blob.blob_id,
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
+            path: blob.path,
             valid_from: timestamp_to_datetime(&blob.valid_from),
         }
     }

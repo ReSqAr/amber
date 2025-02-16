@@ -1,8 +1,8 @@
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobWithPaths, Connection, File, MissingFile, Observation, Repository,
-    RepositoryName, TransferItem, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, Connection, File, MissingFile, Observation,
+    Repository, RepositoryName, TransferItem, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -250,7 +250,8 @@ impl Availability for LocalRepository {
 
     fn missing(
         &self,
-    ) -> impl Stream<Item = Result<BlobWithPaths, InternalError>> + Unpin + Send + 'static {
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static
+    {
         self.db.missing_blobs(self.repo_id.clone()).err_into()
     }
 }

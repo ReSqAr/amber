@@ -34,6 +34,7 @@ CREATE TABLE blobs
     blob_id     TEXT        NOT NULL,
     blob_size   INTEGER     NOT NULL,
     has_blob    INTEGER     NOT NULL,
+    path        TEXT,
     valid_from  DATETIME    NOT NULL
 );
 

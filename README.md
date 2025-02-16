@@ -1,6 +1,8 @@
 # PROJECT MANAGEMENT
 - connections:
   - add support for BlobRepository
+    - Pull & Push & Fsck & Missing
+    - start of with base64 rclone config
 
 - add documentation folder with knowledge base articles on:
   - large scale testing

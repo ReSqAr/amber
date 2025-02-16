@@ -32,6 +32,7 @@ WITH versioned_blobs AS (
         blob_id,
         blob_size,
         valid_from,
+        path,
         has_blob,
         ROW_NUMBER() OVER (
             PARTITION BY repo_id, blob_id
@@ -44,14 +45,16 @@ latest_blob_version AS (
         repo_id,
         blob_id,
         blob_size,
-        has_blob
+        has_blob,
+        path
     FROM versioned_blobs
     WHERE rn = 1
 )
 SELECT
     repo_id,
     blob_id,
-    blob_size
+    blob_size,
+    path
 FROM latest_blob_version
 WHERE has_blob = 1;
 

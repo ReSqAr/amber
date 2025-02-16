@@ -149,6 +149,7 @@ async fn fsck_blobs(
                     blob_id: blob.blob_id,
                     blob_size: blob.blob_size,
                     has_blob: matching,
+                    path: None,
                     valid_from: chrono::Utc::now(),
                 })
             }

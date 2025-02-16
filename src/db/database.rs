@@ -1,6 +1,6 @@
 use crate::db::models::{
-    AvailableBlob, Blob, BlobWithPaths, Connection, CurrentRepository, File, FileCheck, FileSeen,
-    InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Materialisation,
+    AvailableBlob, Blob, BlobAssociatedToFiles, Connection, CurrentRepository, File, FileCheck,
+    FileSeen, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Materialisation,
     MissingFile, Observation, Repository, RepositoryName, TransferItem, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
@@ -144,7 +144,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 6);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -153,12 +153,12 @@ impl Database {
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?, ?, ?, ?)")
+                .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, valid_from) VALUES {}",
+                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -172,6 +172,7 @@ impl Database {
                     .bind(&blob.blob_id)
                     .bind(blob.blob_size)
                     .bind(blob.has_blob)
+                    .bind(&blob.path)
                     .bind(blob.valid_from);
             }
 
@@ -256,7 +257,7 @@ impl Database {
         self.stream(
             query(
                 "
-                SELECT uuid, repo_id, blob_id, blob_size, has_blob, valid_from
+                SELECT uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from
                 FROM blobs
                 WHERE id > ?",
             )
@@ -299,11 +300,12 @@ impl Database {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO repositories (repo_id, last_file_index, last_blob_index)
+                "INSERT INTO repositories (repo_id, last_file_index, last_blob_index, last_name_index)
                  VALUES {}
                      ON CONFLICT(repo_id) DO UPDATE SET
                     last_file_index = max(last_file_index, excluded.last_file_index),
-                    last_blob_index = max(last_blob_index, excluded.last_blob_index)
+                    last_blob_index = max(last_blob_index, excluded.last_blob_index),
+                    last_name_index = max(last_name_index, excluded.last_name_index)
                 ",
                 placeholders
             );
@@ -315,6 +317,7 @@ impl Database {
                     .bind(&repo.repo_id)
                     .bind(repo.last_file_index)
                     .bind(repo.last_blob_index)
+                    .bind(repo.last_name_index)
             }
 
             let result = query.execute(&self.pool).await?;
@@ -381,7 +384,7 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 6);
+        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
             if chunk.is_empty() {
@@ -390,12 +393,12 @@ impl Database {
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?, ?, ?, ?)")
+                .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, valid_from) VALUES {}",
+                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -408,6 +411,7 @@ impl Database {
                     .bind(&file.blob_id)
                     .bind(file.blob_size)
                     .bind(file.has_blob)
+                    .bind(&file.path)
                     .bind(file.valid_from)
             }
 
@@ -515,7 +519,7 @@ impl Database {
         self.stream(
             query(
                 "
-                SELECT repo_id, blob_id, blob_size
+                SELECT repo_id, blob_id, blob_size, path
                 FROM latest_available_blobs
                 WHERE repo_id = ?",
             )
@@ -526,7 +530,7 @@ impl Database {
     pub(crate) fn missing_blobs(
         &self,
         repo_id: String,
-    ) -> impl Stream<Item = Result<BlobWithPaths, sqlx::Error>> + Unpin + Send + Sized {
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, sqlx::Error>> + Unpin + Send + Sized {
         self.stream(
             query(
                 "
@@ -586,11 +590,11 @@ impl Database {
 
             let mut query = sqlx::query(&query_str);
 
-            for blob in &chunk {
+            for mat in &chunk {
                 query = query
-                    .bind(&blob.path)
-                    .bind(&blob.blob_id)
-                    .bind(blob.valid_from);
+                    .bind(&mat.path)
+                    .bind(&mat.blob_id)
+                    .bind(mat.valid_from);
             }
 
             let result = query.execute(&self.pool).await?;
