@@ -25,18 +25,18 @@ impl LocalConfig {
 
 #[derive(Debug, Clone)]
 pub struct RCloneConfig {
-    pub name: String,
+    pub remote_name: String,
     pub config: String,
     pub remote_path: String,
 }
 
 impl RCloneConfig {
     fn to_rclone_arg(&self) -> String {
-        format!("{}:{}", self.name, self.remote_path)
+        format!("{}:{}", self.remote_name, self.remote_path)
     }
 
     fn to_config_section(&self) -> Option<String> {
-        Some(format!("[{}]\n{}\n", self.name, self.config))
+        Some(format!("[{}]\n{}\n", self.remote_name, self.config))
     }
 }
 

@@ -3,6 +3,8 @@ use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::{port, rclone};
 use log::{debug, error, warn};
+use rand::distr::Alphanumeric;
+use rand::Rng;
 use russh::client::AuthResult;
 use russh::keys::agent::client::AgentClient;
 use russh::keys::Algorithm;
@@ -72,7 +74,11 @@ impl SshConfig {
 
     pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
         rclone::RcloneTarget::Ssh(rclone::SshConfig {
-            remote_name: "remote".into(),
+            remote_name: rand::rng()
+                .sample_iter(&Alphanumeric)
+                .take(16)
+                .map(char::from)
+                .collect(),
             host: self.host.clone(),
             port: self.port,
             user: self.user.clone(),
