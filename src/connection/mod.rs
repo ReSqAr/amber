@@ -32,10 +32,14 @@ impl Config {
         }
     }
 
-    async fn connect(&self) -> Result<WrappedRepository, InternalError> {
+    pub(crate) async fn connect(
+        &self,
+        local: &LocalRepository,
+        name: &str,
+    ) -> Result<WrappedRepository, InternalError> {
         match self {
             Config::Local(local_config) => local_config.connect().await,
-            Config::RClone(rclone_config) => rclone_config.connect().await,
+            Config::RClone(rclone_config) => rclone_config.connect(local, name).await,
             Config::Ssh(ssh_config) => ssh_config.connect().await,
         }
     }
@@ -64,7 +68,7 @@ impl EstablishedConnection {
         parameter: String,
     ) -> Result<Self, InternalError> {
         let config = Config::parse(connection_type, parameter)?;
-        let remote = config.connect().await?;
+        let remote = config.connect(&local, &name).await?;
         let meta = remote.current().await?;
         debug!("connected to repository via {name} to {}", meta.name);
         Ok(Self {

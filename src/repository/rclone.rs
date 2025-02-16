@@ -1,20 +1,27 @@
+use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Metadata, RepositoryMetadata};
 use crate::utils::errors::InternalError;
+use uuid::Uuid;
 
-pub struct RCloneStore;
+pub struct RCloneStore {
+    local: LocalRepository,
+    name: String,
+}
 
 impl RCloneStore {
-    pub async fn new() -> Result<Self, InternalError> {
-        Ok(Self {}) // TODO
+    pub async fn new(local: &LocalRepository, name: &str) -> Result<Self, InternalError> {
+        Ok(Self {
+            local: local.clone(),
+            name: name.into(),
+        })
     }
 }
 
 impl Metadata for RCloneStore {
     async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
         Ok(RepositoryMetadata {
-            // TODO
-            id: "".into(),
-            name: "".into(),
+            id: Uuid::new_v5(&Uuid::NAMESPACE_OID, self.name.as_ref()).to_string(),
+            name: self.name.clone(),
         })
     }
 }

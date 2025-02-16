@@ -1,3 +1,4 @@
+use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
@@ -38,8 +39,12 @@ impl RCloneConfig {
         })
     }
 
-    pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
-        let repository = RCloneStore::new().await?;
+    pub(crate) async fn connect(
+        &self,
+        local: &LocalRepository,
+        name: &str,
+    ) -> Result<WrappedRepository, InternalError> {
+        let repository = RCloneStore::new(local, name).await?;
         Ok(WrappedRepository::RClone(repository))
     }
 }
