@@ -73,6 +73,12 @@ async fn execute_rclone(
     obs.observe_length(log::Level::Trace, expected_count);
     let mut detail_obs = Observer::without_id("rclone:detail");
 
+    if expected_count == 0 {
+        Observer::without_id("rclone")
+            .observe_termination(log::Level::Info, "no blobs to transfer");
+        return Ok(0);
+    }
+
     let count_clone = Arc::clone(&count);
     let mut files: HashMap<String, Observer<BaseObservable>> = HashMap::new();
     let callback = move |event: RcloneEvent| {

@@ -1,9 +1,9 @@
 use crate::db::models::{InsertFile, InsertMaterialisation};
+use crate::flightdeck::base::BaseObserver;
 use crate::logic::unblobify;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Adder, Local};
 use crate::utils::errors::{AppError, InternalError};
-use amber::flightdeck::base::BaseObserver;
 use futures::stream;
 use std::path::PathBuf;
 use tokio::fs;
