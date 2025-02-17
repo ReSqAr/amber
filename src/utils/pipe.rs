@@ -92,3 +92,33 @@ impl<S, I, EStream> TryForwardIntoExt<I, EStream> for S where
     S: Stream<Item = Result<I, EStream>> + Unpin + Send
 {
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn test_try_forward_into_ext() {
+        let items = vec![
+            Ok::<i32, Box<dyn std::error::Error + Send + Sync>>(1),
+            Ok(2),
+            Ok(3),
+        ];
+        let my_stream = futures::stream::iter(items).boxed();
+
+        let result = my_stream
+            .try_forward_into::<_, _, _, _, Box<dyn std::error::Error + Send + Sync>>(
+                |s| async move {
+                    let mut sum = 0;
+                    futures::pin_mut!(s);
+                    while let Some(x) = s.next().await {
+                        sum += x;
+                    }
+                    Ok::<i32, Box<dyn std::error::Error + Send + Sync>>(sum)
+                },
+            )
+            .await;
+        assert_eq!(result.unwrap(), 6);
+    }
+}
