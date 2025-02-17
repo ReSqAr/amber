@@ -23,32 +23,41 @@ impl TerminalPipe {
             return;
         }
 
-        let msg = lookup_key(&obs.data, "state");
-        let msg = match msg {
-            Some(msg) => msg,
+        let state = match lookup_key(&obs.data, "state") {
+            Some(s) => s,
             None => return,
         };
 
-        let msg = match level {
-            log::Level::Error => msg.red(),
-            log::Level::Warn => msg.yellow(),
-            log::Level::Info => msg.blue(),
-            log::Level::Debug => msg.dimmed(),
-            log::Level::Trace => msg.dimmed(),
-        };
+        let with_color = matches!(self.out, OutputStream::MultiProgress(_));
 
-        let msg = match obs.id {
-            None => msg,
-            Some(id) => format!("{msg} {}", id.bold()).normal(),
-        };
-
-        let msg = if let Some(detail) = lookup_key(&obs.data, "detail") {
-            format!("{msg} {}", detail.normal()).normal()
+        let colored_state = if with_color {
+            match level {
+                log::Level::Error => state.red(),
+                log::Level::Warn => state.yellow(),
+                log::Level::Info => state.blue(),
+                log::Level::Debug => state.dimmed(),
+                log::Level::Trace => state.dimmed(),
+            }
+            .to_string()
         } else {
-            msg
+            state.to_string()
         };
 
-        self.buffer.push(msg.to_string())
+        let mut parts = vec![colored_state];
+
+        if let Some(id) = obs.id {
+            parts.push(if with_color {
+                id.bold().to_string()
+            } else {
+                id
+            });
+        }
+
+        if let Some(detail) = lookup_key(&obs.data, "detail") {
+            parts.push(detail.to_string());
+        }
+
+        self.buffer.push(parts.join(" "));
     }
 
     pub(crate) async fn flush(&mut self) {
