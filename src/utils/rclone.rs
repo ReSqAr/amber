@@ -357,3 +357,98 @@ fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_error_without_object() {
+        let json_line = r#"{"level": "error", "msg": "Something went wrong"}"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::Error(msg) => assert_eq!(msg, "Something went wrong"),
+            _ => panic!("Expected RcloneEvent::Error, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_error_with_object() {
+        let json_line = r#"{"level": "error", "msg": "Error occurred", "object": "file.txt"}"#;
+        let event = parse_rclone_line("stderr", json_line);
+        match event {
+            RcloneEvent::Fail(object) => assert_eq!(object, "file.txt"),
+            _ => panic!("Expected RcloneEvent::Fail, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_stats() {
+        let json_line = r#"{
+            "level": "info",
+            "msg": "",
+            "stats": {
+                "bytes": 1024,
+                "totalBytes": 2048,
+                "eta": 5.0,
+                "transferring": [{"bytes": 512, "name": "file1.txt", "size": 1024}]
+            }
+        }"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::Stats(stats) => {
+                assert_eq!(stats.bytes, 1024);
+                assert_eq!(stats.total_bytes, 2048);
+                assert_eq!(stats.eta, Some(5.0));
+                assert_eq!(stats.transferring.len(), 1);
+                let tp = &stats.transferring[0];
+                assert_eq!(tp.name, "file1.txt");
+                assert_eq!(tp.bytes, 512);
+                assert_eq!(tp.size, 1024);
+            }
+            _ => panic!("Expected RcloneEvent::Stats, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_copied() {
+        let json_line = r#"{"level": "info", "msg": "Copied", "object": "file2.txt"}"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::Copied(object) => assert_eq!(object, "file2.txt"),
+            _ => panic!("Expected RcloneEvent::Copied, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_ok() {
+        let json_line = r#"{"level": "info", "msg": "OK", "object": "file3.txt"}"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::Ok(object) => assert_eq!(object, "file3.txt"),
+            _ => panic!("Expected RcloneEvent::Ok, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_debug() {
+        let json_line = r#"{"level": "debug", "msg": "This is a debug message"}"#;
+        let event = parse_rclone_line("stderr", json_line);
+        match event {
+            RcloneEvent::UnknownDebugMessage(msg) => {
+                assert!(msg.contains("This is a debug message"))
+            }
+            _ => panic!("Expected RcloneEvent::UnknownDebugMessage, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_invalid_json() {
+        let invalid_line = "not a json string";
+        let event = parse_rclone_line("stdout", invalid_line);
+        match event {
+            RcloneEvent::UnknownMessage(msg) => assert_eq!(msg, invalid_line),
+            _ => panic!("Expected RcloneEvent::UnknownMessage, got {:?}", event),
+        }
+    }
+}
