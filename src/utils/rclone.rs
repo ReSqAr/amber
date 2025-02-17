@@ -4,7 +4,7 @@ use base64::Engine;
 use log::debug;
 use serde::Deserialize;
 use std::path::Path;
-use tokio::fs::File;
+use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
@@ -220,7 +220,7 @@ where
     let config_contents = sections.join("\n");
     let config_path = temp_path.join("rclone.conf");
     {
-        let file = File::create(&config_path).await?;
+        let file = fs::File::create(&config_path).await?;
         let mut writer = tokio::io::BufWriter::new(file);
         writer.write_all(config_contents.as_bytes()).await?;
         writer.flush().await?;
@@ -361,6 +361,8 @@ fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+    use tokio::fs;
 
     #[tokio::test]
     async fn test_parse_rclone_line_error_without_object() {
@@ -450,5 +452,70 @@ mod tests {
             RcloneEvent::UnknownMessage(msg) => assert_eq!(msg, invalid_line),
             _ => panic!("Expected RcloneEvent::UnknownMessage, got {:?}", event),
         }
+    }
+
+    #[tokio::test]
+    async fn test_rclone_copy_local_to_local_single_file() -> Result<(), InternalError> {
+        let base_dir = tempdir().expect("failed to create temp dir");
+        let base_path = base_dir.path();
+
+        let source_dir = base_path.join("source");
+        let dest_dir = base_path.join("dest");
+        fs::create_dir_all(&source_dir).await?;
+        fs::create_dir_all(&dest_dir).await?;
+
+        let source_file = source_dir.join("test.txt");
+        let file_content = b"Hello from rclone test";
+        fs::write(&source_file, file_content).await?;
+
+        let file_list_path = base_path.join("filelist.txt");
+        let mut file_list = fs::File::create(&file_list_path).await?;
+        file_list.write_all(b"test.txt\n").await?;
+        file_list.flush().await?;
+
+        let rclone_temp_dir = base_path.join("rclone_temp");
+        fs::create_dir_all(&rclone_temp_dir).await?;
+
+        let source_config = LocalConfig {
+            path: source_dir.to_string_lossy().into_owned(),
+        };
+        let dest_config = LocalConfig {
+            path: dest_dir.to_string_lossy().into_owned(),
+        };
+
+        let source_target = RcloneTarget::Local(source_config);
+        let dest_target = RcloneTarget::Local(dest_config);
+
+        let callback = |_event: RcloneEvent| {};
+
+        // run rclone
+        run_rclone(
+            Operation::Copy,
+            &rclone_temp_dir,
+            &file_list_path,
+            source_target,
+            dest_target,
+            callback,
+        )
+        .await
+        .expect("rclone copy failed");
+
+        // check that the file now exists in the destination directory
+        let dest_file = dest_dir.join("test.txt");
+        let metadata = fs::metadata(&dest_file).await;
+        assert!(
+            metadata.is_ok(),
+            "Destination file was not created: {:?}",
+            dest_file
+        );
+
+        // check that the copied file's content matches.
+        let copied_content = fs::read(&dest_file).await?;
+        assert_eq!(
+            copied_content, file_content,
+            "The copied file content does not match the source."
+        );
+
+        Ok(())
     }
 }
