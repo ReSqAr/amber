@@ -2,6 +2,7 @@ pub(crate) mod add;
 pub(crate) mod assimilate;
 pub(crate) mod blobify;
 pub(crate) mod files;
+pub(crate) mod fs;
 pub(crate) mod fsck_local;
 pub(crate) mod fsck_remote;
 pub(crate) mod materialise;
