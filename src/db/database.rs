@@ -691,49 +691,75 @@ impl Database {
 
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "
-                INSERT OR REPLACE INTO virtual_filesystem (
-                    path,
-                    materialisation_last_blob_id,
-                    target_blob_id,
-                    target_blob_size,
-                    local_has_target_blob
+            INSERT OR REPLACE INTO virtual_filesystem (
+                path,
+                materialisation_last_blob_id,
+                target_blob_id,
+                target_blob_size,
+                local_has_target_blob
+            )
+            WITH
+                locally_available_blobs AS (
+                    SELECT
+                        blob_id,
+                        blob_size
+                    FROM latest_available_blobs
+                        INNER JOIN current_repository USING (repo_id)
+                ),
+                latest_filesystem_files_with_materialisation_and_availability AS (
+                    SELECT
+                        path,
+                        m.blob_id as materialisation_last_blob_id,
+                        CASE
+                            WHEN a.blob_id IS NOT NULL THEN TRUE
+                            ELSE FALSE
+                            END AS local_has_blob,
+                        f.blob_id,
+                        blob_size
+                    FROM latest_filesystem_files f
+                        LEFT JOIN locally_available_blobs a USING (blob_id)
+                        LEFT JOIN latest_materialisations m USING (path)
+                    UNION ALL
+                    SELECT -- files which have are supposed to be deleted but still have a materialisation
+                           path,
+                           m.blob_id as materialisation_last_blob_id,
+                           FALSE AS local_has_blob,
+                           NULL AS blob_id,
+                           NULL AS blob_size
+                    FROM latest_materialisations m
+                        LEFT JOIN latest_filesystem_files f USING (path)
+                    WHERE f.blob_id IS NULL
                 )
-                WITH
-                    locally_available_blobs AS (
-                        SELECT
-                            blob_id,
-                            blob_size
-                        FROM latest_available_blobs
-                            INNER JOIN current_repository USING (repo_id)
-                    ),
-                    all_files AS (
-                        SELECT
-                            path,
-                            m.blob_id as materialisation_last_blob_id,
-                            CASE
-                                WHEN a.blob_id IS NOT NULL THEN TRUE
-                                ELSE FALSE
-                                END AS local_has_blob,
-                            f.blob_id,
-                            blob_size
-                        FROM latest_filesystem_files f
-                            LEFT JOIN locally_available_blobs a ON f.blob_id = a.blob_id
-                            FULL OUTER JOIN latest_materialisations m USING (path)
-                    )
-                SELECT
-                    path,
-                    a.materialisation_last_blob_id,
-                    a.blob_id as target_blob_id,
-                    a.blob_size as target_blob_size,
-                    a.local_has_blob as local_has_target_blob
-                FROM all_files a
-                    FULL OUTER JOIN virtual_filesystem vfs USING (path)
-                WHERE
-                    a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
-                    OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
-                    OR a.blob_size IS DISTINCT FROM vfs.target_blob_size
-                    OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
-                ;
+            SELECT
+                path,
+                a.materialisation_last_blob_id,
+                a.blob_id as target_blob_id,
+                a.blob_size as target_blob_size,
+                a.local_has_blob as local_has_target_blob
+            FROM latest_filesystem_files_with_materialisation_and_availability a
+                LEFT JOIN virtual_filesystem vfs USING (path)
+            WHERE
+                  a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
+               OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
+               OR a.blob_size IS DISTINCT FROM vfs.target_blob_size
+               OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
+            UNION ALL
+            SELECT -- file which are not tracked - but have been deleted in the files table + no materialisation
+                path,
+                NULL AS materialisation_last_blob_id,
+                NULL as target_blob_id,
+                NULL as target_blob_size,
+                FALSE as local_has_target_blob
+            FROM virtual_filesystem vfs
+                LEFT JOIN latest_filesystem_files_with_materialisation_and_availability a USING (path)
+            WHERE
+                a.path IS NULL
+                AND (
+                      NULL IS DISTINCT FROM vfs.materialisation_last_blob_id
+                   OR NULL IS DISTINCT FROM vfs.target_blob_id
+                   OR NULL IS DISTINCT FROM vfs.target_blob_size
+                   OR FALSE IS DISTINCT FROM vfs.local_has_target_blob
+                );
      ";
 
         let result = sqlx::query(query).execute(&self.pool).await?;
