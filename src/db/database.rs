@@ -760,8 +760,7 @@ impl Database {
                    OR NULL IS DISTINCT FROM vfs.target_blob_id
                    OR NULL IS DISTINCT FROM vfs.target_blob_size
                    OR FALSE IS DISTINCT FROM vfs.local_has_target_blob
-                );
-     ";
+                );";
 
         let result = sqlx::query(query).execute(&self.pool).await?;
         debug!(

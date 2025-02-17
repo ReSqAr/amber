@@ -795,6 +795,11 @@ async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
         @a assert_does_not_exist test-b.txt
         @b assert_does_not_exist test-a.txt
         @b assert_does_not_exist test-b.txt
+
+        @a amber status
+        assert_output_contains "no files detected"
+        @b amber status
+        assert_output_contains "no files detected"
     "#;
     run_dsl_script(script).await
 }
