@@ -93,7 +93,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logic::assimilate::{assimilate, Item};
     use crate::repository::local::LocalRepository;
     use tempfile::tempdir;
     use tokio::fs;

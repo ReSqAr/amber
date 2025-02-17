@@ -39,3 +39,18 @@ impl AsRef<Path> for RepoPath {
         self.absolute.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::path::RepoPath;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_repo_path_join() {
+        let root = PathBuf::from("/my/repo");
+        let repo_path = RepoPath::from_root(root.clone());
+        let sub = repo_path.join("subdir/file.txt");
+        assert_eq!(sub.rel().to_string_lossy(), "subdir/file.txt");
+        assert_eq!(sub.abs().to_string_lossy(), "/my/repo/subdir/file.txt");
+    }
+}

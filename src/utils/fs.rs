@@ -18,3 +18,25 @@ pub(crate) async fn are_hardlinked(
     );
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::fs::are_hardlinked;
+    use tempfile::tempdir;
+    use tokio::fs;
+
+    #[tokio::test]
+    async fn test_are_hardlinked() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("file.txt");
+        fs::write(&file_path, "content").await?;
+
+        let hardlink_path = dir.path().join("hardlink.txt");
+        fs::hard_link(&file_path, &hardlink_path).await?;
+
+        let linked = are_hardlinked(&file_path, &hardlink_path).await.unwrap();
+        assert!(linked);
+
+        Ok(())
+    }
+}
