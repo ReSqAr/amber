@@ -13,7 +13,8 @@ use tokio_stream::wrappers::ReceiverStream;
 pub async fn materialise(
     local: &(impl Metadata + Local + Adder + VirtualFilesystem + Config + Clone + Send + Sync + 'static),
 ) -> Result<(), InternalError> {
-    let mut count = 0;
+    let mut materialised_count = 0;
+    let mut deleted_count = 0;
     let start_time = tokio::time::Instant::now();
     let mut materialise_obs = BaseObserver::without_id("materialise");
 
@@ -83,6 +84,11 @@ pub async fn materialise(
             }
         });
 
+        enum Action {
+            Materialised,
+            Deleted,
+        }
+
         let mat_tx = mat_tx.clone();
         let stream = tokio_stream::StreamExt::map(
             stream,
@@ -96,7 +102,7 @@ pub async fn materialise(
                     let target_path = local.root().join(path.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.clone());
 
-                    match target_blob_id.clone() {
+                    let action = match target_blob_id.clone() {
                         Some(target_blob_id) => {
                             let object_path = local.blob_path(&target_blob_id);
                             if fs::metadata(&target_path)
@@ -120,6 +126,8 @@ pub async fn materialise(
                                 "materialised",
                                 [("blob_id".into(), target_blob_id.clone())],
                             );
+
+                            Action::Materialised
                         }
                         None => {
                             if fs::metadata(&target_path)
@@ -130,8 +138,10 @@ pub async fn materialise(
                                 fs::remove_file(&target_path).await?;
                                 o.observe_termination(log::Level::Info, "deleted");
                             }
+
+                            Action::Deleted
                         }
-                    }
+                    };
 
                     let mat = InsertMaterialisation {
                         path: path.clone(),
@@ -140,7 +150,7 @@ pub async fn materialise(
                     };
                     mat_tx.send(mat).await?;
 
-                    Ok::<(), InternalError>(())
+                    Ok::<Action, InternalError>(action)
                 }
             },
         );
@@ -153,17 +163,27 @@ pub async fn materialise(
 
         pin_mut!(stream);
         while let Some(next) = tokio_stream::StreamExt::next(&mut stream).await {
-            next?;
-            count += 1;
-            materialise_obs.observe_position(log::Level::Trace, count);
+            match next? {
+                Action::Materialised => materialised_count += 1,
+                Action::Deleted => deleted_count += 1,
+            }
+            materialise_obs.observe_position(log::Level::Trace, materialised_count + deleted_count);
         }
 
         state_handle.await??;
     }
 
-    let duration = start_time.elapsed();
-    let msg = if count > 0 {
-        format!("materialised {count} files in {duration:.2?}")
+    let mut parts = Vec::new();
+    if materialised_count > 0 {
+        parts.push(format!("materialised {} files", materialised_count))
+    }
+    if deleted_count > 0 {
+        parts.push(format!("deleted {} files", deleted_count))
+    }
+
+    let msg = if !parts.is_empty() {
+        let duration = start_time.elapsed();
+        format!("{} in {duration:.2?}", parts.join(" and "))
     } else {
         "no new files materialised".into()
     };

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 pub async fn fsck(
     maybe_root: Option<PathBuf>,
     connection_name: Option<String>,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let root_path = local.root().abs().clone();
@@ -40,7 +41,15 @@ pub async fn fsck(
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, None).await
+    flightdeck::flightdeck(
+        wrapped,
+        root_builders(&root_path),
+        log_path,
+        None,
+        None,
+        output,
+    )
+    .await
 }
 
 fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {

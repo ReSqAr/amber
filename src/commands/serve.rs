@@ -26,7 +26,10 @@ pub fn generate_auth_key() -> String {
         .collect()
 }
 
-pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
+pub async fn serve(
+    maybe_root: Option<PathBuf>,
+    output: crate::flightdeck::output::Output,
+) -> Result<(), InternalError> {
     let local_repository = match LocalRepository::new(maybe_root).await {
         Ok(local_repository) => local_repository,
         Err(e) => {
@@ -38,7 +41,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
                     object: format!("{error:?}"),
                     e: e.to_string(),
                 })?;
-            println!("{}", json);
+            output.println(json.to_string());
             return Err(e);
         }
     };
@@ -57,7 +60,7 @@ pub async fn serve(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
         object: format!("{report:?}"),
         e: e.to_string(),
     })?;
-    println!("{}", json);
+    output.println(json.to_string());
     std::io::stdout().flush()?;
 
     // Create a future that listens for SIGHUP signals

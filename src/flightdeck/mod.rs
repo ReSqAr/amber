@@ -1,5 +1,7 @@
 use crate::flightdeck::global::{send_shutdown_signal, Flow, GLOBAL_LOGGER};
 use crate::flightdeck::observation::Message;
+use output::Output;
+use output::OutputStream;
 use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
 use pipes::terminal::TerminalPipe;
@@ -13,6 +15,7 @@ pub mod global;
 pub mod layout;
 pub mod observation;
 pub mod observer;
+pub mod output;
 pub mod pipes;
 
 const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -28,12 +31,18 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     path: impl Into<Option<PathBuf>>,
     file_level_filter: Option<log::LevelFilter>,
     terminal_level_filter: Option<log::LevelFilter>,
+    output: Output,
 ) -> Result<(), E> {
-    let multi = if std::io::stdout().is_terminal() {
-        let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
-        Some(indicatif::MultiProgress::with_draw_target(draw_target))
-    } else {
-        None
+    let multi = match output {
+        Output::Default => {
+            if std::io::stdout().is_terminal() {
+                let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
+                Some(indicatif::MultiProgress::with_draw_target(draw_target))
+            } else {
+                None
+            }
+        }
+        Output::Override(_) => None,
     };
 
     let path = path.into();
@@ -45,7 +54,10 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
             flightdeck
         };
         let flightdeck = flightdeck.with_terminal(
-            multi.clone(),
+            match multi.clone() {
+                None => OutputStream::Output(output),
+                Some(mp) => OutputStream::MultiProgress(mp),
+            },
             terminal_level_filter.unwrap_or(log::LevelFilter::Info),
         );
         let mut flightdeck = match path {
@@ -105,15 +117,11 @@ impl FlightDeck {
         }
     }
 
-    pub fn with_terminal(
-        self,
-        multi: Option<indicatif::MultiProgress>,
-        level_filter: log::LevelFilter,
-    ) -> Self {
+    pub fn with_terminal(self, output: OutputStream, level_filter: log::LevelFilter) -> Self {
         Self {
             manager: self
                 .manager
-                .set_terminal(TerminalPipe::new(multi, level_filter)),
+                .set_terminal(TerminalPipe::new(output, level_filter)),
         }
     }
 

@@ -16,6 +16,7 @@ use std::path::PathBuf;
 pub async fn pull(
     maybe_root: Option<PathBuf>,
     connection_name: String,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
@@ -58,7 +59,7 @@ pub async fn pull(
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None).await
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

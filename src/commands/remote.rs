@@ -18,12 +18,15 @@ fn render_connection_type(connection_type: ConnectionType) -> String {
     }
 }
 
-pub async fn list(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
+pub async fn list(
+    maybe_root: Option<PathBuf>,
+    output: flightdeck::output::Output,
+) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let mut connections = local_repository.list().await?;
 
     if connections.is_empty() {
-        println!("No connections found.");
+        output.println("No connections found.".to_string());
     } else {
         let mut table = comfy_table::Table::new();
         table.load_preset(comfy_table::presets::UTF8_FULL);
@@ -38,7 +41,7 @@ pub async fn list(maybe_root: Option<PathBuf>) -> Result<(), InternalError> {
             ]);
         }
 
-        println!("{table}");
+        output.println(format!("{table}"));
     }
 
     Ok(())
@@ -49,6 +52,7 @@ pub async fn add(
     name: String,
     connection_type: ConnectionType,
     parameter: String,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
@@ -77,7 +81,7 @@ pub async fn add(
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), None, None, None).await?;
+    flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await?;
 
     Ok(())
 }

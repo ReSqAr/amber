@@ -5,7 +5,11 @@ use crate::utils::errors::InternalError;
 use futures::stream;
 use std::path::PathBuf;
 
-pub async fn set_name(maybe_root: Option<PathBuf>, name: String) -> Result<(), InternalError> {
+pub async fn set_name(
+    maybe_root: Option<PathBuf>,
+    name: String,
+    output: crate::flightdeck::output::Output,
+) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
 
     let meta = local_repository.current().await?;
@@ -18,7 +22,7 @@ pub async fn set_name(maybe_root: Option<PathBuf>, name: String) -> Result<(), I
         }]))
         .await?;
 
-    println!("renamed repository to {}", name);
+    output.println(format!("renamed repository to {}", name));
 
     Ok(())
 }

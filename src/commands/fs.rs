@@ -13,6 +13,7 @@ pub(crate) async fn rm(
     maybe_root: Option<PathBuf>,
     files: Vec<PathBuf>,
     soft: bool,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let root_path = local.root().abs().clone();
@@ -36,7 +37,15 @@ pub(crate) async fn rm(
         Ok(())
     };
 
-    flightdeck::flightdeck(wrapped, rm_root_builders(&root_path), log_path, None, None).await
+    flightdeck::flightdeck(
+        wrapped,
+        rm_root_builders(&root_path),
+        log_path,
+        None,
+        None,
+        output,
+    )
+    .await
 }
 
 fn rm_root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
@@ -68,6 +77,7 @@ pub(crate) async fn mv(
     maybe_root: Option<PathBuf>,
     source: PathBuf,
     destination: PathBuf,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
@@ -86,5 +96,5 @@ pub(crate) async fn mv(
         Ok(())
     };
 
-    flightdeck::flightdeck(wrapped, [], log_path, None, None).await
+    flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await
 }

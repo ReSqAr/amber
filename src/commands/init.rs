@@ -11,6 +11,7 @@ use std::path::PathBuf;
 pub async fn init_repository(
     maybe_root: Option<PathBuf>,
     name: String,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let wrapped = async {
         let mut init_obs = BaseObserver::without_id("init");
@@ -27,7 +28,7 @@ pub async fn init_repository(
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), None, None, None).await
+    flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

@@ -12,6 +12,7 @@ pub async fn add(
     maybe_root: Option<PathBuf>,
     skip_deduplication: bool,
     verbose: bool,
+    output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local_repository = LocalRepository::new(maybe_root).await?;
     let root_path = local_repository.root().abs().clone();
@@ -26,7 +27,15 @@ pub async fn add(
         true => Some(log::LevelFilter::Debug),
         false => None,
     };
-    flightdeck::flightdeck(wrapped, root_builders(&root_path), log_path, None, terminal).await
+    flightdeck::flightdeck(
+        wrapped,
+        root_builders(&root_path),
+        log_path,
+        None,
+        terminal,
+        output,
+    )
+    .await
 }
 
 fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {

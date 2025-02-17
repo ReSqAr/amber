@@ -1,20 +1,18 @@
 use crate::flightdeck::observation::{Data, Observation, Value};
+use crate::flightdeck::output::OutputStream;
 use colored::*;
 use tokio::task;
 
 pub struct TerminalPipe {
-    multi: Option<indicatif::MultiProgress>,
     level_filter: log::LevelFilter,
+    out: OutputStream,
     buffer: Vec<String>,
 }
 
 impl TerminalPipe {
-    pub(crate) fn new(
-        multi: Option<indicatif::MultiProgress>,
-        level_filter: log::LevelFilter,
-    ) -> Self {
+    pub(crate) fn new(out: OutputStream, level_filter: log::LevelFilter) -> Self {
         Self {
-            multi,
+            out,
             level_filter,
             buffer: vec![],
         }
@@ -50,7 +48,7 @@ impl TerminalPipe {
             msg
         };
 
-        self.buffer.push(msg.to_string() + "\n")
+        self.buffer.push(msg.to_string())
     }
 
     pub(crate) async fn flush(&mut self) {
@@ -58,21 +56,28 @@ impl TerminalPipe {
             return;
         }
 
-        let data = self.buffer.concat();
+        let data = self.buffer.join("\n");
         self.buffer.clear();
 
-        let multi = self.multi.clone();
-        match multi {
-            None => match task::spawn_blocking(move || print!("{}", data)).await {
-                Ok(()) => {}
-                Err(e) => log::error!("could not write to the terminal: {}", e),
-            },
-            Some(multi) => match task::spawn_blocking(move || multi.println(&data)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => log::error!("could not write to the terminal via indactif: {}", e),
-                Err(e) => log::error!("could not write to the terminal: {}", e),
-            },
-        };
+        match &self.out {
+            OutputStream::MultiProgress(multi) => {
+                let multi = multi.clone();
+                match task::spawn_blocking(move || multi.println(&data)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        log::error!("could not write to the terminal via indactif: {}", e)
+                    }
+                    Err(e) => log::error!("could not write to the terminal: {}", e),
+                }
+            }
+            OutputStream::Output(output) => {
+                let output = output.clone();
+                match task::spawn_blocking(move || output.println(data.to_string())).await {
+                    Ok(()) => {}
+                    Err(e) => log::error!("could not write to the terminal: {}", e),
+                }
+            }
+        }
     }
 
     pub(crate) async fn finish(&mut self) {

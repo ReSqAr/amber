@@ -1,3 +1,4 @@
+use crate::utils::errors::InternalError;
 use crate::{commands, db};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -8,17 +9,17 @@ use std::process;
 #[command(author = "Yasin Zähringer <yasin@yhjz.de>")]
 #[command(version = "1.0")]
 #[command(about = "distribute blobs", long_about = None)]
-struct Cli {
+pub struct Cli {
     /// Optional path to the repository
     #[arg(long)]
-    path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum Commands {
     Init {
         name: String,
     },
@@ -71,7 +72,7 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum RemoteCommands {
+pub enum RemoteCommands {
     Add {
         name: String,
         #[arg(value_enum)]
@@ -82,12 +83,12 @@ enum RemoteCommands {
 }
 
 #[derive(Subcommand)]
-enum ConfigCommands {
+pub enum ConfigCommands {
     Name { name: String },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
-enum ConnectionType {
+pub enum ConnectionType {
     Local,
     Rclone,
     Ssh,
@@ -106,41 +107,59 @@ impl From<ConnectionType> for db::models::ConnectionType {
 pub async fn run() {
     let cli = Cli::parse();
 
-    let result = match cli.command {
-        Commands::Init { name } => commands::init::init_repository(cli.path, name).await,
+    if let Err(err) = run_cli(cli, crate::flightdeck::output::Output::default()).await {
+        eprintln!("\nerror: {}", err);
+        process::exit(1);
+    }
+}
+
+pub async fn run_cli(
+    cli: Cli,
+    output: crate::flightdeck::output::Output,
+) -> Result<(), InternalError> {
+    match cli.command {
+        Commands::Init { name } => commands::init::init_repository(cli.path, name, output).await,
         Commands::Add {
             skip_deduplication,
             verbose,
-        } => commands::add::add(cli.path, skip_deduplication, verbose).await,
-        Commands::Remove { files, soft } => commands::fs::rm(cli.path, files, soft).await,
+        } => commands::add::add(cli.path, skip_deduplication, verbose, output).await,
+        Commands::Remove { files, soft } => commands::fs::rm(cli.path, files, soft, output).await,
         Commands::Move {
             source,
             destination,
-        } => commands::fs::mv(cli.path, source, destination).await,
-        Commands::Status { verbose } => commands::status::status(cli.path, verbose).await,
+        } => commands::fs::mv(cli.path, source, destination, output).await,
+        Commands::Status { verbose } => commands::status::status(cli.path, verbose, output).await,
         Commands::Missing { connection_name } => {
-            commands::missing::missing(cli.path, connection_name).await
+            commands::missing::missing(cli.path, connection_name, output).await
         }
-        Commands::Serve {} => commands::serve::serve(cli.path).await,
-        Commands::Sync { connection_name } => commands::sync::sync(cli.path, connection_name).await,
-        Commands::Pull { connection_name } => commands::pull::pull(cli.path, connection_name).await,
-        Commands::Push { connection_name } => commands::push::push(cli.path, connection_name).await,
-        Commands::Fsck { connection_name } => commands::fsck::fsck(cli.path, connection_name).await,
+        Commands::Serve {} => commands::serve::serve(cli.path, output).await,
+        Commands::Sync { connection_name } => {
+            commands::sync::sync(cli.path, connection_name, output).await
+        }
+        Commands::Pull { connection_name } => {
+            commands::pull::pull(cli.path, connection_name, output).await
+        }
+        Commands::Push { connection_name } => {
+            commands::push::push(cli.path, connection_name, output).await
+        }
+        Commands::Fsck { connection_name } => {
+            commands::fsck::fsck(cli.path, connection_name, output).await
+        }
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
                 name,
                 connection_type,
                 parameter,
-            } => commands::remote::add(cli.path, name, connection_type.into(), parameter).await,
-            RemoteCommands::List {} => commands::remote::list(cli.path).await,
+            } => {
+                commands::remote::add(cli.path, name, connection_type.into(), parameter, output)
+                    .await
+            }
+            RemoteCommands::List {} => commands::remote::list(cli.path, output).await,
         },
         Commands::Config { command } => match command {
-            ConfigCommands::Name { name } => commands::config::set_name(cli.path, name).await,
+            ConfigCommands::Name { name } => {
+                commands::config::set_name(cli.path, name, output).await
+            }
         },
-    };
-
-    if let Err(err) = result {
-        eprintln!("\nerror: {}", err);
-        process::exit(1);
     }
 }

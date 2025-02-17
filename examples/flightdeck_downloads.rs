@@ -3,6 +3,7 @@ use amber::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObservable, BaseObservation, StateTransformer, TerminationAction,
 };
 use amber::flightdeck::observer::Observer;
+use amber::flightdeck::output::Output;
 use amber::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use std::path::PathBuf;
 use std::sync::{
@@ -31,6 +32,7 @@ async fn main() {
         log_path,
         None,
         None,
+        Output::default(),
     )
     .await
     .expect("Failed to run flightdeck");
