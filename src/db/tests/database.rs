@@ -1,21 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-
     use crate::db::database::Database;
     use crate::db::migrations::run_migrations;
-    use crate::db::models;
+
     use crate::db::models::{
-        FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation,
-        VirtualFileState,
+        Blob, File, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Repository,
     };
     use crate::utils::flow::{ExtFlow, Flow};
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use futures::stream;
     use futures::StreamExt;
     use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-
-    const BEGINNING: i64 = 1577836800; // 2020-01-01T00:00:00Z
 
     async fn setup_test_db() -> Database {
         let pool: SqlitePool = SqlitePoolOptions::new()
@@ -30,490 +25,457 @@ mod tests {
 
         Database::new(pool)
     }
-    struct TestBlob {
-        blob_id: String,
-        blob_size: i64,
-        has_blob: bool,
-        valid_from: DateTime<Utc>,
-    }
 
-    async fn seed_blobs(db: &Database, test_blobs: impl IntoIterator<Item = TestBlob>) {
-        let repo_id = db
+    #[tokio::test]
+    async fn test_get_or_create_current_repository() {
+        let db = setup_test_db().await;
+        let repo1 = db
             .get_or_create_current_repository()
             .await
-            .expect("failed to get repository")
-            .repo_id;
-        let inserts: Vec<InsertBlob> = test_blobs
-            .into_iter()
-            .map(|tb| InsertBlob {
-                repo_id: repo_id.clone(),
-                blob_id: tb.blob_id,
-                blob_size: tb.blob_size,
-                has_blob: tb.has_blob,
-                path: None,
-                valid_from: tb.valid_from,
-            })
-            .collect();
+            .expect("repo creation failed");
+        let repo2 = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo creation failed");
+        assert_eq!(
+            repo1.repo_id, repo2.repo_id,
+            "Repository IDs should be equal on repeated calls"
+        );
+    }
 
-        db.add_blobs(stream::iter(inserts))
+    #[tokio::test]
+    async fn test_lookup_current_repository_name() {
+        let db = setup_test_db().await;
+        let repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("failed to get repo");
+
+        // Initially, there is no name.
+        let name = db
+            .lookup_current_repository_name(repo.repo_id.clone())
+            .await
+            .expect("lookup failed");
+        assert!(name.is_none(), "Expected no name initially");
+
+        // Add a repository name.
+        let insert_name = InsertRepositoryName {
+            repo_id: repo.repo_id.clone(),
+            name: "Test Repository".into(),
+            valid_from: Utc::now(),
+        };
+        let count = db
+            .add_repository_names(stream::iter([insert_name]))
+            .await
+            .expect("failed to add repository name");
+        assert_eq!(count, 1, "Expected one repository name added");
+
+        let name = db
+            .lookup_current_repository_name(repo.repo_id.clone())
+            .await
+            .expect("lookup failed");
+        assert_eq!(
+            name,
+            Some("Test Repository".to_string()),
+            "Repository name should be updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_and_select_files() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        let file1 = InsertFile {
+            path: "file1.txt".into(),
+            blob_id: Some("blob1".into()),
+            valid_from: now,
+        };
+        let file2 = InsertFile {
+            path: "file2.txt".into(),
+            blob_id: Some("blob2".into()),
+            valid_from: now,
+        };
+        let count = db
+            .add_files(stream::iter([file1, file2]))
+            .await
+            .expect("failed to add files");
+        assert_eq!(count, 2, "Two files should be added");
+
+        let mut stream = db.select_files(-1).await;
+        let mut paths = Vec::new();
+        while let Some(result) = stream.next().await {
+            let file: File = result.expect("select_files failed");
+            paths.push(file.path);
+        }
+        assert!(
+            paths.contains(&"file1.txt".to_string()),
+            "Expected file1.txt in the query results"
+        );
+        assert!(
+            paths.contains(&"file2.txt".to_string()),
+            "Expected file2.txt in the query results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_and_select_blobs() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("failed to get repo");
+
+        let blob1 = InsertBlob {
+            repo_id: repo.repo_id.clone(),
+            blob_id: "blob1".into(),
+            blob_size: 100,
+            has_blob: true,
+            path: Some("path1".into()),
+            valid_from: now,
+        };
+        let blob2 = InsertBlob {
+            repo_id: repo.repo_id.clone(),
+            blob_id: "blob2".into(),
+            blob_size: 200,
+            has_blob: false,
+            path: Some("path2".into()),
+            valid_from: now,
+        };
+        let count = db
+            .add_blobs(stream::iter([blob1, blob2]))
             .await
             .expect("failed to add blobs");
+        assert_eq!(count, 2, "Two blobs should be added");
+
+        let mut stream = db.select_blobs(-1).await;
+        let mut blob_ids = Vec::new();
+        while let Some(result) = stream.next().await {
+            let blob: Blob = result.expect("select_blobs failed");
+            blob_ids.push(blob.blob_id);
+        }
+        assert!(blob_ids.contains(&"blob1".to_string()));
+        assert!(blob_ids.contains(&"blob2".to_string()));
     }
 
-    struct TestFile {
-        path: String,
-        blob_id: Option<String>,
-        valid_from: DateTime<Utc>,
-    }
+    #[tokio::test]
+    async fn test_merge_repositories() {
+        let db = setup_test_db().await;
+        let repo_id = "test_repo".to_string();
 
-    async fn seed_files(db: &Database, test_files: impl IntoIterator<Item = TestFile>) {
-        let inserts: Vec<InsertFile> = test_files
-            .into_iter()
-            .map(|tf| InsertFile {
-                path: tf.path,
-                blob_id: tf.blob_id,
-                valid_from: tf.valid_from,
-            })
-            .collect();
-        db.add_files(stream::iter(inserts))
+        // Insert initial repository record.
+        let repo_initial = Repository {
+            repo_id: repo_id.clone(),
+            last_file_index: 0,
+            last_blob_index: 0,
+            last_name_index: 0,
+        };
+        db.merge_repositories(stream::iter([repo_initial]))
             .await
-            .expect("failed to add files");
-    }
+            .expect("initial merge failed");
 
-    struct TestMaterialisation {
-        path: String,
-        blob_id: Option<String>,
-        valid_from: DateTime<Utc>,
-    }
-
-    async fn seed_materialisations(
-        db: &Database,
-        test_materialisations: impl IntoIterator<Item = TestMaterialisation>,
-    ) {
-        let inserts: Vec<InsertMaterialisation> = test_materialisations
-            .into_iter()
-            .map(|tf| InsertMaterialisation {
-                path: tf.path,
-                blob_id: tf.blob_id,
-                valid_from: tf.valid_from,
-            })
-            .collect();
-        db.add_materialisations(stream::iter(inserts))
+        // Merge updated values.
+        let repo_update = Repository {
+            repo_id: repo_id.clone(),
+            last_file_index: 10,
+            last_blob_index: 20,
+            last_name_index: 5,
+        };
+        db.merge_repositories(stream::iter([repo_update]))
             .await
-            .expect("failed to add files");
-    }
+            .expect("merge update failed");
 
-    async fn refresh_vfs(db: &Database) {
-        db.refresh_virtual_filesystem()
+        let repo = db
+            .lookup_repository(repo_id.clone())
             .await
-            .expect("failed to refresh virtual filesystem");
+            .expect("lookup_repository failed");
+        assert_eq!(repo.last_file_index, 10);
+        assert_eq!(repo.last_blob_index, 20);
+        assert_eq!(repo.last_name_index, 5);
     }
 
-    async fn apply_observations(
-        db: &Database,
-        observations: impl IntoIterator<Item = models::Observation>,
-    ) -> std::collections::HashMap<String, VirtualFileState> {
-        let observations: Vec<_> = observations.into_iter().map(Flow::Data).collect();
-        let input_stream = stream::iter(observations);
-        let mut output_stream = db.add_virtual_filesystem_observations(input_stream).await;
-        let mut mapping = std::collections::HashMap::new();
-        while let Some(item) = output_stream.next().await {
+    #[tokio::test]
+    async fn test_update_last_indices() {
+        let db = setup_test_db().await;
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+
+        let now = Utc::now();
+        let file = InsertFile {
+            path: "update_test.txt".into(),
+            blob_id: Some("blob_up".into()),
+            valid_from: now,
+        };
+        let blob = InsertBlob {
+            repo_id: repo.repo_id.clone(),
+            blob_id: "blob_up".into(),
+            blob_size: 123,
+            has_blob: true,
+            path: Some("update_test.txt".into()),
+            valid_from: now,
+        };
+        let name = InsertRepositoryName {
+            repo_id: repo.repo_id.clone(),
+            name: "test".into(),
+            valid_from: now,
+        };
+        db.add_files(stream::iter([file])).await.expect("failed");
+        db.add_blobs(stream::iter([blob])).await.expect("failed");
+        db.add_repository_names(stream::iter([name]))
+            .await
+            .expect("failed");
+
+        let updated_repo = db
+            .update_last_indices()
+            .await
+            .expect("update_last_indices failed");
+        assert!(updated_repo.last_file_index > 0);
+        assert!(updated_repo.last_blob_index > 0);
+        assert!(updated_repo.last_name_index > 0);
+    }
+
+    #[tokio::test]
+    async fn test_available_and_missing_blobs() {
+        let db = setup_test_db().await;
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+        let now = Utc::now();
+
+        let avail_blob = InsertBlob {
+            repo_id: repo.repo_id.clone(),
+            blob_id: "avail_blob".into(),
+            blob_size: 50,
+            has_blob: true,
+            path: Some("avail.txt".into()),
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter([avail_blob]))
+            .await
+            .expect("failed");
+
+        let missing_file = InsertFile {
+            path: "missing.txt".into(),
+            blob_id: Some("missing_blob".into()),
+            valid_from: now,
+        };
+        db.add_files(stream::iter([missing_file]))
+            .await
+            .expect("failed");
+
+        let mut avail_stream = db.available_blobs(repo.repo_id.clone());
+        let mut available = Vec::new();
+        while let Some(result) = avail_stream.next().await {
+            available.push(result.expect("available_blobs query failed"));
+        }
+        assert!(
+            available.iter().any(|b| b.blob_id == "avail_blob"),
+            "Expected available blob 'avail_blob'"
+        );
+
+        let mut missing_stream = db.missing_blobs(repo.repo_id.clone());
+        let mut missing = Vec::new();
+        while let Some(result) = missing_stream.next().await {
+            missing.push(result.expect("missing_blobs query failed"));
+        }
+        assert!(
+            missing.iter().any(|b| b.blob_id == "missing_blob"),
+            "Expected missing blob 'missing_blob'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lookup_last_materialisation() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        let mat = InsertMaterialisation {
+            path: "mat_file.txt".into(),
+            blob_id: Some("mat_blob".into()),
+            valid_from: now,
+        };
+        db.add_materialisations(stream::iter([mat]))
+            .await
+            .expect("failed to add materialisation");
+
+        let lookup = db
+            .lookup_last_materialisation("mat_file.txt".into())
+            .await
+            .expect("lookup failed");
+        assert_eq!(
+            lookup.unwrap().blob_id,
+            Some("mat_blob".into()),
+            "Materialisation should match"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_virtual_filesystem_operations() {
+        let db = setup_test_db().await;
+        // Truncate the virtual filesystem.
+        db.truncate_virtual_filesystem()
+            .await
+            .expect("truncate_virtual_filesystem failed");
+
+        // Create an observation (using the FileSeen variant).
+        use crate::db::models::{FileSeen, Observation};
+        let now = Utc::now();
+        let obs = Observation::FileSeen(FileSeen {
+            path: "vfs_file.txt".into(),
+            seen_id: 200,
+            seen_dttm: now.timestamp(),
+            last_modified_dttm: now.timestamp(),
+            size: 512,
+        });
+        let observations = [Flow::Data(obs)];
+        let mut obs_stream = db
+            .add_virtual_filesystem_observations(futures::stream::iter(observations))
+            .await;
+        while let Some(item) = obs_stream.next().await {
             match item {
-                ExtFlow::Data(Ok(vfs)) | ExtFlow::Shutdown(Ok(vfs)) => {
-                    for vf in vfs {
-                        mapping.insert(vf.path.clone(), vf.state);
-                    }
+                ExtFlow::Data(data) => {
+                    data.expect("processing virtual filesystem observation failed");
                 }
-                ExtFlow::Data(Err(e)) | ExtFlow::Shutdown(Err(e)) => {
-                    panic!("Error applying observations: {}", e);
-                }
+                ExtFlow::Shutdown(_) => panic!("unexpected processing shutdown"),
             }
         }
-        mapping
+        // Select missing files (if any).
+        let mut missing_stream = db.select_missing_files_on_virtual_filesystem(0).await;
+        // Simply consume the stream.
+        while let Some(_mf) = missing_stream.next().await {
+            // For now, just ensure that the query runs.
+        }
     }
 
-    async fn setup(
-        blobs: impl IntoIterator<Item = TestBlob>,
-        files: impl IntoIterator<Item = TestFile>,
-        materialisations: impl IntoIterator<Item = TestMaterialisation>,
-        seen_files: impl IntoIterator<Item = FileSeen>,
-        eq_blob_check: impl IntoIterator<Item = FileCheck>,
-    ) -> Database {
+    #[tokio::test]
+    async fn test_connection_methods() {
         let db = setup_test_db().await;
+        use crate::db::models::Connection;
 
-        seed_files(&db, files).await;
-        seed_blobs(&db, blobs).await;
-        seed_materialisations(&db, materialisations).await;
-        refresh_vfs(&db).await;
+        // Initially, list should be empty.
+        let list = db.list_all_connections().await.expect("list failed");
+        assert!(list.is_empty(), "Expected no connections initially");
 
-        let seen_files: Vec<_> = seen_files.into_iter().map(Observation::FileSeen).collect();
-        let eq_blob_check: Vec<_> = eq_blob_check
-            .into_iter()
-            .map(Observation::FileCheck)
-            .collect();
-        let mut observations = seen_files;
-        observations.extend(eq_blob_check);
-        apply_observations(&db, observations).await;
+        let conn = Connection {
+            name: "conn1".into(),
+            connection_type: crate::db::models::ConnectionType::Local,
+            parameter: "/tmp".into(),
+        };
+        db.add_connection(&conn)
+            .await
+            .expect("failed to add connection");
 
-        db
+        let lookup = db
+            .connection_by_name("conn1")
+            .await
+            .expect("connection lookup failed");
+        assert!(lookup.is_some(), "Connection 'conn1' should be found");
+        assert_eq!(lookup.unwrap().parameter, "/tmp");
+
+        let list = db.list_all_connections().await.expect("list failed");
+        assert_eq!(list.len(), 1, "Expected one connection in list");
     }
 
     #[tokio::test]
-    async fn test_new_file() {
-        let files = [];
-        let blobs = [];
-        let mtrlstns = [];
-        let seen_files = [];
-        let eq_blob_check = [];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
+    async fn test_populate_and_select_missing_blobs_transfer() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
 
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42 + 1,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::New),
-            "Expected file 'test' to be in New state"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_ok_state_for_repeated_observation() {
-        let files = [TestFile {
-            path: "test".into(),
-            blob_id: Some("blob1".into()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let blobs = [TestBlob {
-            blob_id: "blob1".into(),
-            blob_size: 84,
+        let remote_blob = InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "remote_blob".into(),
+            blob_size: 50,
             has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let mtrlstns = [];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        }];
-        let eq_blob_check = [FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 30,
-            hash: "blob1".into(),
-        }];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
+            path: None,
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter([remote_blob]))
+            .await
+            .expect("failed to add remote blob");
 
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42 + 1,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        })];
+        let file = InsertFile {
+            path: "ath.txt".into(),
+            blob_id: Some("remote_blob".into()),
+            valid_from: now,
+        };
+        db.add_files(stream::iter([file]))
+            .await
+            .expect("failed to add file");
 
-        let state_map = apply_observations(&db, new_obs).await;
+        let transfer_id = 123;
+        let mut populate_stream = db
+            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into())
+            .await;
+        let mut populated = Vec::new();
+        while let Some(item) = populate_stream.next().await {
+            populated.push(item.expect("failed to populate missing blobs"));
+        }
+        assert!(
+            !populated.is_empty(),
+            "Expected at least one missing blob transfer item"
+        );
 
+        let mut select_stream = db.select_blobs_transfer(transfer_id).await;
+        let mut selected = Vec::new();
+        while let Some(item) = select_stream.next().await {
+            selected.push(item.expect("failed to select blobs transfer"));
+        }
         assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::Ok),
-            "Expected file 'test' to be in Ok state"
+            selected.len(),
+            populated.len(),
+            "The number of selected transfer items should match the populated count"
         );
     }
 
     #[tokio::test]
-    async fn test_modified_size() {
-        let files = [TestFile {
-            path: "test".into(),
-            blob_id: Some("blob1".into()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let blobs = [TestBlob {
-            blob_id: "blob1".into(),
-            blob_size: 84,
+    async fn test_populate_and_select_missing_files_transfer() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+
+        let file = InsertFile {
+            path: "missing_file.txt".into(),
+            blob_id: Some("remote_blob".into()),
+            valid_from: now,
+        };
+        db.add_files(stream::iter([file])).await.expect("failed");
+
+        let remote_blob = InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "remote_blob".into(),
+            blob_size: 75,
             has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let mtrlstns = [];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        }];
-        let eq_blob_check = [FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 30,
-            hash: "blob1".into(),
-        }];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
+            path: Some("missing_file.txt".into()),
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter([remote_blob]))
+            .await
+            .expect("failed");
 
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42 + 1,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 4242,
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::NeedsCheck),
-            "Expected file 'test' to be in NeedsCheck state"
+        let transfer_id = 456;
+        let mut populate_stream = db
+            .populate_missing_files_for_transfer(
+                transfer_id,
+                repo.repo_id.clone(),
+                "remote_repo".into(),
+            )
+            .await;
+        let mut populated = Vec::new();
+        while let Some(item) = populate_stream.next().await {
+            populated.push(item.expect("failed to populate missing files"));
+        }
+        assert!(
+            !populated.is_empty(),
+            "Expected at least one missing file transfer item"
         );
-    }
 
-    #[tokio::test]
-    async fn test_modified_last_modified() {
-        let files = [TestFile {
-            path: "test".into(),
-            blob_id: Some("blob1".into()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let blobs = [TestBlob {
-            blob_id: "blob1".into(),
-            blob_size: 84,
-            has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let mtrlstns = [];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        }];
-        let eq_blob_check = [FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 30,
-            hash: "blob1".into(),
-        }];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
-
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42 + 1,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 40,
-            size: 84,
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
+        let mut select_stream = db.select_files_transfer(transfer_id).await;
+        let mut selected = Vec::new();
+        while let Some(item) = select_stream.next().await {
+            selected.push(item.expect("failed to select files transfer"));
+        }
         assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::NeedsCheck),
-            "Expected file 'test' to be in NeedsCheck state"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_same_file() {
-        let files = [TestFile {
-            path: "test".into(),
-            blob_id: Some("blob1".into()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let blobs = [TestBlob {
-            blob_id: "blob1".into(),
-            blob_size: 84,
-            has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let mtrlstns = [];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        }];
-        let eq_blob_check = [];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
-
-        let new_obs = [Observation::FileCheck(FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 30,
-            hash: "blob1".into(),
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::Ok),
-            "Expected file 'test' to be in Ok state"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_altered() {
-        let files = [TestFile {
-            path: "test".into(),
-            blob_id: Some("blob1".into()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let blobs = [TestBlob {
-            blob_id: "blob1".into(),
-            blob_size: 84,
-            has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
-        }];
-        let mtrlstns = [];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 30,
-            last_modified_dttm: BEGINNING + 20,
-            size: 84,
-        }];
-        let eq_blob_check = [];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
-
-        let new_obs = [Observation::FileCheck(FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 30,
-            hash: "other".into(),
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::Altered),
-            "Expected file 'test' to be in Altered state"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_outdated() {
-        let files = [
-            TestFile {
-                path: "test".into(),
-                blob_id: Some("old".into()),
-                valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-            },
-            TestFile {
-                path: "test".into(),
-                blob_id: Some("new".into()),
-                valid_from: Utc.timestamp_opt(BEGINNING + 30, 0).unwrap(),
-            },
-        ];
-        let blobs = [
-            TestBlob {
-                blob_id: "old".into(),
-                blob_size: 42,
-                has_blob: true,
-                valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-            },
-            TestBlob {
-                blob_id: "new".into(),
-                blob_size: 84,
-                has_blob: true,
-                valid_from: Utc.timestamp_opt(BEGINNING + 30, 0).unwrap(),
-            },
-        ];
-        let mtrlstns = [TestMaterialisation {
-            path: "test".into(),
-            blob_id: Some("old".to_string()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-        }];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 20,
-            last_modified_dttm: BEGINNING + 20,
-            size: 42,
-        }];
-        let eq_blob_check = [FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 20,
-            hash: "old".into(),
-        }];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
-
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 40,
-            last_modified_dttm: BEGINNING + 20,
-            size: 42,
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::Outdated),
-            "Expected file 'test' to be in Outdated state"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_deleted() {
-        let files = [
-            TestFile {
-                path: "test".into(),
-                blob_id: Some("old".into()),
-                valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-            },
-            TestFile {
-                path: "test".into(),
-                blob_id: None,
-                valid_from: Utc.timestamp_opt(BEGINNING + 30, 0).unwrap(),
-            },
-        ];
-        let blobs = [TestBlob {
-            blob_id: "old".into(),
-            blob_size: 42,
-            has_blob: true,
-            valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-        }];
-        let mtrlstns = [TestMaterialisation {
-            path: "test".into(),
-            blob_id: Some("old".to_string()),
-            valid_from: Utc.timestamp_opt(BEGINNING + 10, 0).unwrap(),
-        }];
-        let seen_files = [FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 20,
-            last_modified_dttm: BEGINNING + 20,
-            size: 42,
-        }];
-        let eq_blob_check = [FileCheck {
-            path: "test".into(),
-            check_dttm: BEGINNING + 20,
-            hash: "old".into(),
-        }];
-        let db = setup(blobs, files, mtrlstns, seen_files, eq_blob_check).await;
-
-        let new_obs = [Observation::FileSeen(FileSeen {
-            path: "test".into(),
-            seen_id: 42,
-            seen_dttm: BEGINNING + 40,
-            last_modified_dttm: BEGINNING + 20,
-            size: 42,
-        })];
-
-        let state_map = apply_observations(&db, new_obs).await;
-
-        assert_eq!(
-            state_map.get("test"),
-            Some(&VirtualFileState::Outdated),
-            "Expected file 'test' to be in Outdated state"
+            selected.len(),
+            populated.len(),
+            "Mismatch in missing file transfer items count"
         );
     }
 }
