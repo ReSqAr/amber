@@ -188,6 +188,7 @@ impl Database {
         );
         Ok(total_inserted)
     }
+
     pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
     where
         S: Stream<Item = ObservedBlob> + Unpin,

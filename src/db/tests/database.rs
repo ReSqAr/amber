@@ -4,13 +4,15 @@ mod tests {
     use crate::db::migrations::run_migrations;
 
     use crate::db::models::{
-        Blob, File, InsertBlob, InsertFile, InsertMaterialisation, InsertRepositoryName, Repository,
+        AvailableBlob, Blob, Connection, ConnectionType, File, InsertBlob, InsertFile,
+        InsertMaterialisation, InsertRepositoryName, ObservedBlob, Repository, RepositoryName,
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
     use futures::stream;
     use futures::StreamExt;
     use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+    use uuid::Uuid;
 
     async fn setup_test_db() -> Database {
         let pool: SqlitePool = SqlitePoolOptions::new()
@@ -51,14 +53,12 @@ mod tests {
             .await
             .expect("failed to get repo");
 
-        // Initially, there is no name.
         let name = db
             .lookup_current_repository_name(repo.repo_id.clone())
             .await
             .expect("lookup failed");
         assert!(name.is_none(), "Expected no name initially");
 
-        // Add a repository name.
         let insert_name = InsertRepositoryName {
             repo_id: repo.repo_id.clone(),
             name: "Test Repository".into(),
@@ -164,7 +164,6 @@ mod tests {
         let db = setup_test_db().await;
         let repo_id = "test_repo".to_string();
 
-        // Insert initial repository record.
         let repo_initial = Repository {
             repo_id: repo_id.clone(),
             last_file_index: 0,
@@ -175,7 +174,6 @@ mod tests {
             .await
             .expect("initial merge failed");
 
-        // Merge updated values.
         let repo_update = Repository {
             repo_id: repo_id.clone(),
             last_file_index: 10,
@@ -310,12 +308,10 @@ mod tests {
     #[tokio::test]
     async fn test_virtual_filesystem_operations() {
         let db = setup_test_db().await;
-        // Truncate the virtual filesystem.
         db.truncate_virtual_filesystem()
             .await
             .expect("truncate_virtual_filesystem failed");
 
-        // Create an observation (using the FileSeen variant).
         use crate::db::models::{FileSeen, Observation};
         let now = Utc::now();
         let obs = Observation::FileSeen(FileSeen {
@@ -337,26 +333,22 @@ mod tests {
                 ExtFlow::Shutdown(_) => panic!("unexpected processing shutdown"),
             }
         }
-        // Select missing files (if any).
+
         let mut missing_stream = db.select_missing_files_on_virtual_filesystem(0).await;
-        // Simply consume the stream.
-        while let Some(_mf) = missing_stream.next().await {
-            // For now, just ensure that the query runs.
-        }
+        while let Some(_mf) = missing_stream.next().await {}
     }
 
     #[tokio::test]
     async fn test_connection_methods() {
         let db = setup_test_db().await;
-        use crate::db::models::Connection;
+        use Connection;
 
-        // Initially, list should be empty.
         let list = db.list_all_connections().await.expect("list failed");
         assert!(list.is_empty(), "Expected no connections initially");
 
         let conn = Connection {
             name: "conn1".into(),
-            connection_type: crate::db::models::ConnectionType::Local,
+            connection_type: ConnectionType::Local,
             parameter: "/tmp".into(),
         };
         db.add_connection(&conn)
@@ -477,5 +469,348 @@ mod tests {
             populated.len(),
             "Mismatch in missing file transfer items count"
         );
+    }
+
+    #[tokio::test]
+    async fn test_observe_blobs() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+
+        let seed_blob = InsertBlob {
+            repo_id: repo.repo_id.clone(),
+            blob_id: "test_blob".into(),
+            blob_size: 123,
+            has_blob: true,
+            path: Some("test_blob.txt".into()),
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter(vec![seed_blob]))
+            .await
+            .expect("failed to add seed blob");
+
+        let observed = ObservedBlob {
+            repo_id: repo.repo_id.clone(),
+            has_blob: true,
+            path: "test_blob.txt".into(),
+            valid_from: now,
+        };
+        let count = db
+            .observe_blobs(stream::iter(vec![observed]))
+            .await
+            .expect("observe_blobs failed");
+        assert!(count >= 1, "Expected at least one observed blob inserted");
+
+        let mut avail_stream = db.available_blobs(repo.repo_id.clone());
+        let mut found = false;
+        while let Some(result) = avail_stream.next().await {
+            let blob: AvailableBlob = result.expect("available_blobs query failed");
+            if blob.blob_id == "test_blob" {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "Observed blob 'test_blob' should be available");
+    }
+
+    #[tokio::test]
+    async fn test_select_repositories() {
+        let db = setup_test_db().await;
+
+        let repo1 = Repository {
+            repo_id: "repo1".into(),
+            last_file_index: 1,
+            last_blob_index: 2,
+            last_name_index: 3,
+        };
+        let repo2 = Repository {
+            repo_id: "repo2".into(),
+            last_file_index: 10,
+            last_blob_index: 20,
+            last_name_index: 30,
+        };
+        db.merge_repositories(stream::iter(vec![repo1.clone(), repo2.clone()]))
+            .await
+            .expect("merge_repositories failed");
+
+        let mut stream = db.select_repositories().await;
+        let mut repos = Vec::new();
+        while let Some(result) = stream.next().await {
+            repos.push(result.expect("select_repositories failed"));
+        }
+        assert!(
+            repos.iter().any(|r| r.repo_id == "repo1"),
+            "repo1 should be present"
+        );
+        assert!(
+            repos.iter().any(|r| r.repo_id == "repo2"),
+            "repo2 should be present"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_select_repository_names() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        let rn1 = InsertRepositoryName {
+            repo_id: "repo1".into(),
+            name: "Name One".into(),
+            valid_from: now,
+        };
+        let rn2 = InsertRepositoryName {
+            repo_id: "repo2".into(),
+            name: "Name Two".into(),
+            valid_from: now,
+        };
+        db.add_repository_names(stream::iter(vec![rn1, rn2]))
+            .await
+            .expect("add_repository_names failed");
+
+        let mut stream = db.select_repository_names(-1).await;
+        let mut names = Vec::new();
+        while let Some(result) = stream.next().await {
+            let rn: RepositoryName = result.expect("select_repository_names failed");
+            names.push(rn.name);
+        }
+        assert!(
+            names.contains(&"Name One".to_string()),
+            "Expected 'Name One' in repository names"
+        );
+        assert!(
+            names.contains(&"Name Two".to_string()),
+            "Expected 'Name Two' in repository names"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_files() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        let file1 = File {
+            uuid: Uuid::new_v4().to_string(),
+            path: "file_a.txt".into(),
+            blob_id: Some("blob_a".into()),
+            valid_from: now,
+        };
+        let file2 = File {
+            uuid: Uuid::new_v4().to_string(),
+            path: "file_b.txt".into(),
+            blob_id: Some("blob_b".into()),
+            valid_from: now,
+        };
+        db.merge_files(stream::iter(vec![file1.clone(), file2.clone()]))
+            .await
+            .expect("merge_files failed");
+
+        let mut stream = db.select_files(-1).await;
+        let mut paths = Vec::new();
+        while let Some(result) = stream.next().await {
+            let file: File = result.expect("select_files failed");
+            paths.push(file.path);
+        }
+        assert!(
+            paths.contains(&"file_a.txt".to_string()),
+            "Expected file_a.txt to be merged"
+        );
+        assert!(
+            paths.contains(&"file_b.txt".to_string()),
+            "Expected file_b.txt to be merged"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_blobs() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+
+        let blob1 = Blob {
+            uuid: Uuid::new_v4().to_string(),
+            repo_id: repo.repo_id.clone(),
+            blob_id: "merge_blob1".into(),
+            blob_size: 111,
+            has_blob: true,
+            path: Some("path1".into()),
+            valid_from: now,
+        };
+        let blob2 = Blob {
+            uuid: Uuid::new_v4().to_string(),
+            repo_id: repo.repo_id.clone(),
+            blob_id: "merge_blob2".into(),
+            blob_size: 222,
+            has_blob: false,
+            path: Some("path2".into()),
+            valid_from: now,
+        };
+        db.merge_blobs(stream::iter(vec![blob1.clone(), blob2.clone()]))
+            .await
+            .expect("merge_blobs failed");
+
+        let mut stream = db.select_blobs(-1).await;
+        let mut blob_ids = Vec::new();
+        while let Some(result) = stream.next().await {
+            let blob: Blob = result.expect("select_blobs failed");
+            blob_ids.push(blob.blob_id);
+        }
+        assert!(
+            blob_ids.contains(&"merge_blob1".to_string()),
+            "Expected merge_blob1 to be merged"
+        );
+        assert!(
+            blob_ids.contains(&"merge_blob2".to_string()),
+            "Expected merge_blob2 to be merged"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_repository_names() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let rn1 = RepositoryName {
+            uuid: Uuid::new_v4().to_string(),
+            repo_id: "repo_merge".into(),
+            name: "Merge Name 1".into(),
+            valid_from: now,
+        };
+        let rn2 = RepositoryName {
+            uuid: Uuid::new_v4().to_string(),
+            repo_id: "repo_merge".into(),
+            name: "Merge Name 2".into(),
+            valid_from: now,
+        };
+        db.merge_repository_names(stream::iter(vec![rn1.clone(), rn2.clone()]))
+            .await
+            .expect("merge_repository_names failed");
+
+        let mut stream = db.select_repository_names(-1).await;
+        let mut names = Vec::new();
+        while let Some(result) = stream.next().await {
+            let rn: RepositoryName = result.expect("select_repository_names failed");
+            names.push(rn.name);
+        }
+
+        assert!(
+            names.contains(&"Merge Name 1".to_string())
+                || names.contains(&"Merge Name 2".to_string()),
+            "Expected one of the merged repository names to be present"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_files_deduplication() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let fixed_uuid = "fixed-uuid-file";
+        let file1 = File {
+            uuid: fixed_uuid.to_string(),
+            path: "dup_file.txt".into(),
+            blob_id: Some("blob1".into()),
+            valid_from: now,
+        };
+        let file2 = File {
+            uuid: fixed_uuid.to_string(),
+            path: "dup_file.txt".into(),
+            blob_id: Some("blob2".into()),
+            valid_from: now,
+        };
+
+        db.merge_files(stream::iter(vec![file1, file2]))
+            .await
+            .expect("merge_files failed");
+
+        let mut stream = db.select_files(-1).await;
+        let mut count = 0;
+        let mut found_blob = None;
+        while let Some(result) = stream.next().await {
+            let file: File = result.expect("select_files failed");
+            if file.uuid == fixed_uuid {
+                count += 1;
+                found_blob = file.blob_id;
+            }
+        }
+        assert_eq!(count, 1, "Expected one deduplicated file record");
+        assert_eq!(found_blob, Some("blob1".into()));
+    }
+
+    #[tokio::test]
+    async fn test_merge_blobs_deduplication() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let repo = db.get_or_create_current_repository().await.expect("failed");
+
+        let fixed_uuid = "fixed-uuid-blob";
+        let blob1 = Blob {
+            uuid: fixed_uuid.to_string(),
+            repo_id: repo.repo_id.clone(),
+            blob_id: "dup_blob".into(),
+            blob_size: 100,
+            has_blob: true,
+            path: Some("path1".into()),
+            valid_from: now,
+        };
+        let blob2 = Blob {
+            uuid: fixed_uuid.to_string(),
+            repo_id: repo.repo_id.clone(),
+            blob_id: "dup_blob".into(),
+            blob_size: 200,
+            has_blob: false,
+            path: Some("path2".into()),
+            valid_from: now,
+        };
+
+        db.merge_blobs(stream::iter(vec![blob1, blob2]))
+            .await
+            .expect("merge_blobs failed");
+
+        let mut stream = db.select_blobs(-1).await;
+        let mut count = 0;
+        let mut found_size = None;
+        while let Some(result) = stream.next().await {
+            let blob: Blob = result.expect("select_blobs failed");
+            if blob.uuid == fixed_uuid {
+                count += 1;
+                found_size = Some(blob.blob_size);
+            }
+        }
+        assert_eq!(count, 1, "Expected one deduplicated blob record");
+        assert_eq!(found_size, Some(100));
+    }
+
+    #[tokio::test]
+    async fn test_merge_repository_names_deduplication() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let fixed_uuid = "fixed-uuid-repo-name";
+        let rn1 = RepositoryName {
+            uuid: fixed_uuid.to_string(),
+            repo_id: "repo_merge".into(),
+            name: "First Name".into(),
+            valid_from: now,
+        };
+        let rn2 = RepositoryName {
+            uuid: fixed_uuid.to_string(),
+            repo_id: "repo_merge".into(),
+            name: "Second Name".into(),
+            valid_from: now,
+        };
+
+        db.merge_repository_names(stream::iter(vec![rn1, rn2]))
+            .await
+            .expect("merge_repository_names failed");
+
+        let mut stream = db.select_repository_names(-1).await;
+        let mut count = 0;
+        let mut found_name = None;
+        while let Some(result) = stream.next().await {
+            let rn: RepositoryName = result.expect("select_repository_names failed");
+            if rn.uuid == fixed_uuid {
+                count += 1;
+                found_name = Some(rn.name);
+            }
+        }
+        assert_eq!(count, 1, "Expected one deduplicated repository name record");
+        assert_eq!(found_name, Some("First Name".into()));
     }
 }

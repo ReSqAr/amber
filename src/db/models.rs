@@ -4,12 +4,12 @@ use sqlx::Type;
 use sqlx::{FromRow, Row};
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct CurrentRepository {
     pub repo_id: String,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct Repository {
     pub repo_id: String,
     pub last_file_index: i32,
@@ -17,7 +17,7 @@ pub struct Repository {
     pub last_name_index: i32,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct File {
     pub uuid: String,
     pub path: String,
@@ -25,14 +25,14 @@ pub struct File {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InsertFile {
     pub path: String,
     pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct Blob {
     pub uuid: String,
     pub repo_id: String,
@@ -43,7 +43,7 @@ pub struct Blob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InsertBlob {
     pub repo_id: String,
     pub blob_id: String,
@@ -53,7 +53,7 @@ pub struct InsertBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObservedBlob {
     pub repo_id: String,
     pub has_blob: bool,
@@ -61,7 +61,7 @@ pub struct ObservedBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct RepositoryName {
     pub uuid: String,
     pub repo_id: String,
@@ -69,28 +69,28 @@ pub struct RepositoryName {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InsertRepositoryName {
     pub repo_id: String,
     pub name: String,
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InsertMaterialisation {
     pub path: String,
     pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct Materialisation {
     #[allow(dead_code)]
     pub path: String,
     pub blob_id: Option<String>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
@@ -98,7 +98,7 @@ pub struct AvailableBlob {
     pub path: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlobAssociatedToFiles {
     pub blob_id: String,
     pub paths: Vec<String>,
@@ -133,13 +133,13 @@ pub enum VirtualFileState {
     NeedsCheck,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Observation {
     FileSeen(FileSeen),
     FileCheck(FileCheck),
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct FileSeen {
     pub path: String,
     pub seen_id: i64,
@@ -148,7 +148,7 @@ pub struct FileSeen {
     pub size: i64,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct FileCheck {
     pub path: String,
     pub check_dttm: i64,
@@ -188,7 +188,7 @@ impl Display for ConnectionType {
     }
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Clone)]
 pub struct Connection {
     pub name: String,
     pub connection_type: ConnectionType,
