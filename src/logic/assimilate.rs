@@ -6,13 +6,13 @@ use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
 use async_lock::Mutex;
+use dashmap::DashMap;
 use futures::{Stream, StreamExt};
 use log::debug;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
 
-pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+pub(crate) type BlobLockMap = Arc<DashMap<String, Arc<Mutex<()>>>>;
 
 #[derive(Debug)]
 pub struct Item {
@@ -44,14 +44,13 @@ async fn assimilate_blob(
 
     let blob_path = local.blob_path(&blob_id);
     {
-        let mut locks = blob_locks.lock().await;
-        let blob_lock = locks
+        let blob_lock = blob_locks
             .entry(blob_id.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
-        drop(locks); // Release the lock map
 
         let _lock_guard = blob_lock.lock().await; // acquire the blob-specific lock
+
         if !fs::metadata(&blob_path)
             .await
             .map(|m| m.is_file())
@@ -81,7 +80,7 @@ pub(crate) async fn assimilate<S>(
 where
     S: Stream<Item = Item> + Unpin + Send + 'static,
 {
-    let blob_locks: BlobLockMap = Arc::new(Mutex::new(HashMap::new()));
+    let blob_locks: BlobLockMap = Arc::new(DashMap::new());
     let meta = local.current().await?;
     stream
         .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))

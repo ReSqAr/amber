@@ -7,8 +7,8 @@ use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, Virt
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
+use dashmap::DashMap;
 use futures::pin_mut;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
@@ -69,7 +69,7 @@ pub(crate) async fn add_files(
     let mut count = 0;
     {
         // scope to isolate the effects of the below wild channel cloning
-        let blob_locks: BlobLockMap = Arc::new(async_lock::Mutex::new(HashMap::new()));
+        let blob_locks: BlobLockMap = Arc::new(DashMap::new());
         let file_tx = file_tx.clone();
         let blob_tx = blob_tx.clone();
         let mat_tx = mat_tx.clone();

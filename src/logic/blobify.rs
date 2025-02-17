@@ -5,12 +5,12 @@ use crate::utils::fs::are_hardlinked;
 use crate::utils::path::RepoPath;
 use crate::utils::sha256;
 use async_lock::Mutex;
+use dashmap::DashMap;
 use log::debug;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
 
-pub(crate) type BlobLockMap = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+pub(crate) type BlobLockMap = Arc<DashMap<String, Arc<Mutex<()>>>>;
 
 pub(crate) struct Blobify {
     pub(crate) blob_id: String,
@@ -42,12 +42,10 @@ pub(crate) async fn blobify(
 
     // acquire lock for the current blob_id
     {
-        let mut locks = blob_locks.lock().await;
-        let blob_lock = locks
+        let blob_lock = blob_locks
             .entry(blob_id.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
-        drop(locks); // Release the lock map
 
         let _lock_guard = blob_lock.lock().await; // Acquire the blob-specific lock
 
