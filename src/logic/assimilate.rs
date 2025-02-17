@@ -89,3 +89,42 @@ where
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logic::assimilate::{assimilate, Item};
+    use crate::repository::local::LocalRepository;
+    use tempfile::tempdir;
+    use tokio::fs;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn test_assimilate_single_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let repo_path = dir.path().join("repo");
+        fs::create_dir_all(&repo_path).await?;
+
+        let local = LocalRepository::create(Some(repo_path.clone()), "test_repo".into()).await?;
+
+        let file_path = repo_path.join("hello.txt");
+        let mut file = fs::File::create(&file_path).await?;
+        file.write_all(b"Hello world!").await?;
+
+        let items = futures::stream::iter([Item {
+            path: local.root().join("hello.txt"),
+            expected_blob_id: None,
+        }]);
+
+        // run assimilate
+        let count = assimilate(&local, items).await?;
+        assert_eq!(count, 1);
+
+        let blob_file = repo_path
+            .join(".amb/blobs/c0/53/5e4be2b79ffd93291305436bf889314e4a3faec05ecffcbb7df31ad9e51a");
+        let buf = fs::read(&blob_file).await?;
+        assert_eq!(buf, b"Hello world!");
+
+        Ok(())
+    }
+}
