@@ -813,4 +813,39 @@ mod tests {
         assert_eq!(count, 1, "Expected one deduplicated repository name record");
         assert_eq!(found_name, Some("First Name".into()));
     }
+
+    #[tokio::test]
+    async fn test_clean_transfers() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        let remote_blob = InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "transfer_blob".into(),
+            blob_size: 100,
+            has_blob: true,
+            path: Some("remote/path.txt".into()),
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter(vec![remote_blob]))
+            .await
+            .expect("failed to add remote blob");
+
+        let transfer_id = 999;
+
+        let mut populate_stream = db
+            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into())
+            .await;
+        while let Some(_item) = populate_stream.next().await {}
+
+        db.clean().await.unwrap();
+
+        let mut select_stream = db.select_blobs_transfer(transfer_id).await;
+        let mut count = 0;
+        while let Some(item) = select_stream.next().await {
+            let _ = item.expect("select_blobs_transfer failed");
+            count += 1;
+        }
+        assert_eq!(count, 0, "Expected transfers to be cleaned");
+    }
 }
