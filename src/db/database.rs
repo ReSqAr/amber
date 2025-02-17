@@ -745,7 +745,7 @@ impl Database {
                OR a.blob_size IS DISTINCT FROM vfs.target_blob_size
                OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
             UNION ALL
-            SELECT -- file which are not tracked - but have been deleted in the files table + no materialisation
+            SELECT -- files which are not tracked - but have been deleted in the files table + no materialisation
                 path,
                 NULL AS materialisation_last_blob_id,
                 NULL as target_blob_id,
