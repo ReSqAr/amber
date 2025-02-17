@@ -30,6 +30,20 @@ pub async fn status(maybe_root: Option<PathBuf>, verbose: bool) -> Result<(), In
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+    let vfs_refresh = BaseLayoutBuilderBuilder::default()
+        .type_key("vfs:refresh")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::Static {
+            msg: "refreshing virtual file system...".into(),
+            done: "refreshed".into(),
+        })
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     let file = BaseLayoutBuilderBuilder::default()
         .type_key("file")
         .limit(5)
@@ -64,7 +78,10 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(status).add_child(file)]
+    [LayoutItemBuilderNode::from(status).with_children([
+        LayoutItemBuilderNode::from(vfs_refresh),
+        LayoutItemBuilderNode::from(file),
+    ])]
 }
 
 #[derive(Eq, Hash, PartialEq, Debug)]

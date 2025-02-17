@@ -1,12 +1,12 @@
 use crate::db::models;
 use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
+use crate::flightdeck::base::BaseObserver;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
 use crate::utils::walker::{walk, FileObservation, WalkerConfig};
-use crate::flightdeck::base::BaseObserver;
 use futures::{future, Stream, StreamExt};
 use log::{debug, error};
 use tokio::sync::mpsc;
@@ -186,11 +186,14 @@ pub async fn state(
     let last_seen_id = current_timestamp();
 
     let mut vfs_obs = BaseObserver::without_id("vfs:refresh");
-    vfs_obs.observe_state(log::Level::Debug, "refreshing...");
+    vfs_obs.observe_state(log::Level::Debug, "refreshing virtual filesystem...");
     let start_time = tokio::time::Instant::now();
     vfs.refresh().await?;
     let duration = start_time.elapsed();
-    vfs_obs.observe_termination(log::Level::Debug, format!("refreshed in {:.2?}", duration));
+    vfs_obs.observe_termination(
+        log::Level::Debug,
+        format!("refreshed virtual filesystem in {:.2?}", duration),
+    );
 
     /* Three channels:
        - obs: observations by the filesystem walker

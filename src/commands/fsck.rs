@@ -202,9 +202,26 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .infallible_build()
         .boxed();
 
+    let vfs_refresh = BaseLayoutBuilderBuilder::default()
+        .type_key("vfs:refresh")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::Static {
+            msg: "refreshing virtual file system...".into(),
+            done: "refreshed".into(),
+        })
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     [
         LayoutItemBuilderNode::from(fsck_blobs).add_child(sha),
-        LayoutItemBuilderNode::from(status).add_child(file),
+        LayoutItemBuilderNode::from(status).with_children([
+            LayoutItemBuilderNode::from(vfs_refresh),
+            LayoutItemBuilderNode::from(file),
+        ]),
         LayoutItemBuilderNode::from(files_materialise).add_child(file_materialise),
         LayoutItemBuilderNode::from(rclone),
     ]
