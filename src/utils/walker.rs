@@ -141,3 +141,68 @@ pub async fn walk(
 
     Ok((handle, rx))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use tokio::fs;
+
+    #[tokio::test]
+    async fn test_walker() {
+        let temp_dir = tempdir().expect("failed to create temporary directory");
+        let dir_path = temp_dir.path().to_path_buf();
+
+        let file1 = dir_path.join("file1.txt");
+        let file2 = dir_path.join("file2.log");
+        fs::write(&file1, b"content file 1")
+            .await
+            .expect("failed to write file1");
+        fs::write(&file2, b"content file 2")
+            .await
+            .expect("failed to write file2");
+
+        let amb_dir = dir_path.join(".amb");
+        fs::create_dir_all(&amb_dir)
+            .await
+            .expect("failed to create .amb directory");
+        let amb_file = amb_dir.join("hidden.txt");
+        fs::write(&amb_file, b"hidden content")
+            .await
+            .expect("failed to write hidden file");
+
+        let config = WalkerConfig::default();
+        let (handle, mut rx) = walk(dir_path.clone(), config, 10)
+            .await
+            .expect("failed to start walker");
+
+        let mut found_files = Vec::new();
+
+        while let Some(result) = rx.recv().await {
+            match result {
+                Ok(file_obs) => {
+                    found_files.push(file_obs.rel_path.to_string_lossy().into_owned());
+                }
+                Err(e) => panic!("walker encountered an error: {:?}", e),
+            }
+        }
+
+        handle.await.expect("walker task failed");
+
+        assert!(
+            found_files.iter().any(|s| s == "file1.txt"),
+            "file1.txt not found in walker output: {:?}",
+            found_files
+        );
+        assert!(
+            found_files.iter().any(|s| s == "file2.log"),
+            "file2.log not found in walker output: {:?}",
+            found_files
+        );
+        assert!(
+            !found_files.iter().any(|s| s.contains(".amb")),
+            "Files from .amb directory should have been excluded, found: {:?}",
+            found_files
+        );
+    }
+}
