@@ -658,6 +658,93 @@ async fn integration_test_two_repo_sync_same_filename_push_pull() -> Result<(), 
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_two_repo_missing() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @b amber init b
+        @a write_file test-a.txt "Hello A world!"
+        @a amber add
+        @b write_file test-b.txt "Hello B world!"
+        @b amber add
+        @a amber remote add b local $ROOT/b
+
+        # action 1
+        @a amber sync b
+        
+        # then
+        @a amber missing
+        assert_output_contains "missing test-b.txt (exists in: b)"
+        @b amber missing
+        assert_output_contains "missing test-a.txt (exists in: a)"
+
+        # action 2
+        @a amber pull b
+
+        # then
+        @a amber missing
+        assert_output_contains "no files missing"
+        @b amber missing
+        assert_output_contains "missing test-a.txt (exists in: a)"
+
+        # action 3
+        @a amber push b
+
+        # then
+        @a amber missing
+        assert_output_contains "no files missing"
+        @b amber missing
+        assert_output_contains "no files missing"
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @b amber init b
+        @a write_file test-a.txt "Hello A world!"
+        @a amber add
+        @b write_file test-b.txt "Hello B world!"
+        @b amber add
+        @a amber remote add b local $ROOT/b
+
+        # action 1
+        @a amber sync b
+
+        # then
+        @a amber status
+        assert_output_contains "missing test-b.txt"
+        @b amber status
+        assert_output_contains "missing test-a.txt"
+
+        # action 2
+        @a amber pull b
+
+        # then
+        @a amber status
+        assert_output_contains "detected 2 materialised files"
+        @b amber status
+        assert_output_contains "missing test-a.txt"
+
+        # action 3
+        @a amber push b
+        @b amber sync
+
+        # then
+        @a amber status
+        assert_output_contains "detected 2 materialised files"
+        @b amber status
+        assert_output_contains "detected 2 materialised files"
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_test_altered_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -800,6 +887,88 @@ async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
         assert_output_contains "no files detected"
         @b amber status
         assert_output_contains "no files detected"
+
+        @a amber missing
+        assert_output_contains "no files missing"
+        @b amber missing
+        assert_output_contains "no files missing"
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_fsck() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a amber fsck
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_rm_not_existing_file() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+
+        # action
+        @a amber rm does-not-exist
+        assert_output_contains "already deleted"
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_fs_mv() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        @b amber init b
+
+        @a amber remote add b local $ROOT/b
+
+        # action 1
+        @a amber push b
+        @b amber sync
+
+        # then 1
+        assert_equal a b
+
+        # action 2
+        @a amber mv test.txt test.moved
+        @a amber sync b
+        @b amber sync
+
+        # then 2
+        @a assert_exists test.moved "Hello world!"
+        @b assert_exists test.moved "Hello world!"
+        @a assert_does_not_exist test.txt
+        @b assert_does_not_exist test.txt
+        assert_equal a b
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_config_set_name() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+
+        # action
+        @a amber config set-name b
     "#;
     run_dsl_script(script).await
 }

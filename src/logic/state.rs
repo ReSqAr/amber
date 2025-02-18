@@ -132,13 +132,6 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                     local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
-            models::VirtualFileState::Missing => Ok(Self {
-                path: vf.path,
-                state: VirtualFileState::Missing {
-                    target_blob_id: vf.target_blob_id.unwrap(),
-                    local_has_target_blob: vf.local_has_target_blob,
-                },
-            }),
             models::VirtualFileState::Altered => Ok(Self {
                 path: vf.path,
                 state: VirtualFileState::Altered {

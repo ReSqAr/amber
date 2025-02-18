@@ -84,7 +84,7 @@ pub enum RemoteCommands {
 
 #[derive(Subcommand)]
 pub enum ConfigCommands {
-    Name { name: String },
+    SetName { name: String },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -157,7 +157,7 @@ pub async fn run_cli(
             RemoteCommands::List {} => commands::remote::list(cli.path, output).await,
         },
         Commands::Config { command } => match command {
-            ConfigCommands::Name { name } => {
+            ConfigCommands::SetName { name } => {
                 commands::config::set_name(cli.path, name, output).await
             }
         },
