@@ -31,6 +31,12 @@ pub struct Data {
     pub value: Value,
 }
 
+impl From<(String, Value)> for Data {
+    fn from((key, value): (String, Value)) -> Self {
+        Self { key, value }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Observation {
     pub type_key: String,

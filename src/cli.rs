@@ -10,7 +10,10 @@ use std::process;
 #[command(version = "0.1.0")]
 #[command(about = "Distributed blobs", long_about = None)]
 pub struct Cli {
-    #[arg(long, help = "path to the repository (default: current working directory)")]
+    #[arg(
+        long,
+        help = "path to the repository (default: current working directory)"
+    )]
     pub path: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -34,7 +37,11 @@ pub enum Commands {
 
     /// Display the repository's status.
     Status {
-        #[arg(long, default_value_t = false, help = "Display more detailed status information")]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Display more detailed status information"
+        )]
         verbose: bool,
     },
     /// Synchronize the local repository with a remote repository
@@ -62,7 +69,11 @@ pub enum Commands {
     Remove {
         #[arg(help = "Files to be removed")]
         files: Vec<PathBuf>,
-        #[arg(long, default_value_t = false, help = "Keep the file but remove the file from the repository")]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Keep the file but remove the file from the repository"
+        )]
         soft: bool,
     },
     /// Move a tracked file within the repository
@@ -100,12 +111,13 @@ pub enum RemoteCommands {
         name: String,
         #[arg(value_enum, help = "Type of remote connection")]
         connection_type: ConnectionType,
-        #[arg(help = "Parameter for the remote connection (e.g. a path for local, or configuration details for rclone/ssh)")]
+        #[arg(
+            help = "Parameter for the remote connection (e.g. a path for local, or configuration details for rclone/ssh)"
+        )]
         parameter: String,
     },
     /// List all configured remote connections
-    List {
-    },
+    List {},
 }
 
 #[derive(Subcommand)]

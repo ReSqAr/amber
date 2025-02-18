@@ -62,12 +62,7 @@ impl Observable for BaseObservable {
                     key: "state".into(),
                     value: state.into(),
                 }];
-                for (key, value) in data {
-                    d.push(Data {
-                        key,
-                        value: value.into(),
-                    })
-                }
+                d.extend(data.into_iter().map(Data::from));
                 d
             }
             Some(BaseObservation::TerminalState(s)) => vec![Data {
@@ -79,12 +74,7 @@ impl Observable for BaseObservable {
                     key: "state".into(),
                     value: state.into(),
                 }];
-                for (key, value) in data {
-                    d.push(Data {
-                        key,
-                        value: value.into(),
-                    })
-                }
+                d.extend(data.into_iter().map(Data::from));
                 d
             }
             Some(BaseObservation::Position(p)) => vec![Data {
@@ -144,7 +134,11 @@ impl Observer<BaseObservable> {
             level,
             BaseObservation::StateWithData {
                 state: s.into(),
-                data: data.into().into_iter().map(|(k, v)| (k, v.into())).collect(),
+                data: data
+                    .into()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
             },
         )
     }
@@ -161,7 +155,11 @@ impl Observer<BaseObservable> {
             level,
             BaseObservation::TerminalStateWithData {
                 state: s.into(),
-                data: data.into().into_iter().map(|(k, v)| (k, v.into())).collect(),
+                data: data
+                    .into()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
             },
         )
     }
