@@ -59,7 +59,7 @@ async fn fsck_blobs(
                             "quarantining blob".to_string(),
                             [(
                                 "quarantine_path".into(),
-                                quarantine_path.rel().to_string_lossy().into(),
+                                quarantine_path.rel().to_string_lossy().to_string(),
                             )],
                         );
 
@@ -70,7 +70,7 @@ async fn fsck_blobs(
                             "blob corrupted".to_string(),
                             [(
                                 "quarantine_path".into(),
-                                quarantine_path.rel().to_string_lossy().into(),
+                                quarantine_path.rel().to_string_lossy().to_string(),
                             )],
                         )
                     }

@@ -12,12 +12,12 @@ pub enum BaseObservation {
     State(String),
     StateWithData {
         state: String,
-        data: HashMap<String, String>,
+        data: HashMap<String, Value>,
     },
     TerminalState(String),
     TerminalStateWithData {
         state: String,
-        data: HashMap<String, String>,
+        data: HashMap<String, Value>,
     },
     Position(u64),
     Length(u64),
@@ -134,34 +134,34 @@ impl Observer<BaseObservable> {
     pub fn observe_state(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
         self.observe(level, BaseObservation::State(s.into()))
     }
-    pub fn observe_state_ext(
+    pub fn observe_state_ext<T: Into<Value>>(
         &mut self,
         level: log::Level,
         s: impl Into<String>,
-        data: impl Into<HashMap<String, String>>,
+        data: impl Into<HashMap<String, T>>,
     ) -> &mut Self {
         self.observe(
             level,
             BaseObservation::StateWithData {
                 state: s.into(),
-                data: data.into(),
+                data: data.into().into_iter().map(|(k, v)| (k, v.into())).collect(),
             },
         )
     }
     pub fn observe_termination(&mut self, level: log::Level, s: impl Into<String>) -> &mut Self {
         self.observe(level, BaseObservation::TerminalState(s.into()))
     }
-    pub fn observe_termination_ext(
+    pub fn observe_termination_ext<T: Into<Value>>(
         &mut self,
         level: log::Level,
         s: impl Into<String>,
-        data: impl Into<HashMap<String, String>>,
+        data: impl Into<HashMap<String, T>>,
     ) -> &mut Self {
         self.observe(
             level,
             BaseObservation::TerminalStateWithData {
                 state: s.into(),
-                data: data.into(),
+                data: data.into().into_iter().map(|(k, v)| (k, v.into())).collect(),
             },
         )
     }
@@ -189,6 +189,7 @@ impl ProgressBarManager for PGPositionManager {
         for d in data {
             let value = match d.value {
                 Value::String(_) => continue,
+                Value::Bool(_) => continue,
                 Value::U64(value) => value,
             };
             match d.key.as_str() {
@@ -239,6 +240,7 @@ impl ProgressBarManager for PGMessageManager {
             let value = match &d.value {
                 Value::String(value) => value,
                 Value::U64(_) => continue,
+                Value::Bool(_) => continue,
             };
             if d.key == "state" {
                 self.last_state = Some(value.clone())

@@ -4,6 +4,7 @@
 pub enum Value {
     String(String),
     U64(u64),
+    Bool(bool),
 }
 
 impl From<String> for Value {
@@ -15,6 +16,12 @@ impl From<String> for Value {
 impl From<u64> for Value {
     fn from(value: u64) -> Self {
         Value::U64(value)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Value::Bool(value)
     }
 }
 
