@@ -13,15 +13,23 @@ const TB_MAX: u64 = PB - 1;
 const PB_MAX: u64 = EB - 1;
 
 pub(crate) fn human_readable_size(bytes: u64) -> String {
-    match bytes {
-        0..=B_MAX => format!("{}B", bytes),
-        KB..=KB_MAX => format!("{:.2}KB", bytes as f64 / KB as f64),
-        MB..=MB_MAX => format!("{:.2}MB", bytes as f64 / MB as f64),
-        GB..=GB_MAX => format!("{:.2}GB", bytes as f64 / GB as f64),
-        TB..=TB_MAX => format!("{:.2}TB", bytes as f64 / TB as f64),
-        PB..=PB_MAX => format!("{:.2}PB", bytes as f64 / PB as f64),
-        _ => format!("{:.2} EB", bytes as f64 / EB as f64),
-    }
+    let (value, unit) = match bytes {
+        0..=B_MAX => (bytes as f64, "B"),
+        KB..=KB_MAX => (bytes as f64 / KB as f64, "KB"),
+        MB..=MB_MAX => (bytes as f64 / MB as f64, "MB"),
+        GB..=GB_MAX => (bytes as f64 / GB as f64, "GB"),
+        TB..=TB_MAX => (bytes as f64 / TB as f64, "TB"),
+        PB..=PB_MAX => (bytes as f64 / PB as f64, "PB"),
+        _ => (bytes as f64 / EB as f64, "EB"),
+    };
+
+    let value = if value < 10.0 {
+        format!("{:.1}", value)
+    } else {
+        format!("{:.0}", value)
+    };
+
+    format!("{}{}", value, unit)
 }
 
 #[cfg(test)]
@@ -31,8 +39,19 @@ mod tests {
     #[tokio::test]
     async fn test_human_readable_size() {
         assert_eq!(human_readable_size(500), "500B");
-        assert_eq!(human_readable_size(1500), "1.46KB");
-        assert_eq!(human_readable_size(1024 * 1024), "1.00MB");
-        assert_eq!(human_readable_size(1024 * 1024 * 1024), "1.00GB");
+        assert_eq!(human_readable_size(1500), "1.5KB");
+        assert_eq!(human_readable_size(150 * 1024 + 1), "150KB");
+        assert_eq!(human_readable_size(1024 * 1024), "1.0MB");
+        assert_eq!(human_readable_size(150 * 1024 * 1024 + 1), "150MB");
+        assert_eq!(human_readable_size(1024 * 1024 * 1024), "1.0GB");
+        assert_eq!(human_readable_size(1024 * 1024 * 1024 * 1024), "1.0TB");
+        assert_eq!(
+            human_readable_size(1024 * 1024 * 1024 * 1024 * 1024),
+            "1.0PB"
+        );
+        assert_eq!(
+            human_readable_size(1024 * 1024 * 1024 * 1024 * 1024 * 1024),
+            "1.0EB"
+        );
     }
 }
