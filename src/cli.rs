@@ -7,11 +7,10 @@ use std::process;
 #[derive(Parser)]
 #[command(name = "amber")]
 #[command(author = "Yasin Zähringer <yasin@yhjz.de>")]
-#[command(version = "1.0")]
-#[command(about = "distribute blobs", long_about = None)]
+#[command(version = "0.1.0")]
+#[command(about = "Distributed blobs", long_about = None)]
 pub struct Cli {
-    /// Optional path to the repository
-    #[arg(long)]
+    #[arg(long, help = "path to the repository (default: current working directory)")]
     pub path: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -20,49 +19,71 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Initialize new repository
     Init {
+        #[arg(help = "Name of the new repository")]
         name: String,
     },
+    /// Add new files to the repository
     Add {
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, help = "Skip file deduplication")]
         skip_deduplication: bool,
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, help = "Enable verbose output")]
         verbose: bool,
     },
+
+    /// Display the repository's status.
+    Status {
+        #[arg(long, default_value_t = false, help = "Display more detailed status information")]
+        verbose: bool,
+    },
+    /// Synchronize the local repository with a remote repository
+    Sync {
+        #[arg(help = "Remote to synchronize with (default: local)")]
+        connection_name: Option<String>,
+    },
+    /// Pull files from a remote repository
+    Pull {
+        #[arg(help = "Remote from which to pull files")]
+        connection_name: String,
+    },
+    /// Push local files to a remote repository
+    Push {
+        #[arg(help = "Remote to push files to")]
+        connection_name: String,
+    },
+    /// List missing files in the repository
+    Missing {
+        #[arg(help = "Show missing files for a remote (default: local)")]
+        connection_name: Option<String>,
+    },
+    /// Remove files from the repository
     #[command(alias = "rm")]
     Remove {
+        #[arg(help = "Files to be removed")]
         files: Vec<PathBuf>,
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, help = "Keep the file but remove the file from the repository")]
         soft: bool,
     },
+    /// Move a tracked file within the repository
     #[command(alias = "mv")]
     Move {
+        #[arg(help = "Current path of the file to be moved")]
         source: PathBuf,
+        #[arg(help = "New path of the file to be moved")]
         destination: PathBuf,
     },
-    Status {
-        #[arg(long, default_value_t = false)]
-        verbose: bool,
-    },
-    Missing {
-        connection_name: Option<String>,
-    },
-    Sync {
-        connection_name: Option<String>,
-    },
-    Pull {
-        connection_name: String,
-    },
-    Push {
-        connection_name: String,
-    },
+    /// Run a file system check on the repository
     Fsck {
+        #[arg(help = "Fsck a remote (default: local)")]
         connection_name: Option<String>,
     },
+    /// Manage remote connections
     Remote {
         #[command(subcommand)]
         command: RemoteCommands,
     },
+    /// Configure repository settings
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -73,18 +94,26 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum RemoteCommands {
+    /// Add a new remote connection
     Add {
+        #[arg(help = "Name for the remote connection")]
         name: String,
-        #[arg(value_enum)]
+        #[arg(value_enum, help = "Type of remote connection")]
         connection_type: ConnectionType,
+        #[arg(help = "Parameter for the remote connection (e.g. a path for local, or configuration details for rclone/ssh)")]
         parameter: String,
     },
-    List {},
+    /// List all configured remote connections
+    List {
+    },
 }
 
 #[derive(Subcommand)]
 pub enum ConfigCommands {
-    SetName { name: String },
+    SetName {
+        #[arg(help = "new name for the repository")]
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
