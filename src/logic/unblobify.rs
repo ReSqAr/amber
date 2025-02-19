@@ -1,13 +1,13 @@
 use crate::repository::traits::{Adder, Local};
 use crate::utils::errors::InternalError;
+use crate::utils::path::RepoPath;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
 
 pub(crate) async fn unblobify(
     local: &(impl Adder + Local + Sized),
-    file: &PathBuf,
+    file: &RepoPath,
 ) -> Result<(), InternalError> {
     // when unblobifying (soft delete) we want to make the file is writable again.
     // that also means we need to break any hard links. we do this by creating a copy.
@@ -17,7 +17,7 @@ pub(crate) async fn unblobify(
         .join(Uuid::now_v7().to_string())
         .abs()
         .clone();
-    fs::copy(&file, &staging_path).await?;
+    fs::copy(file, &staging_path).await?;
 
     let mut permissions = fs::metadata(&staging_path).await?.permissions();
     let current_mode = permissions.mode();
@@ -27,7 +27,7 @@ pub(crate) async fn unblobify(
         fs::set_permissions(&staging_path, permissions).await?;
     }
 
-    fs::rename(&staging_path, &file).await?;
+    fs::rename(&staging_path, file).await?;
 
     Ok(())
 }

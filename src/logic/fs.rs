@@ -4,6 +4,7 @@ use crate::logic::unblobify;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Adder, Local};
 use crate::utils::errors::{AppError, InternalError};
+use crate::utils::path::RepoPath;
 use futures::stream;
 use std::path::PathBuf;
 use tokio::fs;
@@ -18,43 +19,29 @@ pub(crate) async fn rm(
     files: Vec<PathBuf>,
     soft: bool,
 ) -> Result<RmResult, InternalError> {
-    let root_path = local.root().abs().clone().canonicalize()?;
+    let root = local.root();
 
     let mut deleted = 0;
     let mut not_found = 0;
     for file in files {
-        let mut obs = BaseObserver::with_id(
-            "fs:rm:file",
-            file.strip_prefix(root_path.clone())
-                .unwrap_or(&*file)
-                .to_string_lossy(),
-        );
+        let path = RepoPath::from_relative_to_current(&file, &root)?;
+        let mut obs = BaseObserver::with_id("fs:rm:file", path.rel().to_string_lossy());
 
         if fs::metadata(&file)
             .await
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            let absolute_path = file.canonicalize()?;
-            let rel_path = if let Ok(relative) = absolute_path.strip_prefix(&root_path) {
-                relative
-            } else {
-                return Err(
-                    AppError::FileNotPartOfRepository(file.to_string_lossy().into()).into(),
-                );
-            };
-            let path = local.root().join(rel_path);
-
             local
                 .add_files(stream::iter([InsertFile {
-                    path: rel_path.to_string_lossy().into(),
+                    path: path.rel().to_string_lossy().to_string(),
                     blob_id: None,
                     valid_from: chrono::Utc::now(),
                 }]))
                 .await?;
 
             if soft {
-                unblobify::unblobify(local, &file).await?;
+                unblobify::unblobify(local, &path).await?;
                 obs.observe_termination(log::Level::Info, "deleted [soft]");
             } else {
                 fs::remove_file(&path).await?;
@@ -64,7 +51,7 @@ pub(crate) async fn rm(
 
             local
                 .add_materialisation(stream::iter([InsertMaterialisation {
-                    path: rel_path.to_string_lossy().into(),
+                    path: path.rel().to_string_lossy().to_string(),
                     blob_id: None,
                     valid_from: chrono::Utc::now(),
                 }]))
@@ -83,7 +70,7 @@ pub(crate) async fn mv(
     source: PathBuf,
     destination: PathBuf,
 ) -> Result<(), InternalError> {
-    let root_path = local.root().abs().clone().canonicalize()?;
+    let root = local.root();
 
     if !fs::metadata(&source)
         .await
@@ -100,29 +87,10 @@ pub(crate) async fn mv(
         return Err(AppError::DestinationDoesExist(destination.to_string_lossy().into()).into());
     }
 
-    let mut obs = BaseObserver::with_id(
-        "fs:mv:file",
-        source
-            .strip_prefix(root_path.clone())
-            .unwrap_or(&*source)
-            .to_string_lossy(),
-    );
+    let source = RepoPath::from_relative_to_current(source, &root)?;
+    let destination = RepoPath::from_relative_to_current(destination, &root)?;
 
-    let source = source.canonicalize()?;
-    let source = if let Ok(relative) = source.strip_prefix(&root_path) {
-        relative
-    } else {
-        return Err(AppError::FileNotPartOfRepository(source.to_string_lossy().into()).into());
-    };
-    let source = local.root().join(source);
-
-    let destination = std::path::absolute(destination)?;
-    let destination = if let Ok(relative) = destination.strip_prefix(&root_path) {
-        relative
-    } else {
-        return Err(AppError::FileNotPartOfRepository(destination.to_string_lossy().into()).into());
-    };
-    let destination = local.root().join(destination);
+    let mut obs = BaseObserver::with_id("fs:mv:file", source.rel().to_string_lossy());
 
     let blob_id = match local.lookup_last_materialisation(&source).await? {
         None => {
@@ -155,11 +123,8 @@ pub(crate) async fn mv(
         log::Level::Info,
         "moved",
         [
-            ("source".into(), source.abs().to_string_lossy().to_string()),
-            (
-                "destination".into(),
-                destination.abs().to_string_lossy().to_string(),
-            ),
+            ("source".into(), rel_source.clone()),
+            ("destination".into(), rel_destination.clone()),
         ],
     );
 
