@@ -5,6 +5,7 @@ use crate::repository::traits::{
     BufferType, Config, Local, Metadata, RcloneTargetPath, Receiver, Sender, TransferItem,
 };
 use crate::utils::errors::InternalError;
+use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{run_rclone, Operation, RcloneEvent, RcloneStats, RcloneTarget};
 use crate::utils::units;
@@ -167,6 +168,7 @@ pub async fn transfer<T: TransferItem>(
     source: &(impl Metadata + Sender<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
     destination: &(impl Metadata + Receiver<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
     connection: EstablishedConnection,
+    paths: Vec<RepoPath>,
 ) -> Result<u64, InternalError> {
     let transfer_id: u32 = rand::rng().random();
 
@@ -175,6 +177,11 @@ pub async fn transfer<T: TransferItem>(
     let transfer_path = local.staging_id_path(transfer_id);
     fs::create_dir_all(&transfer_path).await?;
     let rclone_files = transfer_path.join("rclone.files");
+
+    let paths = paths
+        .iter()
+        .map(|p| p.rel().to_string_lossy().to_string())
+        .collect();
 
     let local_meta = local.current().await?;
     let source_meta = source.current().await?;
@@ -210,7 +217,7 @@ pub async fn transfer<T: TransferItem>(
 
     let start_time = tokio::time::Instant::now();
     let stream = destination
-        .create_transfer_request(transfer_id, source_meta.id)
+        .create_transfer_request(transfer_id, source_meta.id, paths)
         .await;
 
     transfer_obs.observe_state(log::Level::Debug, "preparing");

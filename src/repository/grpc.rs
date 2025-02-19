@@ -279,6 +279,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
         &self,
         transfer_id: u32,
         repo_id: String,
+        paths: Vec<String>,
     ) -> impl std::future::Future<
         Output = impl Stream<Item = Result<models::BlobTransferItem, InternalError>>
                      + Unpin
@@ -292,6 +293,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
                 .create_transfer_request(CreateTransferRequestRequest {
                     transfer_id,
                     repo_id,
+                    paths,
                 })
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::BlobTransferItem::from))

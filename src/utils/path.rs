@@ -15,7 +15,7 @@ impl RepoPath {
         }
     }
 
-    pub fn from_relative_to_current<P: AsRef<Path>>(
+    pub fn from_current<P: AsRef<Path>>(
         file_path: P,
         root: &RepoPath,
     ) -> Result<Self, InternalError> {
@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_relative_to_current() -> Result<(), InternalError> {
+    fn test_from_current() -> Result<(), InternalError> {
         let original_dir = std::env::current_dir().map_err(InternalError::IO)?;
 
         // Given
@@ -80,7 +80,7 @@ mod tests {
         let file_path = PathBuf::from("subdir/file.txt");
 
         // When
-        let result = RepoPath::from_relative_to_current(file_path, &repo)?;
+        let result = RepoPath::from_current(file_path, &repo)?;
 
         // Then
         let expected = repo.join("subdir/file.txt");
@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_relative_to_current_not_in_repo() -> Result<(), InternalError> {
+    fn test_from_current_not_in_repo() -> Result<(), InternalError> {
         // Given
         let temp_repo = tempdir().map_err(InternalError::IO)?;
         let repo = RepoPath::from_root(temp_repo.path());
@@ -101,7 +101,7 @@ mod tests {
         let file_path = PathBuf::from("/not-part-of-repo.txt");
 
         // Then
-        let result = RepoPath::from_relative_to_current(file_path, &repo);
+        let result = RepoPath::from_current(file_path, &repo);
         assert!(result.is_err());
 
         Ok(())

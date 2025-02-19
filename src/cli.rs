@@ -53,11 +53,15 @@ pub enum Commands {
     Pull {
         #[arg(help = "Remote from which to pull files")]
         connection_name: String,
+        #[arg(help = "Paths to be pulled (default: all paths)")]
+        paths: Vec<PathBuf>,
     },
     /// Push local files to a remote repository
     Push {
         #[arg(help = "Remote to push files to")]
         connection_name: String,
+        #[arg(help = "Paths to be pushed (default: all paths)")]
+        paths: Vec<PathBuf>,
     },
     /// List missing files in the repository
     Missing {
@@ -177,12 +181,14 @@ pub async fn run_cli(
         Commands::Sync { connection_name } => {
             commands::sync::sync(cli.path, connection_name, output).await
         }
-        Commands::Pull { connection_name } => {
-            commands::pull::pull(cli.path, connection_name, output).await
-        }
-        Commands::Push { connection_name } => {
-            commands::push::push(cli.path, connection_name, output).await
-        }
+        Commands::Pull {
+            connection_name,
+            paths,
+        } => commands::pull::pull(cli.path, connection_name, paths, output).await,
+        Commands::Push {
+            connection_name,
+            paths,
+        } => commands::push::push(cli.path, connection_name, paths, output).await,
         Commands::Fsck { connection_name } => {
             commands::fsck::fsck(cli.path, connection_name, output).await
         }

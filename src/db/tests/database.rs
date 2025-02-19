@@ -394,7 +394,7 @@ mod tests {
 
         let transfer_id = 123;
         let mut populate_stream = db
-            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into())
+            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into(), vec![])
             .await;
         let mut populated = Vec::new();
         while let Some(item) = populate_stream.next().await {
@@ -448,6 +448,7 @@ mod tests {
                 transfer_id,
                 repo.repo_id.clone(),
                 "remote_repo".into(),
+                vec![],
             )
             .await;
         let mut populated = Vec::new();
@@ -834,7 +835,7 @@ mod tests {
         let transfer_id = 999;
 
         let mut populate_stream = db
-            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into())
+            .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into(), vec![])
             .await;
         while let Some(_item) = populate_stream.next().await {}
 

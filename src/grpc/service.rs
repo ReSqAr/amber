@@ -214,10 +214,11 @@ where
         let CreateTransferRequestRequest {
             transfer_id,
             repo_id,
+            paths,
         } = request.into_inner();
         let stream = self
             .repository
-            .create_transfer_request(transfer_id, repo_id)
+            .create_transfer_request(transfer_id, repo_id, paths)
             .await
             .err_into()
             .map_ok::<TransferItem, _>(models::BlobTransferItem::into);

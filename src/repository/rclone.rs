@@ -79,10 +79,11 @@ impl Receiver<FileTransferItem> for RCloneStore {
         &self,
         transfer_id: u32,
         repo_id: String,
+        paths: Vec<String>,
     ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
         self.local
             .db()
-            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id)
+            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
             .await
             .err_into()
             .boxed()

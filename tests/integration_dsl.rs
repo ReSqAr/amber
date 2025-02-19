@@ -608,6 +608,55 @@ async fn integration_test_two_repo_sync() -> Result<(), anyhow::Error> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_two_repo_push_path_selector() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file to-be-copied.txt "content to be transfered" 
+        @a write_file not-transfered.txt "content only in a" 
+        @a amber add
+
+        @b amber init b
+
+        @a amber remote add b local $ROOT/b
+
+        # action
+        @a amber push b to-be-copied.txt
+        @b amber sync
+
+        # then
+        @b assert_exists to-be-copied.txt "content to be transfered"
+        @b assert_does_not_exist not-transfered.txt
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_two_repo_pull_path_selector() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+
+        @b amber init b
+        @b write_file to-be-copied.txt "content to be transfered" 
+        @b write_file not-transfered.txt "content only in a" 
+        @b amber add
+
+        @a amber remote add b local $ROOT/b
+
+        # action
+        @a amber pull b to-be-copied.txt
+
+        # then
+        @a assert_exists to-be-copied.txt "content to be transfered"
+        @a assert_does_not_exist not-transfered.txt
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_test_two_repo_sync_same_filename_pull_push() -> Result<(), anyhow::Error> {
     let script = r#"
         # when

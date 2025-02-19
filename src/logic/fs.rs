@@ -24,7 +24,7 @@ pub(crate) async fn rm(
     let mut deleted = 0;
     let mut not_found = 0;
     for file in files {
-        let path = RepoPath::from_relative_to_current(&file, &root)?;
+        let path = RepoPath::from_current(&file, &root)?;
         let mut obs = BaseObserver::with_id("fs:rm:file", path.rel().to_string_lossy());
 
         if fs::metadata(&file)
@@ -87,8 +87,8 @@ pub(crate) async fn mv(
         return Err(AppError::DestinationDoesExist(destination.to_string_lossy().into()).into());
     }
 
-    let source = RepoPath::from_relative_to_current(source, &root)?;
-    let destination = RepoPath::from_relative_to_current(destination, &root)?;
+    let source = RepoPath::from_current(source, &root)?;
+    let destination = RepoPath::from_current(destination, &root)?;
 
     let mut obs = BaseObserver::with_id("fs:mv:file", source.rel().to_string_lossy());
 

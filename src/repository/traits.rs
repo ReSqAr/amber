@@ -164,6 +164,7 @@ pub trait Receiver<T: TransferItem> {
         &self,
         transfer_id: u32,
         repo_id: String,
+        paths: Vec<String>,
     ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
 
     fn finalise_transfer(

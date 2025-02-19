@@ -11,15 +11,22 @@ use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
+use crate::utils::path::RepoPath;
 use std::path::PathBuf;
 
 pub async fn pull(
     maybe_root: Option<PathBuf>,
     connection_name: String,
+    paths: Vec<PathBuf>,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
+    let root = local.root();
+    let paths = paths
+        .iter()
+        .map(|p| RepoPath::from_current(p, &root))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
@@ -34,14 +41,14 @@ pub async fn pull(
         let count = match remote {
             WrappedRepository::Local(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &remote, &local, connection).await?
+                transfer::<BlobTransferItem>(&local, &remote, &local, connection, paths).await?
             }
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &remote, &local, connection).await?
+                transfer::<BlobTransferItem>(&local, &remote, &local, connection, paths).await?
             }
             WrappedRepository::RClone(remote) => {
-                transfer::<FileTransferItem>(&local, &remote, &local, connection).await?
+                transfer::<FileTransferItem>(&local, &remote, &local, connection, paths).await?
             }
         };
 

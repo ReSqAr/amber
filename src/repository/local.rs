@@ -540,6 +540,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
         &self,
         transfer_id: u32,
         repo_id: String,
+        paths: Vec<String>,
     ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
         let rclone_target_path = self.rclone_target_path(transfer_id);
         if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
@@ -547,7 +548,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
         }
 
         self.db
-            .populate_missing_blobs_for_transfer(transfer_id, repo_id)
+            .populate_missing_blobs_for_transfer(transfer_id, repo_id, paths)
             .await
             .err_into()
             .boxed()
@@ -614,6 +615,7 @@ impl Receiver<FileTransferItem> for LocalRepository {
         &self,
         transfer_id: u32,
         repo_id: String,
+        paths: Vec<String>,
     ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
         let rclone_target_path = self.rclone_target_path(transfer_id);
         if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
@@ -621,7 +623,7 @@ impl Receiver<FileTransferItem> for LocalRepository {
         }
 
         self.db
-            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id)
+            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
             .await
             .err_into()
             .boxed()

@@ -988,6 +988,7 @@ impl Database {
         &self,
         transfer_id: u32,
         remote_repo_id: String,
+        paths: Vec<String>,
     ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream(
             query(
@@ -1004,16 +1005,29 @@ impl Database {
                         blob_id,
                         blob_size
                     FROM latest_available_blobs
-                    WHERE repo_id = ?
+                    WHERE repo_id = $1
+                ),
+                path_selectors AS (
+                    SELECT value AS path_selector
+                    FROM json_each($2)
+                ),
+                selected_files AS (
+                    SELECT f.blob_id, f.path
+                    FROM latest_filesystem_files f
+                    INNER JOIN path_selectors p ON f.path LIKE p.path_selector || '%'
+                    UNION ALL
+                    SELECT f.blob_id, f.path
+                    FROM latest_filesystem_files f
+                    WHERE $2 = '[]'
                 ),
                 missing_blob_ids AS (
                     SELECT DISTINCT f.blob_id
-                    FROM latest_filesystem_files f
+                    FROM selected_files f
                     LEFT JOIN local_blobs lb ON f.blob_id = lb.blob_id
                     WHERE lb.blob_id IS NULL
                 )
             SELECT
-                ? AS transfer_id,
+                $3 AS transfer_id,
                 m.blob_id,
                 rb.blob_size,
                 CASE
@@ -1026,6 +1040,7 @@ impl Database {
             RETURNING transfer_id, blob_id, path;",
             )
                 .bind(remote_repo_id)
+                .bind(serde_json::to_string(&paths).unwrap())
                 .bind(transfer_id)
         )
     }
@@ -1045,6 +1060,7 @@ impl Database {
         transfer_id: u32,
         local_repo_id: String,
         remote_repo_id: String,
+        paths: Vec<String>,
     ) -> DBOutputStream<'static, FileTransferItem> {
         self.stream(
             query(
@@ -1054,26 +1070,39 @@ impl Database {
                 local_blobs AS (
                     SELECT blob_id
                     FROM latest_available_blobs
-                    WHERE repo_id = ?
+                    WHERE repo_id = $1
                 ),
                 remote_blobs AS (
                     SELECT
                         blob_id,
                         blob_size
                     FROM latest_available_blobs
-                    WHERE repo_id = ?
+                    WHERE repo_id = $2
+                ),
+                path_selectors AS (
+                    SELECT value AS path_selector
+                    FROM json_each($3)
+                ),
+                selected_files AS (
+                    SELECT f.blob_id, f.path
+                    FROM latest_filesystem_files f
+                    INNER JOIN path_selectors p ON f.path LIKE p.path_selector || '%'
+                    UNION ALL
+                    SELECT f.blob_id, f.path
+                    FROM latest_filesystem_files f
+                    WHERE $3 = '[]'
                 ),
                 missing_file_blob_ids AS (
                     SELECT
                         f.blob_id,
                         MIN(f.path) as path
-                    FROM latest_filesystem_files f
+                    FROM selected_files f
                     LEFT JOIN local_blobs lb ON f.blob_id = lb.blob_id
                     WHERE lb.blob_id IS NULL
                     GROUP BY f.blob_id
                 )
             SELECT
-                ? AS transfer_id,
+                $4 AS transfer_id,
                 m.blob_id,
                 rb.blob_size,
                 m.path
@@ -1083,6 +1112,7 @@ impl Database {
             )
             .bind(local_repo_id)
             .bind(remote_repo_id)
+            .bind(serde_json::to_string(&paths).unwrap())
             .bind(transfer_id),
         )
     }
