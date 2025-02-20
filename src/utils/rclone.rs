@@ -147,6 +147,7 @@ pub struct RcloneStats {
     #[serde(default)]
     pub bytes: u64,
     pub total_bytes: u64,
+    pub speed: f64,
     pub eta: Option<f64>,
     #[serde(default)]
     pub transferring: Vec<TransferProgress>,

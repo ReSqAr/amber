@@ -104,7 +104,7 @@ async fn execute_rclone(
                 eta,
                 total_bytes,
                 transferring,
-                ..
+                speed,
             }) => {
                 let mut seen_files = HashSet::new();
 
@@ -130,13 +130,14 @@ async fn execute_rclone(
                 files.retain(|key, _| seen_files.contains(key));
 
                 let msg = format!(
-                    "{}/{} ETA: {}",
+                    "{}/{} speed: {}/s ETA: {}",
                     units::human_readable_size(bytes),
                     units::human_readable_size(total_bytes),
                     match eta {
                         None => "-".into(),
                         Some(eta) => format!("{}s", eta),
-                    }
+                    },
+                    units::human_readable_size(speed as u64)
                 );
                 obs.observe_state(log::Level::Debug, msg);
             }

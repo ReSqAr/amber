@@ -12,7 +12,7 @@ use std::process;
 pub struct Cli {
     #[arg(
         long,
-        help = "path to the repository (default: current working directory)"
+        help = "path to the repository"
     )]
     pub path: Option<PathBuf>,
 
