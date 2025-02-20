@@ -74,13 +74,34 @@ mod tests {
 
         // Given
         let temp_repo = tempdir().map_err(InternalError::IO)?;
-        let repo = RepoPath::from_root(temp_repo.path());
+        let repo = RepoPath::from_root(temp_repo.path().canonicalize()?);
         std::env::set_current_dir(&repo).map_err(InternalError::IO)?;
 
-        let file_path = PathBuf::from("subdir/file.txt");
+        // When
+        let result = RepoPath::from_current("subdir/file.txt", &repo)?;
+
+        // Then
+        let expected = repo.join("subdir/file.txt");
+        assert_eq!(result.abs(), expected.abs());
+        assert_eq!(result.rel(), expected.rel());
+
+        // Restore
+        std::env::set_current_dir(original_dir).map_err(InternalError::IO)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_current_subdir() -> Result<(), InternalError> {
+        let original_dir = std::env::current_dir().map_err(InternalError::IO)?;
+
+        // Given
+        let temp_repo = tempdir().map_err(InternalError::IO)?;
+        let repo = RepoPath::from_root(temp_repo.path().canonicalize()?);
+        std::fs::create_dir_all(repo.join("subdir"))?;
+        std::env::set_current_dir(repo.join("subdir")).map_err(InternalError::IO)?;
 
         // When
-        let result = RepoPath::from_current(file_path, &repo)?;
+        let result = RepoPath::from_current("file.txt", &repo)?;
 
         // Then
         let expected = repo.join("subdir/file.txt");
