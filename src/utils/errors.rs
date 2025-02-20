@@ -61,6 +61,10 @@ pub enum InternalError {
     Ignore(#[from] ignore::Error),
     #[error("rclone error: exit code: {0}")]
     RClone(i32),
+    #[error(
+        "rclone configuration error: cannot extend global configuration with specific targets"
+    )]
+    RCloneMixedConfig,
     #[error("ssh connection error: {0}")]
     Ssh(String),
     #[error("ssh error: {0}")]

@@ -1,6 +1,5 @@
 # PROJECT MANAGEMENT
 
-- rclone QoL improvements
 - README
 
 - add documentation folder with knowledge base articles on:

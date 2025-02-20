@@ -10,10 +10,7 @@ use std::process;
 #[command(version = "0.1.0")]
 #[command(about = "Distributed blobs", long_about = None)]
 pub struct Cli {
-    #[arg(
-        long,
-        help = "path to the repository"
-    )]
+    #[arg(long, help = "path to the repository")]
     pub path: Option<PathBuf>,
 
     #[command(subcommand)]

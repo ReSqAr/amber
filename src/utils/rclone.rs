@@ -1,144 +1,21 @@
 use crate::utils::errors::InternalError;
-use aes::cipher::{KeyIvInit, StreamCipher};
-use base64::Engine;
 use log::debug;
 use serde::Deserialize;
+use std::fmt::Debug;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-#[derive(Debug, Clone)]
-pub struct LocalConfig {
-    pub path: String,
+pub enum ConfigSection {
+    None,
+    Config(String),
+    GlobalConfig,
 }
 
-impl LocalConfig {
-    fn to_rclone_arg(&self) -> String {
-        self.path.clone()
-    }
-
-    fn to_config_section(&self) -> Option<String> {
-        None
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RCloneConfig {
-    pub remote_name: String,
-    pub config: String,
-    pub remote_path: String,
-}
-
-impl RCloneConfig {
-    fn to_rclone_arg(&self) -> String {
-        format!("{}:{}", self.remote_name, self.remote_path)
-    }
-
-    fn to_config_section(&self) -> Option<String> {
-        Some(format!("[{}]\n{}\n", self.remote_name, self.config))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum SshAuth {
-    Password(String),
-    Agent,
-}
-
-#[derive(Debug, Clone)]
-pub struct SshConfig {
-    pub remote_name: String,
-    pub host: String,
-    pub port: Option<u16>,
-    pub user: String,
-    pub auth: SshAuth,
-    pub remote_path: String,
-}
-
-const RCLONE_KEY: [u8; 32] = [
-    0x9c, 0x93, 0x5b, 0x48, 0x73, 0x0a, 0x55, 0x4d, 0x6b, 0xfd, 0x7c, 0x63, 0xc8, 0x86, 0xa9, 0x2b,
-    0xd3, 0x90, 0x19, 0x8e, 0xb8, 0x12, 0x8a, 0xfb, 0xf4, 0xde, 0x16, 0x2b, 0x8b, 0x95, 0xf6, 0x38,
-];
-
-type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
-
-fn rclone_obscure_password(input: &str) -> String {
-    if input.is_empty() {
-        return "".to_string();
-    }
-    let iv = [0u8; 16];
-    let mut buffer = Vec::with_capacity(iv.len() + input.len());
-    buffer.extend_from_slice(&iv);
-    buffer.extend_from_slice(input.as_bytes());
-    let mut cipher = Aes256Ctr::new(&RCLONE_KEY.into(), &iv.into());
-    cipher.apply_keystream(&mut buffer[16..]);
-    let engine = base64::engine::GeneralPurpose::new(
-        &base64::alphabet::URL_SAFE,
-        base64::engine::general_purpose::NO_PAD,
-    );
-    engine.encode(&buffer)
-}
-
-impl SshConfig {
-    fn to_rclone_arg(&self) -> String {
-        format!("{}:{}", self.remote_name, self.remote_path)
-    }
-
-    fn to_config_section(&self) -> Option<String> {
-        let SshConfig {
-            remote_name,
-            host,
-            port,
-            user,
-            auth,
-            ..
-        } = self;
-        let mut lines = vec![
-            format!("[{remote_name}]"),
-            "type = sftp".into(),
-            format!("host = {host}"),
-            format!("user = {user}"),
-        ];
-        if let Some(port) = port {
-            lines.push(format!("port = {port}"));
-        }
-
-        match auth {
-            SshAuth::Password(password) => {
-                lines.push(format!("pass = {}", rclone_obscure_password(password)))
-            }
-            SshAuth::Agent => lines.push("key_use_agent = true".into()),
-        }
-
-        lines.push("".into());
-        Some(lines.join("\n"))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum RcloneTarget {
-    Local(LocalConfig),
-    RClone(RCloneConfig),
-    Ssh(SshConfig),
-}
-
-impl RcloneTarget {
-    pub fn to_rclone_arg(&self) -> String {
-        match self {
-            RcloneTarget::Local(cfg) => cfg.to_rclone_arg(),
-            RcloneTarget::RClone(cfg) => cfg.to_rclone_arg(),
-            RcloneTarget::Ssh(cfg) => cfg.to_rclone_arg(),
-        }
-    }
-
-    pub fn to_config_section(&self) -> Option<String> {
-        match self {
-            RcloneTarget::Local(cfg) => cfg.to_config_section(),
-            RcloneTarget::RClone(cfg) => cfg.to_config_section(),
-            RcloneTarget::Ssh(cfg) => cfg.to_config_section(),
-        }
-    }
+pub trait RCloneTarget: Clone {
+    fn to_rclone_arg(&self) -> String;
+    fn to_config_section(&self) -> ConfigSection;
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,29 +80,39 @@ pub async fn run_rclone<F>(
     operation: Operation,
     temp_path: &Path,
     file_list_path: &Path,
-    source: RcloneTarget,
-    destination: RcloneTarget,
+    source: impl RCloneTarget,
+    destination: impl RCloneTarget,
     mut callback: F,
 ) -> Result<(), InternalError>
 where
     F: FnMut(RcloneEvent) + Send + 'static,
 {
-    let mut sections = Vec::new();
-    if let Some(s) = source.to_config_section() {
-        sections.push(s);
-    }
-    if let Some(s) = destination.to_config_section() {
-        sections.push(s);
-    }
-
-    let config_contents = sections.join("\n");
-    let config_path = temp_path.join("rclone.conf");
+    let source_config_section = source.to_config_section();
+    let destination_config_section = destination.to_config_section();
+    let config_path = if matches!(source_config_section, ConfigSection::Config(_))
+        || matches!(destination_config_section, ConfigSection::Config(_))
     {
+        let mut sections = Vec::new();
+        match source_config_section {
+            ConfigSection::Config(c) => sections.push(c),
+            ConfigSection::None => {}
+            ConfigSection::GlobalConfig => return Err(InternalError::RCloneMixedConfig),
+        }
+        match destination_config_section {
+            ConfigSection::Config(c) => sections.push(c),
+            ConfigSection::None => {}
+            ConfigSection::GlobalConfig => return Err(InternalError::RCloneMixedConfig),
+        }
+
+        let config_path = temp_path.join("rclone.conf");
         let file = fs::File::create(&config_path).await?;
         let mut writer = tokio::io::BufWriter::new(file);
-        writer.write_all(config_contents.as_bytes()).await?;
+        writer.write_all(sections.join("\n").as_bytes()).await?;
         writer.flush().await?;
-    }
+        Some(config_path)
+    } else {
+        None
+    };
 
     let source_arg = source.to_rclone_arg();
     let dest_arg = destination.to_rclone_arg();
@@ -236,10 +123,11 @@ where
     };
 
     let mut command = Command::new("rclone");
+    command.arg(operation.to_rclone_arg());
+    if let Some(config_path) = config_path {
+        command.arg("--config").arg(&config_path);
+    }
     command
-        .arg(operation.to_rclone_arg())
-        .arg("--config")
-        .arg(&config_path)
         .arg("--files-from")
         .arg(file_list_path.display().to_string())
         .arg("--use-json-log")
@@ -455,6 +343,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
+    pub struct LocalTarget {
+        pub path: String,
+    }
+
+    impl RCloneTarget for LocalTarget {
+        fn to_rclone_arg(&self) -> String {
+            self.path.clone()
+        }
+
+        fn to_config_section(&self) -> ConfigSection {
+            ConfigSection::None
+        }
+    }
+
     #[tokio::test]
     async fn test_rclone_copy_local_to_local_single_file() -> Result<(), InternalError> {
         let base_dir = tempdir().expect("failed to create temp dir");
@@ -477,15 +380,12 @@ mod tests {
         let rclone_temp_dir = base_path.join("rclone_temp");
         fs::create_dir_all(&rclone_temp_dir).await?;
 
-        let source_config = LocalConfig {
+        let source_target = LocalTarget {
             path: source_dir.to_string_lossy().into_owned(),
         };
-        let dest_config = LocalConfig {
+        let dest_target = LocalTarget {
             path: dest_dir.to_string_lossy().into_owned(),
         };
-
-        let source_target = RcloneTarget::Local(source_config);
-        let dest_target = RcloneTarget::Local(dest_config);
 
         let callback = |_event: RcloneEvent| {};
 

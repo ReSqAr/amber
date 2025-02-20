@@ -7,7 +7,7 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::rclone::{run_rclone, Operation, RcloneEvent, RcloneStats, RcloneTarget};
+use crate::utils::rclone::{run_rclone, Operation, RCloneTarget, RcloneEvent, RcloneStats};
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -63,8 +63,8 @@ fn write_rclone_files_clone<T: TransferItem>(
 
 async fn execute_rclone(
     temp_path: &Path,
-    source: RcloneTarget,
-    destination: RcloneTarget,
+    source: impl RCloneTarget,
+    destination: impl RCloneTarget,
     rclone_files_path: &Path,
     expected_count: u64,
 ) -> Result<u64, InternalError> {
@@ -133,11 +133,11 @@ async fn execute_rclone(
                     "{}/{} speed: {}/s ETA: {}",
                     units::human_readable_size(bytes),
                     units::human_readable_size(total_bytes),
+                    units::human_readable_size(speed as u64),
                     match eta {
                         None => "-".into(),
                         Some(eta) => format!("{}s", eta),
                     },
-                    units::human_readable_size(speed as u64)
                 );
                 obs.observe_state(log::Level::Debug, msg);
             }

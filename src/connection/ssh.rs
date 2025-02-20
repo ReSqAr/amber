@@ -1,7 +1,10 @@
 use crate::repository::grpc::GRPCClient;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use crate::utils::{port, rclone};
+use crate::utils::port;
+use crate::utils::rclone::{ConfigSection, RCloneTarget};
+use base64::Engine;
+use cipher::{KeyIvInit, StreamCipher};
 use log::{debug, error, warn};
 use rand::distr::Alphanumeric;
 use rand::Rng;
@@ -72,8 +75,8 @@ impl SshConfig {
         })
     }
 
-    pub(crate) fn as_rclone_target(&self, remote_path: String) -> rclone::RcloneTarget {
-        rclone::RcloneTarget::Ssh(rclone::SshConfig {
+    pub(crate) fn as_rclone_target(&self, remote_path: String) -> SshTarget {
+        SshTarget {
             remote_name: rand::rng()
                 .sample_iter(&Alphanumeric)
                 .take(16)
@@ -83,11 +86,11 @@ impl SshConfig {
             port: self.port,
             user: self.user.clone(),
             auth: match self.auth.clone() {
-                SshAuth::Password(pw) => rclone::SshAuth::Password(pw),
-                SshAuth::Agent => rclone::SshAuth::Agent,
+                SshAuth::Password(pw) => SshAuth::Password(pw),
+                SshAuth::Agent => SshAuth::Agent,
             },
             remote_path,
-        })
+        }
     }
 
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
@@ -324,4 +327,74 @@ async fn setup_app_via_ssh(
         port: local_port,
         auth_key,
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct SshTarget {
+    pub remote_name: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub user: String,
+    pub auth: SshAuth,
+    pub remote_path: String,
+}
+
+impl RCloneTarget for SshTarget {
+    fn to_rclone_arg(&self) -> String {
+        format!("{}:{}", self.remote_name, self.remote_path)
+    }
+
+    fn to_config_section(&self) -> ConfigSection {
+        let SshTarget {
+            remote_name,
+            host,
+            port,
+            user,
+            auth,
+            ..
+        } = self;
+        let mut lines = vec![
+            format!("[{remote_name}]"),
+            "type = sftp".into(),
+            format!("host = {host}"),
+            format!("user = {user}"),
+        ];
+        if let Some(port) = port {
+            lines.push(format!("port = {port}"));
+        }
+
+        match auth {
+            SshAuth::Password(password) => {
+                lines.push(format!("pass = {}", rclone_obscure_password(password)))
+            }
+            SshAuth::Agent => lines.push("key_use_agent = true".into()),
+        }
+
+        lines.push("".into());
+        ConfigSection::Config(lines.join("\n"))
+    }
+}
+
+const RCLONE_KEY: [u8; 32] = [
+    0x9c, 0x93, 0x5b, 0x48, 0x73, 0x0a, 0x55, 0x4d, 0x6b, 0xfd, 0x7c, 0x63, 0xc8, 0x86, 0xa9, 0x2b,
+    0xd3, 0x90, 0x19, 0x8e, 0xb8, 0x12, 0x8a, 0xfb, 0xf4, 0xde, 0x16, 0x2b, 0x8b, 0x95, 0xf6, 0x38,
+];
+
+type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
+
+fn rclone_obscure_password(input: &str) -> String {
+    if input.is_empty() {
+        return "".to_string();
+    }
+    let iv = [0u8; 16];
+    let mut buffer = Vec::with_capacity(iv.len() + input.len());
+    buffer.extend_from_slice(&iv);
+    buffer.extend_from_slice(input.as_bytes());
+    let mut cipher = Aes256Ctr::new(&RCLONE_KEY.into(), &iv.into());
+    cipher.apply_keystream(&mut buffer[16..]);
+    let engine = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::general_purpose::NO_PAD,
+    );
+    engine.encode(&buffer)
 }

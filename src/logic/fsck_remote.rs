@@ -8,7 +8,7 @@ use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::rclone::{run_rclone, Operation, RcloneEvent, RcloneStats, RcloneTarget};
+use crate::utils::rclone::{run_rclone, Operation, RCloneTarget, RcloneEvent, RcloneStats};
 use crate::utils::units;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -190,8 +190,8 @@ enum RCloneResult {
 
 async fn execute_rclone(
     temp_path: &Path,
-    source: RcloneTarget,
-    destination: RcloneTarget,
+    source: impl RCloneTarget,
+    destination: impl RCloneTarget,
     rclone_files_path: &Path,
     expected_count: u64,
     listener: mpsc::UnboundedSender<RCloneResult>,
