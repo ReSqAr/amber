@@ -5,6 +5,7 @@ use crate::logic::state::VirtualFileState;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, VirtualFilesystem,
 };
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
@@ -90,8 +91,10 @@ async fn fsck_blobs(
         }
     });
 
-    let stream =
-        futures::StreamExt::buffer_unordered(stream, local.buffer_size(BufferType::FsckBuffer));
+    let stream = StreamAdaptive::buffer_adaptive_unordered(
+        stream,
+        local.buffer_size(BufferType::FsckBuffer),
+    );
 
     stream
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })

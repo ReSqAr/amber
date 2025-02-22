@@ -4,6 +4,7 @@
 pub enum Value {
     String(String),
     U64(u64),
+    F64(f64),
     Bool(bool),
 }
 

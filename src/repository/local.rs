@@ -16,6 +16,7 @@ use crate::repository::traits::{
     TransferItem, VirtualFilesystem,
 };
 use crate::utils;
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
@@ -530,7 +531,8 @@ impl Sender<BlobTransferItem> for LocalRepository {
         });
 
         // allow multiple hard link operations to run concurrently
-        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
+        let stream =
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
 
         let mut count = 0;
         pin_mut!(stream);
@@ -609,7 +611,8 @@ impl Sender<FileTransferItem> for LocalRepository {
         });
 
         // allow multiple hard link operations to run concurrently
-        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
+        let stream =
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
 
         let mut count = 0;
         pin_mut!(stream);

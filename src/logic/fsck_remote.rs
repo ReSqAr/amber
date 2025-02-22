@@ -7,6 +7,7 @@ use crate::logic::files;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
 use crate::utils::units;
@@ -74,7 +75,7 @@ pub(crate) async fn fsck_remote(
             }
         });
 
-        let mut stream = futures::StreamExt::buffer_unordered(
+        let mut stream = StreamAdaptive::buffer_adaptive_unordered(
             stream,
             local.buffer_size(BufferType::FsckMaterialiseBuffer),
         );

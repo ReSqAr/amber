@@ -1,3 +1,4 @@
+pub(crate) mod buffer_adaptive_unordered;
 pub(crate) mod errors;
 pub(crate) mod flow;
 pub(crate) mod fs;

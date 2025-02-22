@@ -189,6 +189,7 @@ impl ProgressBarManager for PGPositionManager {
                 Value::String(_) => continue,
                 Value::Bool(_) => continue,
                 Value::U64(value) => value,
+                Value::F64(_) => continue,
             };
             match d.key.as_str() {
                 "position" => self.last_position = Some(value),
@@ -238,6 +239,7 @@ impl ProgressBarManager for PGMessageManager {
             let value = match &d.value {
                 Value::String(value) => value,
                 Value::U64(_) => continue,
+                Value::F64(_) => continue,
                 Value::Bool(_) => continue,
             };
             if d.key == "state" {

@@ -3,6 +3,7 @@ use crate::flightdeck::base::BaseObserver;
 use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
@@ -156,7 +157,7 @@ pub async fn materialise(
         );
 
         // allow multiple blobify operations to run concurrently
-        let stream = futures::StreamExt::buffer_unordered(
+        let stream = StreamAdaptive::buffer_adaptive_unordered(
             stream,
             local.buffer_size(BufferType::Materialise),
         );

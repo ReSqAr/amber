@@ -2,6 +2,7 @@ use crate::db::models::InsertBlob;
 use crate::flightdeck::observer::Observer;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -90,7 +91,7 @@ where
 
     let count = stream
         .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))
-        .buffer_unordered(local.buffer_size(BufferType::Assimilate))
+        .buffer_adaptive_unordered(local.buffer_size(BufferType::Assimilate))
         .inspect_ok(|_| {
             counter.fetch_add(1, Ordering::Relaxed);
             obs.observe_position(log::Level::Trace, counter.load(Ordering::Relaxed));

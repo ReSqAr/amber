@@ -3,6 +3,7 @@ use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
 use crate::flightdeck::base::BaseObserver;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
@@ -344,7 +345,7 @@ pub async fn state(
                     }
                 }
             })
-            .buffer_unordered(checker_buffer_size)
+            .buffer_adaptive_unordered(checker_buffer_size)
             .for_each(|result| async {
                 match result {
                     Ok(observation) => {

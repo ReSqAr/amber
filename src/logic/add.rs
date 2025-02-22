@@ -4,6 +4,7 @@ use crate::logic::blobify::{BlobLockMap, Blobify};
 use crate::logic::state::{VirtualFile, VirtualFileState};
 use crate::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
+use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
@@ -120,7 +121,7 @@ pub(crate) async fn add_files(
         );
 
         // allow multiple blobify operations to run concurrently
-        let stream = futures::StreamExt::buffer_unordered(
+        let stream = StreamAdaptive::buffer_adaptive_unordered(
             stream,
             repository.buffer_size(BufferType::AddFilesBlobifyFutureFileBuffer),
         );

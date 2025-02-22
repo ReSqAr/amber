@@ -46,6 +46,9 @@ impl FilePipe {
             let value = match data.value {
                 Value::String(s) => JsonValue::String(s),
                 Value::U64(u) => JsonValue::Number(serde_json::Number::from(u)),
+                Value::F64(f) => serde_json::Number::from_f64(f)
+                    .map(JsonValue::Number)
+                    .unwrap_or(JsonValue::Null),
                 Value::Bool(b) => JsonValue::Bool(b),
             };
             log_object.insert(data.key, value);
