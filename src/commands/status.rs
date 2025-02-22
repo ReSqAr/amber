@@ -72,11 +72,11 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
                 true => msg.unwrap_or("done".into()),
-                false => msg.unwrap_or("checking".into()),
+                false => msg.unwrap_or("checking files".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} {pos}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
