@@ -133,7 +133,7 @@ async fn execute_rclone(
                     "{}/{} speed: {}/s ETA: {}",
                     units::human_readable_size(bytes),
                     units::human_readable_size(total_bytes),
-                    units::human_readable_size(speed as u64),
+                    units::human_readable_size(speed.unwrap_or(0f64) as u64),
                     match eta {
                         None => "-".into(),
                         Some(eta) => format!("{}s", eta),
