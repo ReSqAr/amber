@@ -1,8 +1,30 @@
+use crate::utils::errors::{AppError, InternalError};
 use log::debug;
 use std::fmt::Debug;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
+
+pub async fn capability_check(path: &PathBuf) -> Result<(), InternalError> {
+    let source = path.join(".capability_check_hardlink_source");
+    let destination = path.join(".capability_check_hardlink_destination");
+
+    {
+        fs::File::create(&source).await?;
+    }
+
+    let result = fs::hard_link(&source, &destination).await;
+
+    let _ = fs::remove_file(&source).await;
+    if result.is_ok() {
+        let _ = fs::remove_file(&destination).await;
+    }
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => Err(AppError::HardlinksNotSupported(e.to_string()).into()),
+    }
+}
 
 pub(crate) async fn are_hardlinked(
     path1: impl AsRef<Path> + Debug,

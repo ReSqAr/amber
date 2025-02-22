@@ -29,6 +29,8 @@ pub enum AppError {
     SourceDoesNotExist(String),
     #[error("destination {0} does already exist")]
     DestinationDoesExist(String),
+    #[error("filesystem does not support hardlinks (error: {0})")]
+    HardlinksNotSupported(String),
 }
 
 #[derive(Error, Debug)]

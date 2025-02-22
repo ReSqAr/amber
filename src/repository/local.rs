@@ -15,6 +15,7 @@ use crate::repository::traits::{
     Local, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
     TransferItem, VirtualFilesystem,
 };
+use crate::utils;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
@@ -139,6 +140,8 @@ impl LocalRepository {
         };
 
         fs::create_dir(repository_path.as_path()).await?;
+
+        utils::fs::capability_check(&repository_path).await?;
 
         let blobs_path = repository_path.join("blobs");
         fs::create_dir_all(blobs_path.as_path()).await?;
