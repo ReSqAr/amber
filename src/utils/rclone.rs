@@ -1,4 +1,4 @@
-use crate::utils::errors::InternalError;
+use crate::utils::errors::{AppError, InternalError};
 use log::debug;
 use serde::Deserialize;
 use std::fmt::Debug;
@@ -73,6 +73,27 @@ impl Operation {
             Operation::Copy => "copy".into(),
             Operation::Check => "check".into(),
         }
+    }
+}
+
+pub async fn check_rclone() -> Result<(), InternalError> {
+    match Command::new("rclone").arg("--version").output().await {
+        Ok(output) => {
+            if output.status.success() {
+                debug!(
+                    "rclone --version output: {}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+                Ok(())
+            } else {
+                Err(AppError::RCloneErr(format!(
+                    "rclone failed during check (error: {})",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+                .into())
+            }
+        }
+        Err(e) => Err(AppError::RCloneErr(e.to_string()).into()),
     }
 }
 

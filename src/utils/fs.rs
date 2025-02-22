@@ -2,10 +2,10 @@ use crate::utils::errors::{AppError, InternalError};
 use log::debug;
 use std::fmt::Debug;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 
-pub async fn capability_check(path: &PathBuf) -> Result<(), InternalError> {
+pub async fn capability_check(path: &Path) -> Result<(), InternalError> {
     let source = path.join(".capability_check_hardlink_source");
     let destination = path.join(".capability_check_hardlink_destination");
 

@@ -31,6 +31,8 @@ pub enum AppError {
     DestinationDoesExist(String),
     #[error("filesystem does not support hardlinks (error: {0})")]
     HardlinksNotSupported(String),
+    #[error("rclone is required but: {0}")]
+    RCloneErr(String),
 }
 
 #[derive(Error, Debug)]

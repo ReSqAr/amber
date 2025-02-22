@@ -8,6 +8,7 @@ use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Metadata};
 use crate::utils::errors::InternalError;
+use crate::utils::rclone;
 use std::path::PathBuf;
 
 fn render_connection_type(connection_type: ConnectionType) -> String {
@@ -110,6 +111,8 @@ async fn add_connection(
     parameter: String,
     local_repository: LocalRepository,
 ) -> Result<EstablishedConnection, InternalError> {
+    rclone::check_rclone().await?;
+
     let established = EstablishedConnection::new(
         local_repository.clone(),
         name.clone(),
