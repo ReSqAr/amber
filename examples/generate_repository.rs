@@ -1,11 +1,11 @@
 use clap::Parser;
 use comfy_table::{Cell, CellAlignment, Table};
 use indicatif::{ProgressBar, ProgressStyle};
-use rand::distr::Alphanumeric;
 use rand::prelude::{IndexedRandom, SliceRandom};
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
+use std::io::BufWriter;
 use std::{
     collections::hash_map::{DefaultHasher, HashMap},
     fs::{self, File},
@@ -268,17 +268,29 @@ fn write_random_file(filepath: &Path, size_bytes: u64, rng: &mut ChaCha8Rng) -> 
     if let Some(parent) = filepath.parent() {
         fs::create_dir_all(parent)?;
     }
-    let block_size = 1024;
-    let block: Vec<u8> = rng.sample_iter(Alphanumeric).take(block_size).collect();
-    let mut file = File::create(filepath)?;
-    let full_blocks = size_bytes / block_size;
-    let remainder = size_bytes % block_size;
+
+    const BLOCK_SIZE: usize = 1024;
+    // Generate one block of truly random data.
+    let mut block = vec![0u8; BLOCK_SIZE];
+    rng.fill_bytes(&mut block);
+
+    let file = File::create(filepath)?;
+    let mut writer = BufWriter::with_capacity(128 * 1024, file);
+
+    let full_blocks = size_bytes / BLOCK_SIZE;
+    let remainder = size_bytes % BLOCK_SIZE;
+
+    // Write the full blocks in a loop.
     for _ in 0..full_blocks {
-        file.write_all(&block)?;
+        writer.write_all(&block)?;
     }
+    // Write any remaining bytes.
     if remainder > 0 {
-        file.write_all(&block[..remainder])?;
+        writer.write_all(&block[..remainder])?;
     }
+
+    // Flush once at the end to reduce system calls.
+    writer.flush()?;
     Ok(())
 }
 
@@ -428,7 +440,9 @@ fn main() -> io::Result<()> {
     let total_tasks = tasks.len();
     println!(
         "Placing {} files with a total of {} bytes (target was {} bytes)...",
-        total_tasks, human_readable_size(accumulated), human_readable_size(accumulated)
+        total_tasks,
+        human_readable_size(accumulated),
+        human_readable_size(accumulated)
     );
     display_stats(&sizes, &tasks, accumulated);
 
