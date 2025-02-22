@@ -1,5 +1,7 @@
 use clap::Parser;
+use comfy_table::{Cell, CellAlignment, Table};
 use indicatif::{ProgressBar, ProgressStyle};
+use rand::distr::Alphanumeric;
 use rand::prelude::{IndexedRandom, SliceRandom};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -13,126 +15,242 @@ use std::{
     sync::Mutex,
 };
 
-/// Represents a file generation band with a specified file size and count.
-struct FileBand {
-    size_bytes: usize,
-    count: usize,
-}
-
-// Define the file bands to be generated.
-const FILE_BANDS: &[FileBand] = &[
-    FileBand { size_bytes: 1 * 1024, count: 30000 },         // 1KB files
-    FileBand { size_bytes: 100 * 1024, count: 20000 },       // 100KB files
-    FileBand { size_bytes: 10 * 1024 * 1024, count: 800 },   // 10MB files
-];
-
-const TOP_LEVEL_FOLDERS: &[&str] = &[
-    "Behemoth", "Canterbury", "Eros", "Pella", "Rocinante", "Razorback", "Tycho",
-];
-
-const SUBFOLDER_CANDIDATES_ORIG: &[&str] = &[
-    "Aberrant", "AbernathyStation", "AgathaKing", "AndersonStation", "Arboghast",
-    "Artemis", "Basalt", "Belter", "Ceres", "Chronicle", "Cipher", "Ganymede",
-    "Kaguya", "Kyiv", "Laconia", "MaoKwikowski", "Martian", "Nauvoo", "Persephone",
-    "Phoebe", "Plasma", "Protogen", "Somnambulist", "Stardust",
-];
-
-const FILENAME_WORDS: &[&str] = &[
-    "amber", "asteroid", "basalt", "belter", "burn", "cascade", "cipher", "chronicle",
-    "cinder", "cobalt", "cosmos", "cradle", "delta", "drift", "drone", "ejecta", "eon",
-    "expanse", "fusion", "gate", "horizon", "injection", "kinetic", "knot", "laser", "lunar",
-    "metal", "nova", "orbital", "plasma", "proto", "quantum", "raze", "ring", "spin", "station",
-    "system", "thrust", "torus", "vacuum", "void", "wander", "whisper", "volt", "xenon", "zenith",
-];
-
-const FILE_EXTENSIONS: &[&str] = &[".txt", ".md", ".log", ".dat", ".cfg", ".bin"];
-
-/// Placement weights for files based on folder depth: [root, top-level, second-level].
-const PLACEMENT_WEIGHTS: &[f64] = &[0.001, 0.05, 0.95];
-
-/// Represents a task to create a file with a given size and target path.
-struct FileTask {
-    size_bytes: usize,
-    filepath: PathBuf,
-}
-
-/// Command-line arguments.
+/// CLI options.
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
-    /// Target directory where files and folders will be created.
+    /// Target directory where files/folders will be created.
     target_path: PathBuf,
 
     /// Optional random seed (default is 42)
     #[arg(short, long, default_value_t = 42)]
     seed: u64,
+
+    /// Total output size.
+    #[arg(long, default_value = "10GB")]
+    total: String,
+
+    /// Comma-separated list of candidate file sizes.
+    #[arg(long, default_value = "1KB,100KB,10MB")]
+    sizes: String,
+
+    /// Exponent α for weighting: weight = (file_size)^(–α).
+    #[arg(long, default_value_t = 0.5)]
+    alpha: f64,
 }
 
-/// Create a two-level folder structure inside the given target directory.
-/// Returns a vector with all folder paths (including the target itself).
-fn create_folders_and_return_paths(target: &Path, rng: &mut ChaCha8Rng) -> io::Result<Vec<PathBuf>> {
-    let mut all_paths = vec![target.to_path_buf()];
-    let mut subfolder_candidates: Vec<&str> = SUBFOLDER_CANDIDATES_ORIG.to_vec();
-    subfolder_candidates.shuffle(rng);
+/// Constants for folder structure, filenames, and placement weights.
+const TOP_LEVEL_FOLDERS: &[&str] = &[
+    "Behemoth",
+    "Canterbury",
+    "Eros",
+    "Pella",
+    "Rocinante",
+    "Razorback",
+    "Tycho",
+];
+const SUBFOLDER_CANDIDATES_ORIG: &[&str] = &[
+    "Aberrant",
+    "AbernathyStation",
+    "AgathaKing",
+    "AndersonStation",
+    "Arboghast",
+    "Artemis",
+    "Basalt",
+    "Belter",
+    "Ceres",
+    "Chronicle",
+    "Cipher",
+    "Ganymede",
+    "Kaguya",
+    "Kyiv",
+    "Laconia",
+    "MaoKwikowski",
+    "Martian",
+    "Nauvoo",
+    "Persephone",
+    "Phoebe",
+    "Plasma",
+    "Protogen",
+    "Somnambulist",
+    "Stardust",
+];
+const PLACEMENT_WEIGHTS: [f64; 3] = [0.001, 0.05, 0.95];
+const FILENAME_WORDS: &[&str] = &[
+    "amber",
+    "asteroid",
+    "basalt",
+    "belter",
+    "burn",
+    "cascade",
+    "cipher",
+    "chronicle",
+    "cinder",
+    "cobalt",
+    "cosmos",
+    "cradle",
+    "delta",
+    "drift",
+    "drone",
+    "ejecta",
+    "eon",
+    "expanse",
+    "fusion",
+    "gate",
+    "horizon",
+    "injection",
+    "kinetic",
+    "knot",
+    "laser",
+    "lunar",
+    "metal",
+    "nova",
+    "orbital",
+    "plasma",
+    "proto",
+    "quantum",
+    "raze",
+    "ring",
+    "spin",
+    "station",
+    "system",
+    "thrust",
+    "torus",
+    "vacuum",
+    "void",
+    "wander",
+    "whisper",
+    "volt",
+    "xenon",
+    "zenith",
+];
+const FILE_EXTENSIONS: &[&str] = &[".txt", ".md", ".log", ".dat", ".cfg", ".bin"];
 
-    for &folder in TOP_LEVEL_FOLDERS.iter() {
-        let top_folder = target.join(folder);
-        fs::create_dir_all(&top_folder)?;
-        all_paths.push(top_folder.clone());
+/// A candidate file size (in bytes).
+#[derive(Debug, Clone, Copy)]
+struct FileSizeCandidate {
+    bytes: u64,
+}
 
-        // Pick a random number of subfolders between 2 and 5.
-        let count_subfolders = rng.random_range(2..=5);
-        let chosen: Vec<&str> = subfolder_candidates.iter().take(count_subfolders).copied().collect();
+/// Folder classification.
+#[derive(Debug, Clone)]
+enum Folder {
+    Root,
+    First(String),
+    Second { parent: String, name: String },
+}
 
-        // Rotate the chosen candidates to the back.
-        subfolder_candidates.drain(0..count_subfolders);
-        subfolder_candidates.extend(chosen.iter().copied());
+/// A task to create one file.
+struct FileTask {
+    size_bytes: u64,
+    filepath: PathBuf,
+}
 
+/// Parse a size string like "1KB", "100KB", "10MB", "10GB" (case‑insensitive) into bytes.
+fn parse_size(s: &str) -> u64 {
+    let s = s.trim().to_lowercase();
+    if s.ends_with("kb") {
+        s.strip_suffix("kb")
+            .unwrap()
+            .trim()
+            .parse::<f64>()
+            .map(|n| (n * 1024.0) as u64)
+            .unwrap()
+    } else if s.ends_with("mb") {
+        s.strip_suffix("mb")
+            .unwrap()
+            .trim()
+            .parse::<f64>()
+            .map(|n| (n * 1024.0 * 1024.0) as u64)
+            .unwrap()
+    } else if s.ends_with("gb") {
+        s.strip_suffix("gb")
+            .unwrap()
+            .trim()
+            .parse::<f64>()
+            .map(|n| (n * 1024.0 * 1024.0 * 1024.0) as u64)
+            .unwrap()
+    } else {
+        s.parse::<u64>().unwrap()
+    }
+}
+
+/// Convert a Folder enum into an actual filesystem path (relative to the target directory).
+fn folder_to_path(folder: &Folder, target: &Path) -> PathBuf {
+    match folder {
+        Folder::Root => target.to_path_buf(),
+        Folder::First(name) => target.join(name),
+        Folder::Second { parent, name } => target.join(parent).join(name),
+    }
+}
+
+/// Create a two-level folder structure under the target directory.
+/// Returns a vector of Folder items.
+fn create_folders_and_return_folders(
+    target: &Path,
+    rng: &mut ChaCha8Rng,
+) -> io::Result<Vec<Folder>> {
+    let mut folders = Vec::new();
+    // The root folder.
+    folders.push(Folder::Root);
+
+    // Create first-level folders.
+    for &name in TOP_LEVEL_FOLDERS.iter() {
+        let folder = Folder::First(name.to_string());
+        fs::create_dir_all(folder_to_path(&folder, target))?;
+        folders.push(folder);
+    }
+    // Create second-level folders.
+    let mut sub_candidates: Vec<&str> = SUBFOLDER_CANDIDATES_ORIG.to_vec();
+    sub_candidates.shuffle(rng);
+    for &parent in TOP_LEVEL_FOLDERS.iter() {
+        // Randomly choose between 2 and 5 subfolders.
+        let count = rng.random_range(2..6);
+        let chosen: Vec<&str> = sub_candidates.iter().take(count).copied().collect();
+        sub_candidates.drain(0..count);
+        sub_candidates.extend(chosen.iter().copied());
         for sub in chosen {
-            let sub_path = top_folder.join(sub);
-            fs::create_dir_all(&sub_path)?;
-            all_paths.push(sub_path);
+            let folder = Folder::Second {
+                parent: parent.to_string(),
+                name: sub.to_string(),
+            };
+            fs::create_dir_all(folder_to_path(&folder, target))?;
+            folders.push(folder);
         }
     }
-    Ok(all_paths)
+    Ok(folders)
 }
 
-/// Choose a folder from the list based on placement weights.
-fn pick_folder_path(all_paths: &[PathBuf], rng: &mut ChaCha8Rng) -> PathBuf {
-    let mut root_paths = vec![];
-    let mut top_level_paths = vec![];
-    let mut second_level_paths = vec![];
-
-    for p in all_paths {
-        // Depth is calculated relative to the target: depth 0 for the target itself.
-        let depth = p.components().count() - 1;
-        if depth == 0 {
-            root_paths.push(p.clone());
-        } else if depth == 1 {
-            top_level_paths.push(p.clone());
-        } else {
-            second_level_paths.push(p.clone());
+/// Choose a folder (as a Folder enum) from a slice of folders using fixed placement weights.
+/// Groups: Root, First, Second.
+fn pick_folder(folders: &[Folder], rng: &mut ChaCha8Rng) -> Folder {
+    // Partition folders by group.
+    let mut roots = Vec::new();
+    let mut firsts = Vec::new();
+    let mut seconds = Vec::new();
+    for folder in folders {
+        match folder {
+            Folder::Root => roots.push(folder),
+            Folder::First(_) => firsts.push(folder),
+            Folder::Second { .. } => seconds.push(folder),
         }
     }
 
-    let groups = ["root", "top", "second"];
-    let group_choice = groups
-        .choose_weighted(rng, |&g| match g {
-            "root" => PLACEMENT_WEIGHTS[0],
-            "top" => PLACEMENT_WEIGHTS[1],
-            "second" => PLACEMENT_WEIGHTS[2],
-            _ => 0.0,
-        })
-        .unwrap();
-
-    match *group_choice {
-        "root" => root_paths[0].clone(),
-        "top" => top_level_paths.choose(rng).unwrap_or(&root_paths[0]).clone(),
-        _ => second_level_paths.choose(rng).unwrap_or(&root_paths[0]).clone(),
+    let groups = [roots, firsts, seconds];
+    let total_weight: f64 = PLACEMENT_WEIGHTS.iter().sum();
+    let r = rng.random_range(0.0..total_weight);
+    let mut acc = 0.0;
+    for (item, weight) in groups.iter().zip(PLACEMENT_WEIGHTS.iter()) {
+        acc += weight;
+        if r <= acc {
+            return (*item.choose(rng).unwrap()).clone();
+        }
     }
+
+    folders[0].clone()
 }
 
-/// Generate a three-word filename with a random file extension.
+/// Generate a three‑word filename with a random file extension.
 fn generate_three_word_filename(rng: &mut ChaCha8Rng) -> String {
     let words = FILENAME_WORDS.choose_multiple(rng, 3);
     let extension = FILE_EXTENSIONS.choose(rng).unwrap();
@@ -144,24 +262,17 @@ fn generate_three_word_filename(rng: &mut ChaCha8Rng) -> String {
 }
 
 /// Write a file at the given path with the specified size.
-/// A 1KB block of deterministic random bytes is generated and repeated.
-fn write_random_file(filepath: &Path, size_bytes: usize, rng: &mut ChaCha8Rng) -> io::Result<()> {
+/// This version uses a fixed 1KB block generated from alphanumeric characters.
+fn write_random_file(filepath: &Path, size_bytes: u64, rng: &mut ChaCha8Rng) -> io::Result<()> {
+    let size_bytes = size_bytes as usize;
     if let Some(parent) = filepath.parent() {
         fs::create_dir_all(parent)?;
     }
     let block_size = 1024;
-    let pool: Vec<u8> = (b'A'..=b'Z')
-        .chain(b'a'..=b'z')
-        .chain(b'0'..=b'9')
-        .collect();
-    let block: Vec<u8> = (0..block_size)
-        .map(|_| *pool.choose(rng).unwrap())
-        .collect();
-
+    let block: Vec<u8> = rng.sample_iter(Alphanumeric).take(block_size).collect();
     let mut file = File::create(filepath)?;
     let full_blocks = size_bytes / block_size;
     let remainder = size_bytes % block_size;
-
     for _ in 0..full_blocks {
         file.write_all(&block)?;
     }
@@ -171,37 +282,160 @@ fn write_random_file(filepath: &Path, size_bytes: usize, rng: &mut ChaCha8Rng) -
     Ok(())
 }
 
+/// Collect file creation tasks until the total output bytes exceed the target.
+/// Tasks are stored in a HashMap keyed by the final file path (to avoid duplicates).
+fn collect_tasks(
+    total_target: u64,
+    sizes: &[FileSizeCandidate],
+    weights: &[f64],
+    rng: &mut ChaCha8Rng,
+    folders: &[Folder],
+) -> (HashMap<PathBuf, FileTask>, u64) {
+    let mut tasks: HashMap<PathBuf, FileTask> = HashMap::new();
+    let mut accumulated: u64 = 0;
+    let total_weight: f64 = weights.iter().sum();
+
+    while accumulated < total_target {
+        // Weighted selection: choose candidate index.
+        let r = rng.random_range(0.0..total_weight);
+        let mut acc = 0.0;
+        let mut chosen_idx = 0;
+        for (i, w) in weights.iter().enumerate() {
+            acc += w;
+            if r <= acc {
+                chosen_idx = i;
+                break;
+            }
+        }
+        let candidate = sizes[chosen_idx];
+
+        // Choose a folder and generate a filename.
+        let folder = pick_folder(folders, rng);
+        let path = folder_to_path(&folder, &PathBuf::from("."));
+        let filename = generate_three_word_filename(rng);
+        let filepath = path.join(filename);
+
+        // Only add if this filepath is not already used.
+        if !tasks.contains_key(&filepath) {
+            tasks.insert(
+                filepath.clone(),
+                FileTask {
+                    size_bytes: candidate.bytes,
+                    filepath,
+                },
+            );
+            accumulated += candidate.bytes;
+        }
+    }
+    (tasks, accumulated)
+}
+
+const KB: u64 = 1024;
+const MB: u64 = KB * 1024;
+const GB: u64 = MB * 1024;
+
+pub(crate) fn human_readable_size(bytes: u64) -> String {
+    let (value, unit) = match bytes {
+        GB.. => (bytes as f64 / GB as f64, "GB"),
+        MB.. => (bytes as f64 / MB as f64, "MB"),
+        KB.. => (bytes as f64 / KB as f64, "KB"),
+        0.. => (bytes as f64, "B"),
+    };
+
+    let value = if value < 10.0 {
+        format!("{:.1}", value)
+    } else {
+        format!("{:.0}", value)
+    };
+
+    format!("{}{}", value, unit)
+}
+
+/// Display statistics computed from the file tasks using comfy-table.
+fn display_stats(
+    sizes: &[FileSizeCandidate],
+    tasks: &HashMap<PathBuf, FileTask>,
+    total_accumulated: u64,
+) {
+    // Compute counts and total bytes per candidate file size.
+    let mut stats: HashMap<u64, (u64, u64)> = HashMap::new();
+    for task in tasks.values() {
+        let entry = stats.entry(task.size_bytes).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += task.size_bytes;
+    }
+    let mut table = Table::new();
+    table
+        .set_header(vec!["File size", "Files", "Total Bytes", "% of Total"])
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
+    for candidate in sizes {
+        let (count, total_bytes) = stats.get(&candidate.bytes).cloned().unwrap_or((0, 0));
+        let pct = if total_accumulated > 0 {
+            (total_bytes as f64) / (total_accumulated as f64) * 100.0
+        } else {
+            0.0
+        };
+        table.add_row(vec![
+            Cell::new(human_readable_size(candidate.bytes)).set_alignment(CellAlignment::Right),
+            Cell::new(count).set_alignment(CellAlignment::Right),
+            Cell::new(human_readable_size(total_bytes)).set_alignment(CellAlignment::Right),
+            Cell::new(format!("{:.2}%", pct)).set_alignment(CellAlignment::Right),
+        ]);
+    }
+    println!("\nSummary per file size band:");
+    println!("{table}");
+}
+
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    // Ensure the target directory exists and switch into it.
+    // Parse total target size.
+    let total_target = parse_size(&cli.total);
+
+    // Parse candidate file sizes.
+    let sizes: Vec<FileSizeCandidate> = cli
+        .sizes
+        .split(',')
+        .map(|b| FileSizeCandidate {
+            bytes: parse_size(b),
+        })
+        .collect();
+    if sizes.is_empty() {
+        eprintln!("No valid file sizes provided.");
+        std::process::exit(1);
+    }
+
+    // Compute weights: weight = (file_size)^(–alpha)
+    let weights: Vec<f64> = sizes
+        .iter()
+        .map(|s| (s.bytes as f64).powf(-cli.alpha))
+        .collect();
+
+    // Prepare target directory.
     fs::create_dir_all(&cli.target_path)?;
     std::env::set_current_dir(&cli.target_path)?;
 
     println!("Generating deterministic random files...");
 
-    // Initialize the RNG with the provided seed.
+    // Set up RNG.
     let mut rng = ChaCha8Rng::seed_from_u64(cli.seed);
-    let all_paths = create_folders_and_return_paths(Path::new("."), &mut rng)?;
 
-    // Precompute all file creation tasks using a HashMap to avoid duplicate paths.
-    let mut tasks: HashMap<PathBuf, FileTask> = HashMap::new();
-    for band in FILE_BANDS.iter() {
-        for _ in 0..band.count {
-            let folder = pick_folder_path(&all_paths, &mut rng);
-            let filename = generate_three_word_filename(&mut rng);
-            let filepath = folder.join(filename);
-            // Only insert if the filepath is not already used.
-            tasks.entry(filepath.clone()).or_insert(FileTask {
-                size_bytes: band.size_bytes,
-                filepath,
-            });
-        }
-    }
+    // Create folder structure (as structured Folder values).
+    let folders = create_folders_and_return_folders(&cli.target_path, &mut rng)?;
+
+    // Collect file creation tasks.
+    let (tasks, accumulated) = collect_tasks(total_target, &sizes, &weights, &mut rng, &folders);
     let total_tasks = tasks.len();
-    println!("Placing {} files (after deduplication)...", total_tasks);
+    println!(
+        "Placing {} files with a total of {} bytes (target was {} bytes)...",
+        total_tasks, human_readable_size(accumulated), human_readable_size(accumulated)
+    );
+    display_stats(&sizes, &tasks, accumulated);
 
-    // Create a progress bar using indicatif.
+    // Convert tasks into a Vec.
+    let tasks: Vec<FileTask> = tasks.into_values().collect();
+
+    // Create progress bar.
     let progress = ProgressBar::new(total_tasks as u64);
     progress.set_style(
         ProgressStyle::default_bar()
@@ -209,34 +443,25 @@ fn main() -> io::Result<()> {
             .expect("Failed to set progress bar style")
             .progress_chars("##-"),
     );
-
-    // Global seed used for task-specific RNG initialization.
-    let global_seed = cli.seed;
-    // Wrap the progress bar in a Mutex to update it safely.
     let progress = Mutex::new(progress);
 
     // Process file creation tasks in parallel.
-    tasks
-        .values()
-        .par_bridge()
-        .for_each(|task| {
-            // Create a task-specific RNG by hashing the filepath with the global seed.
-            let mut hasher = DefaultHasher::new();
-            task.filepath.hash(&mut hasher);
-            let file_seed = global_seed.wrapping_add(hasher.finish());
-            let mut task_rng = ChaCha8Rng::seed_from_u64(file_seed);
-
-            if !task.filepath.exists() {
-                if let Err(e) = write_random_file(&task.filepath, task.size_bytes, &mut task_rng) {
-                    eprintln!("Failed to write {:?}: {}", task.filepath, e);
-                }
+    tasks.par_iter().for_each(|task| {
+        // Create a task-specific RNG using a hash of the file path and the CLI seed.
+        let mut hasher = DefaultHasher::new();
+        task.filepath.hash(&mut hasher);
+        let file_seed = cli.seed.wrapping_add(hasher.finish());
+        let mut task_rng = ChaCha8Rng::seed_from_u64(file_seed);
+        if !task.filepath.exists() {
+            if let Err(e) = write_random_file(&task.filepath, task.size_bytes, &mut task_rng) {
+                eprintln!("Failed to write {:?}: {}", task.filepath, e);
             }
-
-            let pb = progress.lock().unwrap();
-            pb.inc(1);
-        });
-
+        }
+        let pb = progress.lock().unwrap();
+        pb.inc(1);
+    });
     progress.into_inner().unwrap().finish_with_message("Done!");
     println!("Folder structure and files created.");
+
     Ok(())
 }
