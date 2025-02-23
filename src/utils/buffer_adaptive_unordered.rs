@@ -31,9 +31,20 @@ const MIN_CONCURRENCY: usize = 1;
 const MAX_CONCURRENCY: usize = 102400;
 
 /// An adaptive concurrency controller that uses sliding windows.
-/// It compares the current window’s throughput (completions per second)
-/// against the throughput measured in the previous window (before the last adjustment)
-/// to decide if the system is improving or degrading.
+/// In this version we also take into account the “task size” (e.g. number of bytes processed)
+/// so that the controller maximizes throughput (bytes/second) while keeping the latency (per byte)
+/// under control.  After each window the new performance is compared to the baseline (from the previous
+/// window).  We compute a performance index by taking the ratio:
+///
+/// ```
+///   (current_bytes_throughput / previous_bytes_throughput)
+///   ---------------------------------------------------------
+///   (current_normalized_latency / previous_normalized_latency)
+/// ```
+///
+/// If this index is greater than 1 then we consider that the system improved overall, and we increase
+/// the concurrency limit. Otherwise we decrease it. (Multiplicative adjustments via the ramp multipliers
+/// help keep the controller stable.)
 struct AdaptiveConcurrency {
     /// Current concurrency limit.
     max: usize,
@@ -41,12 +52,16 @@ struct AdaptiveConcurrency {
     last_adjustment: Instant,
     /// Sliding window of completion event timestamps (only events after the last adjustment).
     completion_events: VecDeque<Instant>,
-    /// Throughput (completions/second) measured in the window before the last adjustment.
-    pre_adjustment_throughput: Option<f64>,
+    /// Baseline throughput (in bytes/second) measured in the window before the last adjustment.
+    pre_adjustment_bytes_throughput: Option<f64>,
+    /// Baseline normalized latency (seconds per byte) measured in the window before the last adjustment.
+    pre_adjustment_normalized_latency: Option<f64>,
     /// Accumulated latency (in seconds) for completions in the current window.
     total_latency: f64,
     /// Count of completions in the current window (for latency averaging).
     latency_count: usize,
+    /// Total task size processed in the current window (e.g. total bytes processed).
+    total_task_size: f64,
     /// Observer for logging state (adjust as needed for your project).
     obs: Observer<BaseObservable>,
 }
@@ -58,19 +73,22 @@ impl AdaptiveConcurrency {
             max: initial.max(MIN_CONCURRENCY),
             last_adjustment: Instant::now(),
             completion_events: VecDeque::new(),
-            pre_adjustment_throughput: None,
+            pre_adjustment_bytes_throughput: None,
+            pre_adjustment_normalized_latency: None,
             total_latency: 0.0,
             latency_count: 0,
+            total_task_size: 0.0,
             obs: Observer::without_id("auto_concurrency"),
         }
     }
 
-    /// Record a completed future along with its observed latency.
+    /// Record a completed task along with its observed latency and the size of the task.
     pub fn record_completion(&mut self, latency: Duration, task_size: f64) {
         // Record the completion event timestamp.
         self.completion_events.push_back(Instant::now());
         self.total_latency += latency.as_secs_f64();
         self.latency_count += 1;
+        self.total_task_size += task_size;
     }
 
     /// Evaluate the sliding window and, if enough time has passed, adjust concurrency.
@@ -88,22 +106,38 @@ impl AdaptiveConcurrency {
         }
 
         // If the elapsed time since the last adjustment exceeds our window duration,
-        // compute the current throughput.
+        // compute the current window’s metrics.
         if elapsed_since_adjustment >= WINDOW_DURATION {
             let window_secs = WINDOW_DURATION.as_secs_f64();
-            let current_count = self.completion_events.len();
-            let current_throughput = current_count as f64 / window_secs;
-
-            // Compute average latency over the current window.
-            let avg_latency = if self.latency_count > 0 {
-                self.total_latency / self.latency_count as f64
+            // Compute throughput in bytes per second.
+            let current_bytes_throughput = self.total_task_size / window_secs;
+            // Compute normalized latency: seconds of latency per byte.
+            let current_normalized_latency = if self.total_task_size > 0.0 {
+                self.total_latency / self.total_task_size
             } else {
                 0.0
             };
 
-            // Decision logic: compare the current throughput with the pre-adjustment value.
-            let action = if let Some(pre_tp) = self.pre_adjustment_throughput {
-                if current_throughput > pre_tp {
+            // Decide whether to Increase or Decrease based on how the new metrics compare
+            // with the baseline from the previous window.
+            let action = if let (Some(prev_throughput), Some(prev_norm_latency)) = (
+                self.pre_adjustment_bytes_throughput,
+                self.pre_adjustment_normalized_latency,
+            ) {
+                // Calculate the ratio improvements.
+                let throughput_ratio = if prev_throughput > 0.0 {
+                    current_bytes_throughput / prev_throughput
+                } else {
+                    1.0
+                };
+                let latency_ratio = if prev_norm_latency > 0.0 {
+                    current_normalized_latency / prev_norm_latency
+                } else {
+                    1.0
+                };
+
+                // Performance index: if throughput improves more than latency degrades, then Increase.
+                if (throughput_ratio / latency_ratio) > 1.0 {
                     AdjustmentAction::Increase
                 } else {
                     AdjustmentAction::Decrease
@@ -130,21 +164,29 @@ impl AdaptiveConcurrency {
                 "concurrency_adjustment",
                 [
                     ("new_concurrency".into(), Value::U64(new_concurrency as u64)),
-                    ("current_throughput".into(), Value::F64(current_throughput)),
-                    ("avg_latency".into(), Value::F64(avg_latency)),
+                    (
+                        "current_bytes_throughput".into(),
+                        Value::F64(current_bytes_throughput),
+                    ),
+                    (
+                        "current_normalized_latency".into(),
+                        Value::F64(current_normalized_latency),
+                    ),
                     ("action".into(), Value::String(format!("{:?}", action))),
                 ],
             );
 
             // Apply the adjustment.
             self.max = new_concurrency;
-            // Save the current throughput as the baseline for the next evaluation.
-            self.pre_adjustment_throughput = Some(current_throughput);
-            // Reset the sliding window and latency statistics.
+            // Save the current window’s metrics as the baseline for the next evaluation.
+            self.pre_adjustment_bytes_throughput = Some(current_bytes_throughput);
+            self.pre_adjustment_normalized_latency = Some(current_normalized_latency);
+            // Reset the sliding window and all metrics.
             self.last_adjustment = now;
             self.completion_events.clear();
             self.total_latency = 0.0;
             self.latency_count = 0;
+            self.total_task_size = 0.0;
         }
         // If no completions occur for a prolonged period, force a decrease.
         else if self.completion_events.is_empty() && elapsed_since_adjustment >= IDLE_TIMEOUT {
@@ -155,7 +197,8 @@ impl AdaptiveConcurrency {
                 [("new_concurrency".into(), Value::U64(new_concurrency as u64))],
             );
             self.max = new_concurrency;
-            self.pre_adjustment_throughput = Some(0.0);
+            self.pre_adjustment_bytes_throughput = Some(0.0);
+            self.pre_adjustment_normalized_latency = Some(0.0);
             self.last_adjustment = now;
         }
     }
