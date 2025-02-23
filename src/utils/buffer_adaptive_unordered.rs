@@ -8,281 +8,272 @@ use futures_core::future::Future;
 use futures_core::stream::{FusedStream, Stream};
 use futures_core::task::{Context, Poll};
 use pin_project_lite::pin_project;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// Specifies whether the adaptive controller should increase or decrease the concurrency limit.
+/// The adjustment action taken at the last decision.
 #[derive(Debug, Copy, Clone)]
 enum AdjustmentAction {
     Increase,
     Decrease,
 }
 
-/// Constants that control how the adaptive concurrency controller behaves.
-///
-/// - `RAMP_UP_THRESHOLD_MULTIPLIER` and `RAMP_DOWN_THRESHOLD_MULTIPLIER` determine the number
-///   of completed tasks (scaled by the current concurrency limit) needed before considering an adjustment.
-/// - `RAMP_UP_MULTIPLIER` and `RAMP_DOWN_MULTIPLIER` define the factor by which the concurrency is
-///   scaled when increasing or decreasing respectively.
-/// - `IDLE_TIMEOUT` is the duration after which, if no tasks have completed, a forced decrease is applied.
-/// - `ADJUSTMENT_DEADTIME` prevents adjustments from happening too frequently.
-const RAMP_UP_THRESHOLD_MULTIPLIER: usize = 10;
-const RAMP_DOWN_THRESHOLD_MULTIPLIER: usize = 10;
+/// Tuning constants:
+/// - RAMP_UP_MULTIPLIER and RAMP_DOWN_MULTIPLIER are used for multiplicative adjustments.
+/// - WINDOW_DURATION is the length of the sliding window used to compute throughput.
+/// - IDLE_TIMEOUT forces a decrease when no completions occur.
+/// - MIN_CONCURRENCY and MAX_CONCURRENCY cap the allowed concurrency.
 const RAMP_UP_MULTIPLIER: f64 = std::f64::consts::SQRT_2;
 const RAMP_DOWN_MULTIPLIER: f64 = std::f64::consts::FRAC_1_SQRT_2;
+const WINDOW_DURATION: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const ADJUSTMENT_DEADTIME: Duration = Duration::from_secs(1);
+const MIN_CONCURRENCY: usize = 1;
+const MAX_CONCURRENCY: usize = 102400;
 
-/// AdaptiveConcurrency encapsulates the logic to adjust the concurrency limit dynamically based on task throughput.
-///
-/// It tracks:
-/// - The current maximum concurrency (`max`).
-/// - The number of completions since the last adjustment.
-/// - The last measured throughput, which is used to compare against the current throughput.
-/// - The last action taken (increase or decrease) to help decide future adjustments.
+/// An adaptive concurrency controller that uses sliding windows.
+/// It compares the current window’s throughput (completions per second)
+/// against the throughput measured in the previous window (before the last adjustment)
+/// to decide if the system is improving or degrading.
 struct AdaptiveConcurrency {
+    /// Current concurrency limit.
     max: usize,
+    /// Time of the last adjustment.
     last_adjustment: Instant,
-    completions_since_adjustment: usize,
-    last_throughput: Option<f64>,
-    last_action: Option<AdjustmentAction>,
+    /// Sliding window of completion event timestamps (only events after the last adjustment).
+    completion_events: VecDeque<Instant>,
+    /// Throughput (completions/second) measured in the window before the last adjustment.
+    pre_adjustment_throughput: Option<f64>,
+    /// Accumulated latency (in seconds) for completions in the current window.
+    total_latency: f64,
+    /// Count of completions in the current window (for latency averaging).
+    latency_count: usize,
+    /// Observer for logging state (adjust as needed for your project).
     obs: Observer<BaseObservable>,
 }
 
 impl AdaptiveConcurrency {
-    /// Constructs a new adaptive concurrency controller with an initial concurrency limit.
-    ///
-    /// # Arguments
-    ///
-    /// * `initial` - The starting maximum number of concurrent tasks.
+    /// Create a new controller starting at the given initial concurrency.
     pub fn new(initial: usize) -> Self {
         Self {
-            max: initial,
+            max: initial.max(MIN_CONCURRENCY),
             last_adjustment: Instant::now(),
-            completions_since_adjustment: 0,
-            last_throughput: None,
-            last_action: None,
-            obs: Observer::without_id("adaptive_concurrency"),
+            completion_events: VecDeque::new(),
+            pre_adjustment_throughput: None,
+            total_latency: 0.0,
+            latency_count: 0,
+            obs: Observer::without_id("auto_concurrency"),
         }
     }
 
-    /// Periodically checks if conditions are met to adjust the concurrency limit.
-    ///
-    /// The adjustment decision is based on:
-    /// - The number of completed tasks since the last adjustment.
-    /// - The elapsed time since the last adjustment.
-    /// - Comparison of the current throughput (tasks per second) with the last measured throughput.
-    ///
-    /// If the throughput has improved, the last adjustment action is repeated (or defaults to increasing).
-    /// Otherwise, the action is reversed. Additionally, if no completions have occurred for a specified timeout,
-    /// a forced decrease is applied.
-    pub fn tick(&mut self) {
-        let current_concurrency = self.max;
-        let threshold_multiplier = match self.last_action {
-            Some(AdjustmentAction::Increase) => RAMP_UP_THRESHOLD_MULTIPLIER,
-            Some(AdjustmentAction::Decrease) => RAMP_DOWN_THRESHOLD_MULTIPLIER,
-            None => RAMP_UP_THRESHOLD_MULTIPLIER,
-        };
-        let threshold = current_concurrency * threshold_multiplier;
-        let now = Instant::now();
+    /// Record a completed future along with its observed latency.
+    pub fn record_completion(&mut self, latency: Duration, task_size: f64) {
+        // Record the completion event timestamp.
+        self.completion_events.push_back(Instant::now());
+        self.total_latency += latency.as_secs_f64();
+        self.latency_count += 1;
+    }
 
-        // Check if sufficient completions and time have passed to evaluate performance.
-        if self.completions_since_adjustment >= threshold
-            && now.duration_since(self.last_adjustment) >= ADJUSTMENT_DEADTIME
-        {
-            // Calculate current throughput: completions per second.
-            let elapsed = now.duration_since(self.last_adjustment).as_secs_f64();
-            let current_throughput = self.completions_since_adjustment as f64 / elapsed;
-            // Determine whether to increase or decrease concurrency based on throughput change.
-            let new_action = if let Some(last_tp) = self.last_throughput {
-                if current_throughput > last_tp {
-                    // Throughput increased: repeat previous action (or increase by default).
-                    self.last_action.unwrap_or(AdjustmentAction::Increase)
+    /// Evaluate the sliding window and, if enough time has passed, adjust concurrency.
+    pub fn tick(&mut self) {
+        let now = Instant::now();
+        let elapsed_since_adjustment = now.duration_since(self.last_adjustment);
+
+        // Remove any events older than the defined window.
+        while let Some(&ts) = self.completion_events.front() {
+            if now.duration_since(ts) > WINDOW_DURATION {
+                self.completion_events.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        // If the elapsed time since the last adjustment exceeds our window duration,
+        // compute the current throughput.
+        if elapsed_since_adjustment >= WINDOW_DURATION {
+            let window_secs = WINDOW_DURATION.as_secs_f64();
+            let current_count = self.completion_events.len();
+            let current_throughput = current_count as f64 / window_secs;
+
+            // Compute average latency over the current window.
+            let avg_latency = if self.latency_count > 0 {
+                self.total_latency / self.latency_count as f64
+            } else {
+                0.0
+            };
+
+            // Decision logic: compare the current throughput with the pre-adjustment value.
+            let action = if let Some(pre_tp) = self.pre_adjustment_throughput {
+                if current_throughput > pre_tp {
+                    AdjustmentAction::Increase
                 } else {
-                    // Throughput decreased: reverse the previous action.
-                    match self.last_action {
-                        Some(AdjustmentAction::Increase) => AdjustmentAction::Decrease,
-                        Some(AdjustmentAction::Decrease) => AdjustmentAction::Increase,
-                        None => AdjustmentAction::Increase,
-                    }
+                    AdjustmentAction::Decrease
                 }
             } else {
+                // For the very first evaluation, default to Increase.
                 AdjustmentAction::Increase
             };
 
-            // Compute the new concurrency limit based on the decided action.
-            let new_concurrency = match new_action {
-                AdjustmentAction::Increase => usize::max(
-                    ((current_concurrency as f64) * RAMP_UP_MULTIPLIER) as usize,
-                    current_concurrency.saturating_add(1),
-                ),
-                AdjustmentAction::Decrease => usize::min(
-                    ((current_concurrency as f64) * RAMP_DOWN_MULTIPLIER) as usize,
-                    current_concurrency.saturating_sub(1),
-                ),
-            }
-                .max(1);
+            // Compute the new concurrency based on the chosen action.
+            let new_concurrency = (match action {
+                AdjustmentAction::Increase => {
+                    ((self.max as f64) * RAMP_UP_MULTIPLIER).ceil() as usize
+                }
+                AdjustmentAction::Decrease => {
+                    ((self.max as f64) * RAMP_DOWN_MULTIPLIER).floor() as usize
+                }
+            })
+            .clamp(MIN_CONCURRENCY, MAX_CONCURRENCY);
 
-            // Log the adjustment event with relevant metrics.
+            // Log adjustment details.
             self.obs.observe_state_ext(
                 log::Level::Debug,
-                "update".to_string(),
+                "concurrency_adjustment",
                 [
-                    (
-                        "new_concurrency_limit".into(),
-                        Value::U64(new_concurrency as u64),
-                    ),
+                    ("new_concurrency".into(), Value::U64(new_concurrency as u64)),
                     ("current_throughput".into(), Value::F64(current_throughput)),
-                    (
-                        "action".into(),
-                        Value::String(match new_action {
-                            AdjustmentAction::Increase => "increase".into(),
-                            AdjustmentAction::Decrease => "decrease".into(),
-                        }),
-                    ),
+                    ("avg_latency".into(), Value::F64(avg_latency)),
+                    ("action".into(), Value::String(format!("{:?}", action))),
                 ],
             );
 
-            // Update internal state based on the new adjustment.
+            // Apply the adjustment.
             self.max = new_concurrency;
-            self.last_throughput = Some(current_throughput);
+            // Save the current throughput as the baseline for the next evaluation.
+            self.pre_adjustment_throughput = Some(current_throughput);
+            // Reset the sliding window and latency statistics.
             self.last_adjustment = now;
-            self.completions_since_adjustment = 0;
-            self.last_action = Some(new_action);
+            self.completion_events.clear();
+            self.total_latency = 0.0;
+            self.latency_count = 0;
         }
-        // If no tasks have completed for a defined idle period, enforce a decrease in concurrency.
-        else if self.completions_since_adjustment == 0
-            && now.duration_since(self.last_adjustment) >= IDLE_TIMEOUT
-        {
-            let new_concurrency = current_concurrency.saturating_sub(1).max(1);
+        // If no completions occur for a prolonged period, force a decrease.
+        else if self.completion_events.is_empty() && elapsed_since_adjustment >= IDLE_TIMEOUT {
+            let new_concurrency = self.max.saturating_sub(1).max(MIN_CONCURRENCY);
             self.obs.observe_state_ext(
                 log::Level::Debug,
-                "forced decrease".to_string(),
-                [(
-                    "new_concurrency_limit".into(),
-                    Value::U64(new_concurrency as u64),
-                )],
+                "forced_decrease",
+                [("new_concurrency".into(), Value::U64(new_concurrency as u64))],
             );
             self.max = new_concurrency;
-            self.last_throughput = Some(0.0);
+            self.pre_adjustment_throughput = Some(0.0);
             self.last_adjustment = now;
-            self.completions_since_adjustment = 0;
-            self.last_action = Some(AdjustmentAction::Decrease);
         }
     }
 
-    /// Returns the current maximum number of concurrently allowed tasks.
+    /// Return the current concurrency limit.
     pub fn get_concurrency(&self) -> usize {
         self.max
     }
+}
 
-    /// Increments the count of completed tasks.
-    ///
-    /// This should be called each time a task or future finishes execution.
-    pub fn record_completion(&mut self) {
-        self.completions_since_adjustment += 1;
+//
+// A helper type to wrap futures so that we can record their start times for latency measurement.
+//
+
+pin_project! {
+    struct TrackedFuture<F> {
+        #[pin]
+        future: F,
+        start_time: Instant,
     }
 }
 
+impl<F: Future> Future for TrackedFuture<F> {
+    type Output = (F::Output, Duration);
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.future.poll(cx) {
+            Poll::Ready(output) => {
+                let duration = Instant::now().duration_since(*this.start_time);
+                Poll::Ready((output, duration))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+//
+// The main stream combinator using the adaptive controller.
+//
+
 pin_project! {
-    /// A stream combinator that concurrently processes items from an underlying stream with an adaptive
-    /// concurrency limit.
-    ///
-    /// This combinator behaves similarly to [`buffer_unordered`] but automatically tunes the number of in-flight
-    /// futures based on runtime throughput. It leverages an internal `AdaptiveConcurrency` controller to
-    /// adjust the concurrency limit dynamically.
-    ///
-    /// The throughput is measured as the number of completed futures per second, and adjustments are made based on
-    /// whether the throughput increases or decreases relative to previous measurements.
+    /// A stream combinator similar to [`buffer_unordered`] but with an in-band adaptive
+    /// controller that tunes the concurrency limit based on sliding window metrics.
     #[must_use = "streams do nothing unless polled"]
-    pub struct BufferAutoUnordered<St>
+    pub struct BufferAdaptiveUnordered<St>
     where
         St: Stream,
     {
         #[pin]
         stream: Fuse<St>,
-        in_progress_queue: FuturesUnordered<St::Item>,
+        in_progress_queue: FuturesUnordered<TrackedFuture<St::Item>>,
         auto: AdaptiveConcurrency,
     }
 }
 
-impl<St> fmt::Debug for BufferAutoUnordered<St>
+impl<St> fmt::Debug for BufferAdaptiveUnordered<St>
 where
     St: Stream + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BufferUnordered")
+        f.debug_struct("BufferAutoUnordered")
             .field("stream", &self.stream)
             .field("in_progress_queue", &self.in_progress_queue)
             .field("concurrency", &self.auto.max)
-            .field("last_adjustment", &self.auto.last_adjustment)
-            .field(
-                "completions_since_adjustment",
-                &self.auto.completions_since_adjustment,
-            )
-            .field("last_throughput", &self.auto.last_throughput)
-            .field("last_action", &self.auto.last_action)
             .finish()
     }
 }
 
-impl<St> BufferAutoUnordered<St>
+impl<St> BufferAdaptiveUnordered<St>
 where
     St: Stream,
     St::Item: Future,
 {
-    /// Creates a new `BufferAutoUnordered` stream with a given initial concurrency limit.
-    ///
-    /// # Arguments
-    ///
-    /// * `stream` - The underlying stream that produces futures.
-    /// * `n` - The initial maximum number of futures to run concurrently.
-    pub(super) fn new(stream: St, n: usize) -> Self {
+    /// Creates a new `BufferAutoUnordered` stream with the given initial concurrency limit.
+    pub fn new(stream: St, initial_concurrency: usize) -> Self {
         Self {
             stream: stream.fuse(),
             in_progress_queue: FuturesUnordered::new(),
-            auto: AdaptiveConcurrency::new(n),
+            auto: AdaptiveConcurrency::new(initial_concurrency),
         }
     }
 }
 
-impl<St> Stream for BufferAutoUnordered<St>
+impl<St> Stream for BufferAdaptiveUnordered<St>
 where
     St: Stream,
     St::Item: Future,
+    <St::Item as Future>::Output: TaskSize,
 {
     type Item = <St::Item as Future>::Output;
 
-    /// Polls the stream, managing both the scheduling of new futures up to the current concurrency limit
-    /// and the collection of completed futures.
-    ///
-    /// It performs the following steps:
-    /// 1. Calls `tick` on the adaptive controller to possibly adjust the concurrency limit.
-    /// 2. Polls the underlying stream to enqueue new futures until the current concurrency limit is reached.
-    /// 3. Polls the in-progress futures and records their completions.
-    /// 4. Returns the output of completed futures or indicates that the stream is pending.
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        // Update the adaptive concurrency state.
+        // Update the adaptive controller.
         this.auto.tick();
 
-        // Enqueue new futures until the concurrency limit is reached.
+        // Fill the in-progress queue until reaching the current concurrency limit.
         let current_max = this.auto.get_concurrency();
         while this.in_progress_queue.len() < current_max {
             match this.stream.as_mut().poll_next(cx) {
                 Poll::Ready(Some(fut)) => {
-                    this.in_progress_queue.push(fut);
+                    this.in_progress_queue.push(TrackedFuture {
+                        future: fut,
+                        start_time: Instant::now(),
+                    });
                 }
                 Poll::Ready(None) | Poll::Pending => break,
             }
         }
 
-        // Poll the futures in progress.
+        // Poll the in-progress futures.
         match this.in_progress_queue.poll_next_unpin(cx) {
-            Poll::Ready(Some(item)) => {
-                // Mark the completed future and record the event.
-                this.auto.record_completion();
-                Poll::Ready(Some(item))
+            Poll::Ready(Some((output, duration))) => {
+                // Record the completion event and its latency.
+                this.auto.record_completion(duration, output.size());
+                Poll::Ready(Some(output))
             }
             Poll::Ready(None) => {
                 if this.stream.is_done() {
@@ -295,9 +286,6 @@ where
         }
     }
 
-    /// Provides an estimation of the number of remaining items.
-    ///
-    /// The hint combines the size hint from the underlying stream and the number of in-progress futures.
     fn size_hint(&self) -> (usize, Option<usize>) {
         let queue_len = self.in_progress_queue.len();
         let (lower, upper) = self.stream.size_hint();
@@ -308,28 +296,30 @@ where
     }
 }
 
-impl<St> FusedStream for BufferAutoUnordered<St>
+impl<St> FusedStream for BufferAdaptiveUnordered<St>
 where
     St: Stream,
     St::Item: Future,
+    <St::Item as Future>::Output: TaskSize,
 {
-    /// Returns `true` if both the underlying stream and the in-progress queue have terminated.
     fn is_terminated(&self) -> bool {
         self.in_progress_queue.is_terminated() && self.stream.is_terminated()
     }
 }
 
-/// An extension trait to provide a convenient method for wrapping a stream with adaptive buffering.
-///
-/// This trait allows any stream to be converted into a `BufferAutoUnordered` stream
-/// by calling `.buffer_adaptive_unordered(n)`.
+pub trait TaskSize {
+    fn size(&self) -> f64;
+}
+
 pub trait StreamAdaptive: Stream {
-    fn buffer_adaptive_unordered(self, n: usize) -> BufferAutoUnordered<Self>
+    /// Provides an extension method to use the adaptive, auto-tuning buffer.
+    fn buffer_adaptive_unordered(self, n: usize) -> BufferAdaptiveUnordered<Self>
     where
         Self::Item: Future,
+        <Self::Item as Future>::Output: TaskSize,
         Self: Sized,
     {
-        BufferAutoUnordered::new(self, n)
+        BufferAdaptiveUnordered::new(self, n)
     }
 }
 
