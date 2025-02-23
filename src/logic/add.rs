@@ -4,7 +4,7 @@ use crate::logic::blobify::{BlobLockMap, Blobify};
 use crate::logic::state::{VirtualFile, VirtualFileState};
 use crate::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
-use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
+use crate::utils::buffer_adaptive_unordered::{StreamAdaptive, TaskSize};
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
@@ -115,7 +115,10 @@ pub(crate) async fn add_files(
                     file_tx.send(file).await?;
                     blob_tx.send(blob).await?;
                     mat_tx.send(mat).await?;
-                    Ok::<RepoPath, InternalError>(path)
+                    Ok::<AddResult, InternalError>(AddResult {
+                        path,
+                        size: blob_size as f64,
+                    })
                 }
             },
         );
@@ -129,7 +132,7 @@ pub(crate) async fn add_files(
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
             match maybe_path {
-                Ok(path) => {
+                Ok(AddResult { path, .. }) => {
                     BaseObserver::with_id("add", path.rel().display().to_string())
                         .observe_termination(log::Level::Info, "added");
 
@@ -161,4 +164,18 @@ pub(crate) async fn add_files(
     adder_obs.observe_termination(log::Level::Info, msg);
 
     Ok(())
+}
+
+struct AddResult {
+    path: RepoPath,
+    size: f64,
+}
+
+impl TaskSize for Result<AddResult, InternalError> {
+    fn size(&self) -> f64 {
+        match self {
+            Ok(a) => a.size,
+            Err(_) => 1f64,
+        }
+    }
 }
