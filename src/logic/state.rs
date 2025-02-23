@@ -3,7 +3,7 @@ use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
 use crate::flightdeck::base::BaseObserver;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
-use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
+use crate::utils::buffer_adaptive_unordered::{StreamAdaptive, TaskSize};
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
@@ -393,4 +393,10 @@ pub async fn state(
     });
 
     Ok((final_handle, ReceiverStream::new(rx)))
+}
+
+impl TaskSize for Result<Observation, InternalError> {
+    fn size(&self) -> f64 {
+        1f64
+    }
 }
