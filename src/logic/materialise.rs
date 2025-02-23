@@ -3,7 +3,7 @@ use crate::flightdeck::base::BaseObserver;
 use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
-use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
+use crate::utils::buffer_adaptive_unordered::{StreamAdaptive, TaskSize};
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
@@ -84,11 +84,6 @@ pub async fn materialise(
                 },
             }
         });
-
-        enum Action {
-            Materialised,
-            Deleted,
-        }
 
         let mat_tx = mat_tx.clone();
         let stream = tokio_stream::StreamExt::map(
@@ -194,4 +189,15 @@ pub async fn materialise(
     db_mat_handle.await??;
 
     Ok(())
+}
+
+enum Action {
+    Materialised,
+    Deleted,
+}
+
+impl TaskSize for Result<Action, InternalError> {
+    fn size(&self) -> f64 {
+        1f64
+    }
 }
