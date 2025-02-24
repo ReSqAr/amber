@@ -56,8 +56,8 @@ impl AsRef<Path> for RepoPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use serial_test::serial;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
