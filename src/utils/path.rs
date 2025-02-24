@@ -57,6 +57,7 @@ impl AsRef<Path> for RepoPath {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
@@ -91,6 +92,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_current_subdir() -> Result<(), InternalError> {
         let original_dir = std::env::current_dir().map_err(InternalError::IO)?;
 

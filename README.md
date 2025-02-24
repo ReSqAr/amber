@@ -1,10 +1,14 @@
 ![img.png](docs/res/logo.png)
 
+# Amber
+
+----
+
 [![CI](https://github.com/ReSqAr/amber/actions/workflows/ci.yaml/badge.svg)](https://github.com/ReSqAr/amber/actions)
 [![License](https://img.shields.io/github/license/ReSqAr/amber.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/ReSqAr/amber/branch/main/graph/badge.svg)](https://codecov.io/gh/ReSqAr/amber)
-
-# Amber
+[![GitHub issues](https://img.shields.io/github/issues/ReSqAr/amber.svg)](https://github.com/ReSqAr/amber/issues)
+[![GitHub release](https://img.shields.io/github/release/ReSqAr/amber.svg)](https://github.com/ReSqAr/amber/releases)
 
 ## Summary
 
