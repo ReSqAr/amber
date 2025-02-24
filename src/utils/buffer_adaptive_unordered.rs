@@ -76,7 +76,7 @@ impl AdaptiveConcurrency {
             total_latency: 0.0,
             latency_count: 0,
             total_task_size: 0.0,
-            obs: Observer::without_id("auto_concurrency"),
+            obs: Observer::without_id("adaptive_concurrency"),
         }
     }
 
@@ -249,7 +249,7 @@ pin_project! {
         #[pin]
         stream: Fuse<St>,
         in_progress_queue: FuturesUnordered<TrackedFuture<St::Item>>,
-        auto: AdaptiveConcurrency,
+        strategy: AdaptiveConcurrency,
     }
 }
 
@@ -258,10 +258,10 @@ where
     St: Stream + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BufferAutoUnordered")
+        f.debug_struct("BufferAdaptiveUnordered")
             .field("stream", &self.stream)
             .field("in_progress_queue", &self.in_progress_queue)
-            .field("concurrency", &self.auto.max)
+            .field("concurrency", &self.strategy.max)
             .finish()
     }
 }
@@ -271,12 +271,12 @@ where
     St: Stream,
     St::Item: Future,
 {
-    /// Creates a new `BufferAutoUnordered` stream with the given initial concurrency limit.
+    /// Creates a new `BufferAdaptiveUnordered` stream with the given initial concurrency limit.
     pub fn new(stream: St, initial_concurrency: usize) -> Self {
         Self {
             stream: stream.fuse(),
             in_progress_queue: FuturesUnordered::new(),
-            auto: AdaptiveConcurrency::new(initial_concurrency),
+            strategy: AdaptiveConcurrency::new(initial_concurrency),
         }
     }
 }
@@ -293,10 +293,10 @@ where
         let mut this = self.project();
 
         // Update the adaptive controller.
-        this.auto.tick();
+        this.strategy.tick();
 
         // Fill the in-progress queue until reaching the current concurrency limit.
-        let current_max = this.auto.get_concurrency();
+        let current_max = this.strategy.get_concurrency();
         while this.in_progress_queue.len() < current_max {
             match this.stream.as_mut().poll_next(cx) {
                 Poll::Ready(Some(fut)) => {
@@ -312,8 +312,8 @@ where
         // Poll the in-progress futures.
         match this.in_progress_queue.poll_next_unpin(cx) {
             Poll::Ready(Some((output, duration))) => {
-                // Record the completion event and its latency.
-                this.auto.record_completion(duration, output.size());
+                // Record the completion event and its latency and its task size.
+                this.strategy.record_completion(duration, output.size());
                 Poll::Ready(Some(output))
             }
             Poll::Ready(None) => {
