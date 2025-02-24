@@ -171,11 +171,8 @@ struct AddResult {
     size: f64,
 }
 
-impl TaskSize for Result<AddResult, InternalError> {
+impl TaskSize for AddResult {
     fn size(&self) -> f64 {
-        match self {
-            Ok(a) => a.size,
-            Err(_) => 1f64,
-        }
+        self.size
     }
 }

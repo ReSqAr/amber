@@ -196,7 +196,7 @@ enum Action {
     Deleted,
 }
 
-impl TaskSize for Result<Action, InternalError> {
+impl TaskSize for Action {
     fn size(&self) -> f64 {
         1f64
     }

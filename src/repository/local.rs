@@ -16,7 +16,7 @@ use crate::repository::traits::{
     TransferItem, VirtualFilesystem,
 };
 use crate::utils;
-use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
+use crate::utils::buffer_adaptive_unordered::{StreamAdaptive, TaskSize};
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
@@ -527,12 +527,12 @@ impl Sender<BlobTransferItem> for LocalRepository {
             }
 
             fs::hard_link(blob_path, transfer_path).await?;
-            Result::<(), InternalError>::Ok(())
+            Result::<(), InternalError>::Ok(()) // TODO: here it's ok to use () => 1
         });
 
         // allow multiple hard link operations to run concurrently
         let stream =
-            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer)); // TODO: OK(1)
 
         let mut count = 0;
         pin_mut!(stream);
@@ -607,12 +607,12 @@ impl Sender<FileTransferItem> for LocalRepository {
             }
 
             fs::hard_link(blob_path, transfer_path).await?;
-            Result::<(), InternalError>::Ok(())
+            Result::<(), InternalError>::Ok(()) // TODO: here it's ok to use () => 1
         });
 
         // allow multiple hard link operations to run concurrently
         let stream =
-            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer)); // TODO: Ok(1)
 
         let mut count = 0;
         pin_mut!(stream);
@@ -626,6 +626,12 @@ impl Sender<FileTransferItem> for LocalRepository {
         }
 
         Ok(count)
+    }
+}
+
+impl TaskSize for Result<(), InternalError> {
+    fn size(&self) -> f64 {
+        1f64
     }
 }
 

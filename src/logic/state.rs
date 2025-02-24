@@ -395,7 +395,7 @@ pub async fn state(
     Ok((final_handle, ReceiverStream::new(rx)))
 }
 
-impl TaskSize for Result<Observation, InternalError> {
+impl TaskSize for Observation {
     fn size(&self) -> f64 {
         1f64
     }

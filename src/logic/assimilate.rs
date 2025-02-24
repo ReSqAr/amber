@@ -2,7 +2,7 @@ use crate::db::models::InsertBlob;
 use crate::flightdeck::observer::Observer;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
-use crate::utils::buffer_adaptive_unordered::StreamAdaptive;
+use crate::utils::buffer_adaptive_unordered::{StreamAdaptive, TaskSize};
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -108,6 +108,12 @@ where
     obs.observe_termination(log::Level::Info, msg);
 
     Ok(count)
+}
+
+impl TaskSize for InsertBlob {
+    fn size(&self) -> f64 {
+        self.blob_size as f64
+    }
 }
 
 #[cfg(test)]
