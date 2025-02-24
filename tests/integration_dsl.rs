@@ -989,6 +989,24 @@ async fn integration_test_fsck() -> Result<(), anyhow::Error> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_rclone_repo_fsck() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file test.txt "Hello store!"
+        @a amber add
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @a amber push store
+
+        # action
+        @a amber fsck store
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_test_rm_not_existing_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
