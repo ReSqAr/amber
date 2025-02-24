@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ReSqAr/amber/actions/workflows/ci.yaml/badge.svg)](https://github.com/ReSqAr/amber/actions)
 [![License](https://img.shields.io/github/license/ReSqAr/amber.svg)](LICENSE)
-
+[![codecov](https://codecov.io/gh/ReSqAr/amber/branch/main/graph/badge.svg)](https://codecov.io/gh/ReSqAr/amber)
 
 # Amber
 
