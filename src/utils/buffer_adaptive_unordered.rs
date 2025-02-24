@@ -350,10 +350,6 @@ where
     }
 }
 
-pub trait TaskSize {
-    fn size(&self) -> f64;
-}
-
 pub trait StreamAdaptive: Stream {
     /// Provides an extension method to use the adaptive, auto-tuning buffer.
     fn buffer_adaptive_unordered(self, n: usize) -> BufferAdaptiveUnordered<Self>
@@ -367,3 +363,19 @@ pub trait StreamAdaptive: Stream {
 }
 
 impl<T: ?Sized> StreamAdaptive for T where T: Stream {}
+
+pub trait TaskSize {
+    fn size(&self) -> f64;
+}
+
+impl<T, E> TaskSize for Result<T, E>
+where
+    T: TaskSize,
+{
+    fn size(&self) -> f64 {
+        match self {
+            Ok(t) => t.size(),
+            Err(_) => 1f64,
+        }
+    }
+}
