@@ -36,11 +36,9 @@ const MAX_CONCURRENCY: usize = 102400;
 /// under control.  After each window the new performance is compared to the baseline (from the previous
 /// window).  We compute a performance index by taking the ratio:
 ///
-/// ```
 ///   (current_bytes_throughput / previous_bytes_throughput)
 ///   ---------------------------------------------------------
 ///   (current_normalized_latency / previous_normalized_latency)
-/// ```
 ///
 /// If this index is greater than 1 then we consider that the system improved overall, and we increase
 /// the concurrency limit. Otherwise we decrease it. (Multiplicative adjustments via the ramp multipliers
