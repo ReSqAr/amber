@@ -13,7 +13,7 @@ pub struct RCloneRemoteConfig {
 
 impl RCloneRemoteConfig {
     pub(crate) fn from_parameter(parameter: String) -> Result<Self, InternalError> {
-        let (remote_name, remote_path) = parameter.split_once(":").ok_or(AppError::Parse {
+        let (remote_name, remote_path) = parameter.rsplit_once(":").ok_or(AppError::Parse {
             message: "cannot extract remote path".into(),
             raw: parameter.clone(),
         })?;
