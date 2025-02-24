@@ -70,6 +70,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_current() -> Result<(), InternalError> {
         let original_dir = std::env::current_dir().map_err(InternalError::IO)?;
 
