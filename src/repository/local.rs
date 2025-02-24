@@ -527,12 +527,12 @@ impl Sender<BlobTransferItem> for LocalRepository {
             }
 
             fs::hard_link(blob_path, transfer_path).await?;
-            Result::<(), InternalError>::Ok(()) // TODO: here it's ok to use () => 1
+            Result::<(), InternalError>::Ok(())
         });
 
         // allow multiple hard link operations to run concurrently
         let stream =
-            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer)); // TODO: OK(1)
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
 
         let mut count = 0;
         pin_mut!(stream);
@@ -607,12 +607,12 @@ impl Sender<FileTransferItem> for LocalRepository {
             }
 
             fs::hard_link(blob_path, transfer_path).await?;
-            Result::<(), InternalError>::Ok(()) // TODO: here it's ok to use () => 1
+            Result::<(), InternalError>::Ok(())
         });
 
         // allow multiple hard link operations to run concurrently
         let stream =
-            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer)); // TODO: Ok(1)
+            stream.buffer_adaptive_unordered(self.buffer_size(BufferType::PrepareTransfer));
 
         let mut count = 0;
         pin_mut!(stream);
