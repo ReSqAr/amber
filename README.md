@@ -1,5 +1,9 @@
 ![img.png](docs/res/logo.png)
 
+[![CI](https://github.com/ReSqAr/amber/actions/workflows/ci.yaml/badge.svg)](https://github.com/ReSqAr/amber/actions)
+[![License](https://img.shields.io/github/license/ReSqAr/amber.svg)](LICENSE)
+
+
 # Amber
 
 ## Summary
