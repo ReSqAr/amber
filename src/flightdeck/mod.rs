@@ -1,11 +1,11 @@
-use crate::flightdeck::global::{send_shutdown_signal, Flow, GLOBAL_LOGGER};
+use crate::flightdeck::global::{Flow, GLOBAL_LOGGER, send_shutdown_signal};
 use crate::flightdeck::observation::Message;
 use output::Output;
 use output::OutputStream;
+use pipes::Pipes;
 use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
 use pipes::terminal::TerminalPipe;
-use pipes::Pipes;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::fs;

@@ -11,9 +11,9 @@ mod tests {
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::{DateTime, Utc};
-    use futures::stream;
     use futures::StreamExt;
-    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+    use futures::stream;
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
     const BEGINNING: i64 = 1577836800; // 2020-01-01T00:00:00Z
 

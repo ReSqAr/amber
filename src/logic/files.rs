@@ -1,7 +1,7 @@
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
-use filetime::{set_file_times, FileTime};
+use filetime::{FileTime, set_file_times};
 use log::debug;
 use std::path::Path;
 use tokio::{fs, task};

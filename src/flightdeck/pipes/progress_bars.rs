@@ -1,8 +1,8 @@
 use crate::flightdeck::base;
 use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
 use crate::flightdeck::observation::Observation;
-use indexmap::map::Entry;
 use indexmap::IndexMap;
+use indexmap::map::Entry;
 use std::collections::{HashMap, HashSet};
 use tokio::task;
 

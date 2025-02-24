@@ -6,8 +6,8 @@ use crate::utils;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
-use crate::utils::walker::{walk, FileObservation, WalkerConfig};
-use futures::{future, Stream, StreamExt};
+use crate::utils::walker::{FileObservation, WalkerConfig, walk};
+use futures::{Stream, StreamExt, future};
 use log::{debug, error};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -289,7 +289,9 @@ pub async fn state(
                             Err(vf) => {
                                 debug!("state -> splitter: {:?} needs check", vf.path);
                                 if needs_check_tx_clone.is_closed() {
-                                    panic!("programming error: data with needs check was received after shutdown");
+                                    panic!(
+                                        "programming error: data with needs check was received after shutdown"
+                                    );
                                 }
 
                                 if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {

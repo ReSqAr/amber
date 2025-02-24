@@ -7,7 +7,7 @@ use crate::repository::traits::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use futures::{pin_mut, stream, Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, pin_mut, stream};
 use uuid::Uuid;
 
 #[derive(Clone)]

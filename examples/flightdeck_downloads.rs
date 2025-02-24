@@ -7,8 +7,8 @@ use amber::flightdeck::output::Output;
 use amber::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 use tokio::time::sleep;

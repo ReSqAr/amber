@@ -133,7 +133,7 @@ async fn connect_sync_materialise(
                 return Err(InternalError::App(AppError::UnsupportedOperation {
                     connection_name: connection_name.to_string(),
                     operation: "sync".to_string(),
-                }))
+                }));
             }
         };
     }

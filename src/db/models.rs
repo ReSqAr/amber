@@ -1,6 +1,6 @@
 use chrono::prelude::{DateTime, Utc};
-use sqlx::sqlite::SqliteRow;
 use sqlx::Type;
+use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row};
 use std::fmt::{Display, Formatter};
 

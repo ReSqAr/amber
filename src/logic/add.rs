@@ -16,14 +16,14 @@ use tokio_stream::wrappers::ReceiverStream;
 
 pub(crate) async fn add_files(
     repository: impl Metadata
-        + Local
-        + Adder
-        + VirtualFilesystem
-        + Config
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    + Local
+    + Adder
+    + VirtualFilesystem
+    + Config
+    + Clone
+    + Send
+    + Sync
+    + 'static,
     skip_deduplication: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();

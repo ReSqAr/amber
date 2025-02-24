@@ -8,20 +8,20 @@ use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::rclone::{run_rclone, Operation, RCloneTarget, RcloneEvent, RcloneStats};
+use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
 use crate::utils::units;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 
 pub(crate) async fn fsck_remote(
     local: &(impl Config + Local + Adder + Sync + Send + Clone + 'static),

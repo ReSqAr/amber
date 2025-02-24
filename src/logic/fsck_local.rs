@@ -168,16 +168,18 @@ async fn find_altered_files(
 }
 
 pub(crate) async fn fsck_local(
-    local: &(impl Metadata
-          + Config
-          + Local
-          + Adder
-          + Availability
-          + VirtualFilesystem
-          + Clone
-          + Send
-          + Sync
-          + 'static),
+    local: &(
+         impl Metadata
+         + Config
+         + Local
+         + Adder
+         + Availability
+         + VirtualFilesystem
+         + Clone
+         + Send
+         + Sync
+         + 'static
+     ),
 ) -> Result<(), InternalError> {
     fsck_blobs(local).await?;
 

@@ -30,7 +30,7 @@ pub async fn missing(
                     return Err(InternalError::App(AppError::UnsupportedOperation {
                         connection_name,
                         operation: "missing".into(),
-                    }))
+                    }));
                 }
 
                 WrappedRepository::RClone(remote) => {

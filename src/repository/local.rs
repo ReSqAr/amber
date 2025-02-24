@@ -21,7 +21,7 @@ use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use fs2::FileExt;
-use futures::{pin_mut, stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
 use log::debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -372,8 +372,9 @@ impl Syncer<File> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static>
-           + Send {
+    ) -> impl Future<
+        Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static,
+    > + Send {
         self.db.select_files(last_index).map(|s| s.err_into())
     }
 
@@ -393,8 +394,9 @@ impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl Future<Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static>
-           + Send {
+    ) -> impl Future<
+        Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static,
+    > + Send {
         self.db.select_blobs(last_index).map(|s| s.err_into())
     }
 

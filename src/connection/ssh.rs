@@ -6,11 +6,11 @@ use crate::utils::rclone::{ConfigSection, RCloneTarget};
 use base64::Engine;
 use cipher::{KeyIvInit, StreamCipher};
 use log::{debug, error, warn};
-use rand::distr::Alphanumeric;
 use rand::Rng;
+use rand::distr::Alphanumeric;
 use russh::client::AuthResult;
-use russh::keys::agent::client::AgentClient;
 use russh::keys::Algorithm;
+use russh::keys::agent::client::AgentClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -63,7 +63,9 @@ impl SshConfig {
             None => (host_part.to_string(), None),
         };
 
-        debug!("parameter={parameter} => user={user}, auth={auth:?}, host={host}, port={port:?} remote_path={remote_path}");
+        debug!(
+            "parameter={parameter} => user={user}, auth={auth:?}, host={host}, port={port:?} remote_path={remote_path}"
+        );
 
         Ok(Self {
             application: "amber".into(),
@@ -114,7 +116,7 @@ impl SshConfig {
             None => {
                 return Err(InternalError::Ssh(
                     "Failed to receive ServeInfo".to_string(),
-                ))
+                ));
             }
         };
         debug!("thread_response: port={port} auth_key={auth_key}");

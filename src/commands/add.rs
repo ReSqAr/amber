@@ -38,7 +38,7 @@ pub async fn add(
     .await
 }
 
-fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
     let root = root_path.display().to_string() + "/";
 
     let file = BaseLayoutBuilderBuilder::default()

@@ -98,9 +98,9 @@ impl Syncer<models::Repository> for GRPCClient {
         _params: (),
     ) -> impl std::future::Future<
         Output = impl futures::Stream<Item = Result<models::Repository, InternalError>>
-                     + Unpin
-                     + Send
-                     + 'static,
+                 + Unpin
+                 + Send
+                 + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -135,9 +135,9 @@ impl Syncer<models::File> for GRPCClient {
         last_index: i32,
     ) -> impl std::future::Future<
         Output = impl futures::Stream<Item = Result<models::File, InternalError>>
-                     + Unpin
-                     + Send
-                     + 'static,
+                 + Unpin
+                 + Send
+                 + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -172,9 +172,9 @@ impl Syncer<models::Blob> for GRPCClient {
         last_index: i32,
     ) -> impl std::future::Future<
         Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
-                     + Unpin
-                     + Send
-                     + 'static,
+                 + Unpin
+                 + Send
+                 + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -209,9 +209,9 @@ impl Syncer<models::RepositoryName> for GRPCClient {
         last_index: i32,
     ) -> impl std::future::Future<
         Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
-                     + Unpin
-                     + Send
-                     + 'static,
+                 + Unpin
+                 + Send
+                 + 'static,
     > {
         let arc_client = self.client.clone();
         async move {
@@ -282,9 +282,9 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
         paths: Vec<String>,
     ) -> impl std::future::Future<
         Output = impl Stream<Item = Result<models::BlobTransferItem, InternalError>>
-                     + Unpin
-                     + Send
-                     + 'static,
+                 + Unpin
+                 + Send
+                 + 'static,
     > {
         let arc_client = self.client.clone();
         async move {

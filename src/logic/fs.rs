@@ -96,7 +96,7 @@ pub(crate) async fn mv(
         None => {
             return Err(
                 AppError::FileNotPartOfRepository(source.rel().to_string_lossy().into()).into(),
-            )
+            );
         }
         Some(blob_id) => blob_id,
     };

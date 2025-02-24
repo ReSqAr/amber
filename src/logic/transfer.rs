@@ -7,14 +7,14 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::rclone::{run_rclone, Operation, RCloneTarget, RcloneEvent, RcloneStats};
+use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};

@@ -27,7 +27,7 @@ pub async fn fsck(
                     return Err(InternalError::App(AppError::UnsupportedOperation {
                         connection_name,
                         operation: "fsck".into(),
-                    }))
+                    }));
                 }
 
                 WrappedRepository::RClone(remote) => {
@@ -52,7 +52,7 @@ pub async fn fsck(
     .await
 }
 
-fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> {
+fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
     let root = root_path.display().to_string() + "/";
 
     let root_clone = root.clone();

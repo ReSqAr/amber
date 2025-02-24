@@ -10,7 +10,7 @@ use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
-use sqlx::{query, Either, Executor, FromRow, Sqlite, SqlitePool};
+use sqlx::{Either, Executor, FromRow, Sqlite, SqlitePool, query};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -577,7 +577,8 @@ impl Database {
     pub(crate) fn available_blobs(
         &self,
         repo_id: String,
-    ) -> impl Stream<Item = Result<AvailableBlob, sqlx::Error>> + Unpin + Send + Sized {
+    ) -> impl Stream<Item = Result<AvailableBlob, sqlx::Error>> + Unpin + Send + Sized + 'static
+    {
         self.stream(
             query(
                 "
@@ -592,7 +593,8 @@ impl Database {
     pub(crate) fn missing_blobs(
         &self,
         repo_id: String,
-    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, sqlx::Error>> + Unpin + Send + Sized {
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, sqlx::Error>> + Unpin + Send + Sized + 'static
+    {
         self.stream(
             query(
                 "

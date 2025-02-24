@@ -8,14 +8,14 @@ use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use crate::utils::port;
 use log::debug;
-use rand::distr::Alphanumeric;
 use rand::Rng;
+use rand::distr::Alphanumeric;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use tokio::io;
 use tokio::io::AsyncReadExt;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tonic::transport::Server;
 
 pub fn generate_auth_key() -> String {

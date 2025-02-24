@@ -1,12 +1,12 @@
 use crate::db;
 use crate::grpc::definitions::{
-    grpc_server, Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
+    Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
     CurrentRepositoryMetadataResponse, File, FinaliseTransferRequest, FinaliseTransferResponse,
     LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
     MergeRepositoriesResponse, MergeRepositoryNamesResponse, PrepareTransferResponse,
     RclonePathRequest, RclonePathResponse, Repository, RepositoryName, SelectBlobsRequest,
     SelectFilesRequest, SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
-    UpdateLastIndicesRequest, UpdateLastIndicesResponse,
+    UpdateLastIndicesRequest, UpdateLastIndicesResponse, grpc_server,
 };
 use crate::repository::traits::{
     LastIndices, LastIndicesSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,

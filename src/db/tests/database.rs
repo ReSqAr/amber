@@ -9,9 +9,9 @@ mod tests {
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
-    use futures::stream;
     use futures::StreamExt;
-    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+    use futures::stream;
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
     use uuid::Uuid;
 
     async fn setup_test_db() -> Database {

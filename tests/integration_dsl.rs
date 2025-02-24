@@ -1,7 +1,7 @@
-use amber::cli::run_cli;
 use amber::cli::Cli;
+use amber::cli::run_cli;
 use amber::flightdeck::output::Output;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use serial_test::serial;
 use std::collections::HashMap;
@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Refined DSL command enum.
 #[derive(Debug)]

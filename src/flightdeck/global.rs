@@ -1,5 +1,5 @@
 use crate::flightdeck::observation::{Message, Observation};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 #[derive(Debug)]
 pub enum Flow<T> {
