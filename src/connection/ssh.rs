@@ -122,9 +122,9 @@ impl SshConfig {
         debug!("thread_response: port={port} auth_key={auth_key}");
 
         let addr = format!("http://127.0.0.1:{}", port);
-        let repository = GRPCClient::connect(addr, auth_key)
-            .await
-            .map_err(|e| InternalError::Ssh(format!("gRPC connection failed: {e}")))?;
+        let repository = GRPCClient::connect(addr, auth_key).await.map_err(|e| {
+            InternalError::Ssh(format!("gRPC connection to port {port} failed: {e}"))
+        })?;
 
         Ok(WrappedRepository::Grpc(repository))
     }

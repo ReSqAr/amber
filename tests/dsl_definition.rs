@@ -1066,6 +1066,7 @@ async fn start_ssh_server(
         {
             eprintln!("GRPC server error: {}", e);
         }
+        println!("GRPC server on port {port} stopped");
     });
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
