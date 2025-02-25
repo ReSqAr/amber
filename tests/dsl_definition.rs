@@ -572,7 +572,12 @@ impl Handler for SshSession {
                     tokio::spawn(async move {
                         match tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await
                         {
-                            Ok((_to_server, _to_client)) => {}
+                            Ok((to_server, to_client)) => {
+                                println!(
+                                    "Port forwarding: {} bytes to server, {} bytes to client",
+                                    to_server, to_client
+                                );
+                            }
                             Err(e) => {
                                 eprintln!("Port forwarding error: {}", e);
                             }
@@ -597,13 +602,11 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> anyhow::Result<(), Self::Error> {
         let cmd = std::str::from_utf8(data).unwrap_or("");
-
         if cmd.contains("serve") {
             let response = ServeResult::Success(self.server_response.clone());
             let json = serde_json::to_string(&response)?;
             session.data(channel, json.into())?;
             session.eof(channel)?;
-            session.close(channel)?;
         } else {
             session.data(channel, "Unsupported command".into())?;
             session.eof(channel)?;
@@ -1107,9 +1110,6 @@ async fn start_ssh_server(
             }
         }
     });
-
-    // Give the server time to start
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     Ok(Box::new(|| tx.send(()).expect("reason")))
 }
