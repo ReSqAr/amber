@@ -30,38 +30,8 @@ pub async fn serve(
     maybe_root: Option<PathBuf>,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = match LocalRepository::new(maybe_root).await {
-        Ok(local_repository) => local_repository,
-        Err(e) => {
-            let error = ServeResult::Error(ServeError {
-                error: e.to_string(),
-            });
-            let json =
-                serde_json::to_string(&error).map_err(|e| InternalError::SerialisationError {
-                    object: format!("{error:?}"),
-                    e: e.to_string(),
-                })?;
-            output.println(json.to_string());
-            return Err(e);
-        }
-    };
-
-    let staging_path = local_repository.staging_path();
-
     let auth_key = generate_auth_key();
     let port = port::find_available_port().await?;
-
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-    let report = ServeResult::Success(ServeResponse {
-        port,
-        auth_key: auth_key.clone(),
-    });
-    let json = serde_json::to_string(&report).map_err(|e| InternalError::SerialisationError {
-        object: format!("{report:?}"),
-        e: e.to_string(),
-    })?;
-    output.println(json.to_string());
-    std::io::stdout().flush()?;
 
     // Create a future that listens for SIGHUP signals
     let shutdown_signal = async {
@@ -80,6 +50,46 @@ pub async fn serve(
 
         debug!("initiating graceful shutdown");
     };
+
+    serve_on_port(maybe_root, output, port, auth_key, shutdown_signal).await
+}
+
+pub async fn serve_on_port(
+    maybe_root: Option<PathBuf>,
+    output: crate::flightdeck::output::Output,
+    port: u16,
+    auth_key: String,
+    shutdown_signal: impl Future<Output = ()>,
+) -> Result<(), InternalError> {
+    let local_repository = match LocalRepository::new(maybe_root).await {
+        Ok(local_repository) => local_repository,
+        Err(e) => {
+            let error = ServeResult::Error(ServeError {
+                error: e.to_string(),
+            });
+            let json =
+                serde_json::to_string(&error).map_err(|e| InternalError::SerialisationError {
+                    object: format!("{error:?}"),
+                    e: e.to_string(),
+                })?;
+            output.println(json.to_string());
+            return Err(e);
+        }
+    };
+
+    let staging_path = local_repository.staging_path();
+
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+    let report = ServeResult::Success(ServeResponse {
+        port,
+        auth_key: auth_key.clone(),
+    });
+    let json = serde_json::to_string(&report).map_err(|e| InternalError::SerialisationError {
+        object: format!("{report:?}"),
+        e: e.to_string(),
+    })?;
+    output.println(json.to_string());
+    std::io::stdout().flush()?;
 
     debug!("listening on {}", addr);
     let auth_interceptor = ServerAuth::new(auth_key);

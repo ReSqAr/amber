@@ -1,5 +1,5 @@
 pub mod cli;
-mod commands;
+pub mod commands;
 mod connection;
 mod db;
 pub mod flightdeck;

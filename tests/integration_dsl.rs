@@ -1,14 +1,19 @@
 use amber::cli::Cli;
 use amber::cli::run_cli;
+use amber::commands::serve;
 use amber::flightdeck::output::Output;
 use anyhow::{Result, anyhow};
 use clap::Parser;
+use russh::keys::signature::rand_core::OsRng;
+use russh::keys::{Algorithm, PrivateKey};
+use russh::server::{Auth, Handler, Server, Session};
+use russh::{Channel, ChannelId};
+use serde::{Deserialize, Serialize};
 use serial_test::serial;
 use std::collections::HashMap;
 use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -57,6 +62,11 @@ enum CommandLine {
     },
     AssertOutputContains {
         expected: String,
+    },
+    StartSsh {
+        repo: String,
+        port: u16,
+        password: String,
     },
 }
 
@@ -218,6 +228,20 @@ fn parse_line(line: &str) -> Option<CommandLine> {
                         filename2,
                     })
                 }
+                "start_ssh" => {
+                    if tokens.len() != 4 {
+                        panic!("Invalid start_ssh command: {}", line);
+                    }
+                    let port = tokens[2]
+                        .parse::<u16>()
+                        .expect("Invalid port in start_ssh command");
+                    let password = tokens[3].to_string();
+                    Some(CommandLine::StartSsh {
+                        repo,
+                        port,
+                        password,
+                    })
+                }
                 other => panic!("Unknown repository command '{}' in line: {}", other, line),
             }
         }
@@ -267,7 +291,9 @@ async fn run_cli_command(
 
     let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = unbounded_channel();
     let writer = ChannelWriter::new(tx);
-    let writer = Arc::new(Mutex::new(Box::new(writer) as Box<dyn Write + Send + Sync>));
+    let writer = std::sync::Arc::new(std::sync::Mutex::new(
+        Box::new(writer) as Box<dyn Write + Send + Sync>
+    ));
 
     let current_dur = env::current_dir()?;
     env::set_current_dir(working_dir)?;
@@ -409,6 +435,274 @@ async fn assert_directories_equal(dir1: &Path, dir2: &Path) -> Result<(), anyhow
     Ok(())
 }
 
+// SSH Server Implementation
+#[derive(Clone)]
+struct SshServer {
+    password: String,
+    repo_path: PathBuf,
+    ssh_clients:
+        std::sync::Arc<tokio::sync::Mutex<HashMap<(usize, ChannelId), russh::server::Handle>>>,
+    client_id: usize,
+    server_response: std::sync::Arc<tokio::sync::Mutex<Option<ServeResponse>>>,
+}
+
+impl Server for SshServer {
+    type Handler = SshSession;
+
+    fn new_client(&mut self, _addr: Option<std::net::SocketAddr>) -> Self::Handler {
+        let client_id = self.client_id;
+        self.client_id += 1;
+
+        SshSession {
+            client_id,
+            password: self.password.clone(),
+            repo_path: self.repo_path.clone(),
+            ssh_clients: self.ssh_clients.clone(),
+            server_response: self.server_response.clone(),
+        }
+    }
+}
+
+struct SshSession {
+    client_id: usize,
+    password: String,
+    repo_path: PathBuf,
+    ssh_clients:
+        std::sync::Arc<tokio::sync::Mutex<HashMap<(usize, ChannelId), russh::server::Handle>>>,
+    server_response: std::sync::Arc<tokio::sync::Mutex<Option<ServeResponse>>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct ServeResponse {
+    pub(crate) port: u16,
+    pub(crate) auth_key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ServeError {
+    pub(crate) error: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
+pub(crate) enum ServeResult {
+    #[serde(rename = "success")]
+    Success(ServeResponse),
+    #[serde(rename = "error")]
+    Error(ServeError),
+}
+
+pub(crate) async fn find_available_port() -> std::result::Result<u16, anyhow::Error> {
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    Ok(listener.local_addr()?.port())
+}
+
+impl Handler for SshSession {
+    type Error = anyhow::Error;
+
+    async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
+        if password == self.password {
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::Reject {
+                proceed_with_methods: None,
+            })
+        }
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<russh::server::Msg>,
+        session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        let mut clients = self.ssh_clients.lock().await;
+        clients.insert((self.client_id, channel.id()), session.handle());
+
+        Ok(true)
+    }
+
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<russh::server::Msg>,
+        _host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        if let Some(ServeResponse {
+            port: grpc_port, ..
+        }) = &self.server_response.lock().await.clone()
+        {
+            if port_to_connect as u16 == *grpc_port {
+                let mut channel_stream = channel.into_stream();
+
+                return match tokio::net::TcpStream::connect(format!("127.0.0.1:{}", grpc_port))
+                    .await
+                {
+                    Ok(mut stream) => {
+                        tokio::spawn(async move {
+                            match tokio::io::copy_bidirectional(&mut stream, &mut channel_stream)
+                                .await
+                            {
+                                Ok((to_server, to_client)) => {
+                                    println!(
+                                        "Port forwarding: {} bytes to server, {} bytes to client",
+                                        to_server, to_client
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("Port forwarding error: {}", e);
+                                }
+                            }
+                        });
+                        Ok(true)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect to GRPC server: {}", e);
+                        Ok(false)
+                    }
+                };
+            }
+        }
+
+        Ok(false)
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let cmd = std::str::from_utf8(data).unwrap_or("");
+
+        if cmd.contains("serve") {
+            let server_response =
+                if let Some(server_response) = self.server_response.lock().await.clone() {
+                    server_response
+                } else {
+                    let auth_key = serve::generate_auth_key();
+
+                    let port = match find_available_port().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let error_result = ServeResult::Error(ServeError {
+                                error: format!("Failed to find available port: {}", e),
+                            });
+                            let json = serde_json::to_string(&error_result)?;
+
+                            session.data(channel, json.into())?;
+                            session.eof(channel)?;
+                            session.close(channel)?;
+                            return Ok(());
+                        }
+                    };
+
+                    let auth_key_clone = auth_key.clone();
+                    let server_response = ServeResponse { port, auth_key };
+                    *self.server_response.lock().await = Some(server_response.clone());
+
+                    let repo_path_clone = self.repo_path.clone();
+                    let _server_handle = tokio::spawn(async move {
+                        let (tx, _rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
+                            unbounded_channel();
+                        let writer = ChannelWriter::new(tx);
+                        let writer = std::sync::Arc::new(std::sync::Mutex::new(
+                            Box::new(writer) as Box<dyn Write + Send + Sync>
+                        ));
+
+                        if let Err(e) = serve::serve_on_port(
+                            Some(repo_path_clone),
+                            Output::Override(writer),
+                            port,
+                            auth_key_clone,
+                            tokio::time::sleep(std::time::Duration::from_secs(3600)), // TODO: better cleanup?
+                        )
+                        .await
+                        {
+                            eprintln!("GRPC server error: {}", e);
+                        }
+                    });
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                    server_response
+                };
+
+            let response = ServeResult::Success(server_response);
+            let json = serde_json::to_string(&response)?;
+            session.data(channel, json.into())?;
+            session.eof(channel)?;
+            session.close(channel)?;
+        } else {
+            session.data(channel, "Unsupported command".into())?;
+            session.eof(channel)?;
+            session.close(channel)?;
+        }
+        Ok(())
+    }
+}
+
+async fn start_ssh_server(
+    repo_path: &Path,
+    ssh_port: u16,
+    password: String,
+) -> Result<(), anyhow::Error> {
+    println!("Starting ssh server");
+    let key_pair = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?;
+
+    let config = russh::server::Config {
+        auth_rejection_time: std::time::Duration::from_secs(1),
+        auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+        keys: vec![key_pair],
+        ..Default::default()
+    };
+
+    let server = SshServer {
+        password: password.clone(),
+        repo_path: repo_path.to_path_buf(),
+        ssh_clients: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        client_id: 0,
+        server_response: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+    };
+
+    let addr = std::net::SocketAddr::new(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+        ssh_port,
+    );
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    tokio::spawn(async move {
+        let config = std::sync::Arc::new(config);
+
+        loop {
+            match listener.accept().await {
+                Ok((socket, _)) => {
+                    let mut server = server.clone();
+                    let config = config.clone();
+
+                    tokio::spawn(async move {
+                        let handler = server.new_client(socket.peer_addr().ok());
+                        if let Err(e) = russh::server::run_stream(config, socket, handler).await {
+                            eprintln!("SSH connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!("SSH server accept error: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Give the server time to start
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    Ok(())
+}
+
 /// Run the DSL script. This function creates a temporary $ROOT directory,
 /// then processes each DSL line.
 async fn run_dsl_script(script: &str) -> Result<(), anyhow::Error> {
@@ -526,7 +820,6 @@ async fn run_dsl_script(script: &str) -> Result<(), anyhow::Error> {
                     })?;
                     assert_files_hardlinked(&repo_instance.path, &filename1, &filename2).await?;
                 }
-                // <-- New command match arm added here:
                 CommandLine::AssertOutputContains { expected } => {
                     if !last_command_output.contains(&expected) {
                         return Err(anyhow!(
@@ -534,6 +827,17 @@ async fn run_dsl_script(script: &str) -> Result<(), anyhow::Error> {
                             expected
                         ));
                     }
+                }
+                CommandLine::StartSsh {
+                    repo,
+                    port,
+                    password,
+                } => {
+                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
+                        anyhow!("Repository {} not found for start_ssh command", repo)
+                    })?;
+
+                    start_ssh_server(&repo_instance.path, port, password).await?;
                 }
             }
         }
@@ -1103,6 +1407,36 @@ async fn integration_test_config_set_name() -> Result<(), anyhow::Error> {
 
         # action
         @a amber config set-name b
+    "#;
+    run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # Set up repositories
+        @a amber init a
+        @a write_file test1.txt "Common content!"
+        @a write_file test2.txt "Common content!"
+        @a amber add
+
+        @b amber init b
+        @b write_file test1.txt "Common content!"
+        @b amber add
+
+        # Start SSH server for repository A
+        @a start_ssh 4567 hunter2
+
+        # Add remote via SSH connection
+        @b amber remote add a-ssh ssh "user:hunter2@localhost:4567/"
+
+        # Pull from SSH remote
+        @b amber sync a-ssh
+
+        # Verify the file was transferred
+        @b assert_exists test2.txt "Common content!"
+        assert_equal a b
     "#;
     run_dsl_script(script).await
 }
