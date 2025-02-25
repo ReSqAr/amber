@@ -607,6 +607,7 @@ impl Handler for SshSession {
             let json = serde_json::to_string(&response)?;
             session.data(channel, json.into())?;
             session.eof(channel)?;
+            session.close(channel)?;
         } else {
             session.data(channel, "Unsupported command".into())?;
             session.eof(channel)?;
