@@ -16,6 +16,7 @@ use std::env;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use tempfile::tempdir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -1032,7 +1033,7 @@ async fn start_ssh_server(
     repo_path: &Path,
     ssh_port: u16,
     password: String,
-) -> anyhow::Result<Box<dyn FnOnce()>, anyhow::Error> {
+) -> anyhow::Result<Pin<Box<dyn Future<Output = ()>>>, anyhow::Error> {
     let (tx, rx) = oneshot::channel();
 
     let key_pair = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?;
@@ -1050,12 +1051,11 @@ async fn start_ssh_server(
     let auth_key_clone = auth_key.clone();
     let server_response = ServeResponse { port, auth_key };
     let repo_path_clone = repo_path.to_path_buf();
-    let _server_handle = tokio::spawn(async move {
+    let server_handle = tokio::spawn(async move {
         let (tx, _rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = unbounded_channel();
         let writer = ChannelWriter::new(tx);
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(
-            Box::new(writer) as Box<dyn Write + Send + Sync>
-        ));
+        let writer: Box<dyn Write + Send + Sync> = Box::new(writer);
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(writer));
 
         if let Err(e) = serve::serve_on_port(
             Some(repo_path_clone),
@@ -1111,7 +1111,10 @@ async fn start_ssh_server(
         }
     });
 
-    Ok(Box::new(|| tx.send(()).expect("reason")))
+    Ok(Box::pin(async {
+        tx.send(()).expect("channel should not be closed");
+        let _ = server_handle.await;
+    }))
 }
 
 /// Run the DSL script. This function creates a temporary $ROOT directory,
@@ -1252,12 +1255,12 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
 
                     let shutdown = start_ssh_server(&repo_instance.path, port, password).await?;
                     if let Some(s) = ssh_connection.insert(repo, shutdown) {
-                        s()
+                        s.await
                     }
                 }
                 CommandLine::EndSsh { repo } => {
                     if let Some(s) = ssh_connection.remove(&repo) {
-                        s()
+                        s.await
                     }
                 }
             }
