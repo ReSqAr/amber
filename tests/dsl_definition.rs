@@ -64,6 +64,11 @@ enum CommandLine {
         filename1: String,
         filename2: String,
     },
+    AssertNotHardlinked {
+        repo: String,
+        filename1: String,
+        filename2: String,
+    },
     AssertOutputContains {
         expected: String,
     },
@@ -235,6 +240,18 @@ fn parse_line(line: &str) -> Option<CommandLine> {
                         filename2,
                     })
                 }
+                "assert_not_hardlinked" => {
+                    if tokens.len() != 4 {
+                        panic!("Invalid assert_not_hardlinked command: {}", line);
+                    }
+                    let filename1 = tokens[2].to_string();
+                    let filename2 = tokens[3].to_string();
+                    Some(CommandLine::AssertNotHardlinked {
+                        repo,
+                        filename1,
+                        filename2,
+                    })
+                }
                 "start_ssh" => {
                     if tokens.len() != 4 {
                         panic!("Invalid start_ssh command: {}", line);
@@ -348,6 +365,15 @@ async fn write_file(
     content: &str,
 ) -> anyhow::Result<(), anyhow::Error> {
     let file_path = dir.join(filename);
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).await.unwrap_or_else(|_| {
+            panic!(
+                "unable to create parent directory for {}",
+                file_path.display()
+            )
+        });
+    }
+
     fs::write(&file_path, content).await?;
     Ok(())
 }
@@ -419,6 +445,30 @@ async fn assert_files_hardlinked(
     Ok(())
 }
 
+/// Helper to assert that two files in the same directory are NOT hardlinked.
+/// On Unix-like systems this compares the inode numbers.
+async fn assert_files_not_hardlinked(
+    dir: &Path,
+    file1: &str,
+    file2: &str,
+) -> anyhow::Result<(), anyhow::Error> {
+    let path1 = dir.join(file1);
+    let path2 = dir.join(file2);
+
+    let meta1 = fs::metadata(&path1).await?;
+    let meta2 = fs::metadata(&path2).await?;
+
+    {
+        use anyhow::anyhow;
+        use std::os::unix::fs::MetadataExt;
+        if meta1.ino() == meta2.ino() {
+            return Err(anyhow!("Files {} and {} are hardlinked", file1, file2));
+        }
+    }
+
+    Ok(())
+}
+
 /// Recursively compare non–hidden files in two directories.
 async fn assert_directories_equal(dir1: &Path, dir2: &Path) -> anyhow::Result<(), anyhow::Error> {
     let mut entries1 = fs::read_dir(dir1).await?;
@@ -451,10 +501,23 @@ async fn assert_directories_equal(dir1: &Path, dir2: &Path) -> anyhow::Result<()
     for file in files1 {
         let path1 = dir1.join(&file);
         let path2 = dir2.join(&file);
-        let content1 = fs::read(&path1).await?;
-        let content2 = fs::read(&path2).await?;
-        if content1 != content2 {
-            return Err(anyhow!("file content {} differs between directories", file));
+        let meta1 = fs::metadata(&path1).await?;
+        let meta2 = fs::metadata(&path2).await?;
+
+        if meta1.is_dir() && meta2.is_dir() {
+            // Wrap the recursive call to avoid infinite future size.
+            Box::pin(assert_directories_equal(&path1, &path2)).await?;
+        } else if meta1.is_file() && meta2.is_file() {
+            let content1 = fs::read(&path1).await?;
+            let content2 = fs::read(&path2).await?;
+            if content1 != content2 {
+                return Err(anyhow!("file content {} differs between directories", file));
+            }
+        } else {
+            return Err(anyhow!(
+                "type mismatch for {}: one is a file, the other is a directory",
+                file
+            ));
         }
     }
     Ok(())
@@ -1235,6 +1298,20 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                         )
                     })?;
                     assert_files_hardlinked(&repo_instance.path, &filename1, &filename2).await?;
+                }
+                CommandLine::AssertNotHardlinked {
+                    repo,
+                    filename1,
+                    filename2,
+                } => {
+                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
+                        anyhow!(
+                            "repository {} not found for assert_not_hardlinked command",
+                            repo
+                        )
+                    })?;
+                    assert_files_not_hardlinked(&repo_instance.path, &filename1, &filename2)
+                        .await?;
                 }
                 CommandLine::AssertOutputContains { expected } => {
                     if !last_command_output.contains(&expected) {
