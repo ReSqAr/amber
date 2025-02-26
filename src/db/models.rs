@@ -2,7 +2,6 @@ use chrono::prelude::{DateTime, Utc};
 use sqlx::Type;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row};
-use std::fmt::{Display, Formatter};
 
 #[derive(Debug, FromRow, Clone)]
 pub struct CurrentRepository {
@@ -175,16 +174,6 @@ pub enum ConnectionType {
     Local,
     Ssh,
     RClone,
-}
-
-impl Display for ConnectionType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConnectionType::Local => write!(f, "local"),
-            ConnectionType::Ssh => write!(f, "ssh"),
-            ConnectionType::RClone => write!(f, "rclone"),
-        }
-    }
 }
 
 #[derive(Debug, FromRow, Clone)]
