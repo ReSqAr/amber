@@ -1133,7 +1133,7 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
     let mut line_number = 0usize;
     for line in script.lines() {
         if !ssh_connection.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
         line_number += 1;
