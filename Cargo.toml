@@ -8,6 +8,7 @@ aes = "0.8"
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 async-lock = "3.4"
 async-trait = "0.1"
+backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 cipher = "0.4"
@@ -42,11 +43,11 @@ thiserror = "2.0"
 tokio = { version = "1.43", features = ["full"] }
 tokio-stream = "0.1"
 tonic = "0.12"
-uuid = { version = "1.14", features = ["v4", "v5", "v7"] }
+uuid = { version = "1.15", features = ["v4", "v5", "v7"] }
 
 [dev-dependencies]
 anyhow = "1.0"
-russh-sftp = "2.0"
+russh-sftp = ">=2.0.8"
 serial_test = "3.2"
 
 [build-dependencies]

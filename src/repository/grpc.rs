@@ -13,41 +13,97 @@ use crate::repository::traits::{
     Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
+use backoff::future::retry;
+use backoff::{Error as BackoffError, ExponentialBackoff};
 use futures::TryStreamExt;
 use futures::{FutureExt, TryFutureExt};
 use futures::{Stream, StreamExt};
 use log::debug;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::RwLock;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
 
+pub(crate) type ShutdownFn = Arc<std::sync::RwLock<Option<Box<dyn Fn() + Send + Sync + 'static>>>>;
+
 #[derive(Clone)]
 pub(crate) struct GRPCClient {
     client: Arc<RwLock<GrpcClient<InterceptedService<Channel, ClientAuth>>>>,
+    shutdown: ShutdownFn,
+}
+
+impl Drop for GRPCClient {
+    fn drop(&mut self) {
+        let mut guard = self.shutdown.write().unwrap();
+        if let Some(shutdown) = guard.take() {
+            shutdown()
+        }
+    }
 }
 
 impl GRPCClient {
-    pub fn new(client: GrpcClient<InterceptedService<Channel, ClientAuth>>) -> Self {
+    fn new(
+        client: GrpcClient<InterceptedService<Channel, ClientAuth>>,
+        shutdown: ShutdownFn,
+    ) -> Self {
         Self {
             client: Arc::new(client.into()),
+            shutdown,
         }
     }
 
-    pub async fn connect(addr: String, auth_key: String) -> Result<Self, InternalError> {
-        debug!("connecting to {}", &addr);
+    pub async fn connect(
+        addr: String,
+        auth_key: String,
+        shutdown: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, InternalError> {
+        let shutdown: Box<dyn Fn() + Send + Sync + 'static> = Box::new(shutdown);
+        let shutdown = Arc::new(std::sync::RwLock::new(Some(shutdown)));
 
-        let channel = tonic::transport::Endpoint::from_shared(addr.clone())?
-            .connect()
-            .await?;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let op = || {
+            let attempts = attempts.clone();
+            let addr = addr.clone();
+            let auth_key = auth_key.clone();
+            let shutdown = shutdown.clone();
 
-        let interceptor = ClientAuth::new(&auth_key).map_err(|e| {
-            InternalError::Grpc(format!("unable to create authentication method: {e}"))
-        })?;
-        let client = GrpcClient::with_interceptor(channel, interceptor);
+            async move {
+                let current_attempt = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                debug!("Attempt {}: connecting to {}", current_attempt, addr);
+                if current_attempt > 3 {
+                    return Err(BackoffError::permanent(InternalError::Grpc(
+                        "maximum retry attempts reached".into(),
+                    )));
+                }
 
-        debug!("connected to {}", &addr);
-        Ok(Self::new(client))
+                let channel = tonic::transport::Endpoint::from_shared(addr.clone())
+                    .map_err(InternalError::Tonic)
+                    .map_err(BackoffError::transient)?
+                    .connect()
+                    .await
+                    .map_err(InternalError::Tonic)
+                    .map_err(BackoffError::transient)?;
+
+                let interceptor = ClientAuth::new(&auth_key)
+                    .map_err(|e| {
+                        InternalError::Grpc(format!("unable to create authentication method: {e}"))
+                    })
+                    .map_err(BackoffError::transient)?;
+                let client = GrpcClient::with_interceptor(channel, interceptor);
+
+                debug!("connected to {}", &addr);
+                Ok(Self::new(client, shutdown.clone()))
+            }
+        };
+
+        let backoff = ExponentialBackoff::default();
+        let client = retry(backoff, op).await?;
+        debug!(
+            "Successfully connected after {} attempt(s)",
+            attempts.load(Ordering::SeqCst)
+        );
+        Ok(client)
     }
 }
 

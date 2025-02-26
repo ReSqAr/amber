@@ -96,7 +96,7 @@ impl SshConfig {
     }
 
     pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
-        let (tx, mut rx) = mpsc::channel::<Result<ThreadResponse, InternalError>>(100);
+        let (tx, mut rx) = mpsc::channel::<Result<SshSetup, InternalError>>(100);
         let ssh_config = self.clone();
         let local_port = port::find_available_port().await?;
         debug!("local_port: {local_port}");
@@ -104,14 +104,16 @@ impl SshConfig {
         // dedicated thread for SSH operations
         tokio::spawn(async move {
             let result = setup_app_via_ssh(ssh_config, local_port).await;
-            debug!("result to be sent: {:?}", result);
             if let Err(e) = tx.send(result).await {
                 eprintln!("Failed to send ThreadResponse: {e}");
             }
         });
 
-        let ThreadResponse { port, auth_key } = match rx.recv().await {
-            Some(Ok(info)) => info,
+        let SshSetup {
+            thread_response: ThreadResponse { port, auth_key },
+            shutdown,
+        } = match rx.recv().await {
+            Some(Ok(ssh_setup)) => ssh_setup,
             Some(Err(e)) => return Err(e),
             None => {
                 return Err(InternalError::Ssh(
@@ -122,9 +124,11 @@ impl SshConfig {
         debug!("thread_response: port={port} auth_key={auth_key}");
 
         let addr = format!("http://127.0.0.1:{}", port);
-        let repository = GRPCClient::connect(addr, auth_key).await.map_err(|e| {
-            InternalError::Ssh(format!("gRPC connection to port {port} failed: {e}"))
-        })?;
+        let repository = GRPCClient::connect(addr, auth_key, shutdown)
+            .await
+            .map_err(|e| {
+                InternalError::Ssh(format!("gRPC connection to port {port} failed: {e}"))
+            })?;
 
         Ok(WrappedRepository::Grpc(repository))
     }
@@ -156,6 +160,13 @@ struct ThreadResponse {
     auth_key: String,
 }
 
+pub(crate) type ShutdownFn = Box<dyn Fn() + Send + Sync + 'static>;
+
+struct SshSetup {
+    thread_response: ThreadResponse,
+    shutdown: ShutdownFn,
+}
+
 struct Client;
 
 impl russh::client::Handler for Client {
@@ -172,7 +183,7 @@ impl russh::client::Handler for Client {
 async fn setup_app_via_ssh(
     ssh_config: SshConfig,
     local_port: u16,
-) -> Result<ThreadResponse, InternalError> {
+) -> Result<SshSetup, InternalError> {
     let config = Arc::new(russh::client::Config::default());
     let mut session = russh::client::connect(
         config,
@@ -270,7 +281,7 @@ async fn setup_app_via_ssh(
     let auth_key = serve_result.auth_key;
     let remote_port = serve_result.port;
 
-    tokio::spawn(async move {
+    let remote_reader_handle = tokio::spawn(async move {
         loop {
             let mut buffer = String::new();
             if let Err(e) = reader.read_line(&mut buffer).await {
@@ -282,7 +293,7 @@ async fn setup_app_via_ssh(
     });
 
     // port forwarding in new asynchronous task
-    tokio::spawn(async move {
+    let port_forward_handle = tokio::spawn(async move {
         let listener = match TcpListener::bind(format!("127.0.0.1:{local_port}")).await {
             Ok(listener) => listener,
             Err(e) => {
@@ -325,9 +336,15 @@ async fn setup_app_via_ssh(
         }
     });
 
-    Ok(ThreadResponse {
-        port: local_port,
-        auth_key,
+    Ok(SshSetup {
+        thread_response: ThreadResponse {
+            port: local_port,
+            auth_key,
+        },
+        shutdown: Box::new(move || {
+            remote_reader_handle.abort();
+            port_forward_handle.abort();
+        }),
     })
 }
 

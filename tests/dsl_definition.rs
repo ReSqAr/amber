@@ -1072,7 +1072,6 @@ async fn start_ssh_server(
         }
         println!("GRPC server on port {port} stopped");
     });
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let server = SshServer {
         password: password.clone(),
@@ -1132,10 +1131,6 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
 
     let mut line_number = 0usize;
     for line in script.lines() {
-        if !ssh_connection.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-
         line_number += 1;
         println!("[{:2}] {}", line_number, line.trim());
         if let Some(cmd) = parse_line(line) {
