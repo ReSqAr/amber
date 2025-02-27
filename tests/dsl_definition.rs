@@ -104,6 +104,7 @@ fn tokenize_line(line: &str) -> Vec<String> {
     let mut token = String::new();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
+    let mut can_be_empty = false;
 
     for c in line.chars() {
         // Unquoted '#' starts a comment.
@@ -117,13 +118,15 @@ fn tokenize_line(line: &str) -> Vec<String> {
             }
         } else if c == '\'' && !in_double_quote {
             in_single_quote = !in_single_quote;
+            can_be_empty = true;
         } else if c == '"' && !in_single_quote {
             in_double_quote = !in_double_quote;
+            can_be_empty = true;
         } else {
             token.push(c);
         }
     }
-    if !token.is_empty() {
+    if !token.is_empty() || can_be_empty {
         tokens.push(token);
     }
     tokens
@@ -374,6 +377,17 @@ async fn write_file(
         });
     }
 
+    if file_path.exists() {
+        let metadata = fs::metadata(&file_path).await?;
+        let mut perms = metadata.permissions();
+
+        if perms.readonly() {
+            perms.set_mode(perms.mode() | 0o200);
+            fs::set_permissions(&file_path, perms).await?;
+        }
+    }
+
+    // Now write to the file
     fs::write(&file_path, content).await?;
     Ok(())
 }
