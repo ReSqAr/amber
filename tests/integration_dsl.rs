@@ -571,6 +571,23 @@ async fn integration_test_config_set_name() -> Result<(), anyhow::Error> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_ssh_connection_list() -> Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a start_ssh 4567 hunter2
+
+        @b amber init b
+
+        @b amber remote add a-ssh ssh "user:hunter2@localhost:4567/"
+        
+        @b amber remote list
+        assert_output_contains "a-ssh"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
     let script = r#"
         # Set up repositories
