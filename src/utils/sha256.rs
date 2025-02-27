@@ -28,7 +28,10 @@ pub(crate) async fn compute_sha256_and_size(
     let mut size = 0u64;
 
     loop {
-        let bytes_read = file.read(&mut buffer).await?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .map_err(obs.observe_error(|_| BaseObservation::TerminalState("error".into())))?;
         if bytes_read == 0 {
             break;
         }
