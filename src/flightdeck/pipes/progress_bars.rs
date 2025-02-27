@@ -412,3 +412,252 @@ impl ProgressBarPipe {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flightdeck::base::{BaseLayoutBuilderBuilder, StateTransformer, TerminationAction};
+    use crate::flightdeck::layout::{LayoutItem, LayoutItemBuilder, UpdateAction};
+    use crate::flightdeck::observation::{Data, Observation, Value};
+
+    use chrono::Utc;
+    use indicatif::{MultiProgress, ProgressBar};
+    use std::sync::{Arc, Mutex};
+
+    fn create_observation(
+        type_key: &str,
+        id: Option<&str>,
+        state: &str,
+        is_terminal: bool,
+    ) -> Observation {
+        Observation {
+            type_key: type_key.to_string(),
+            id: id.map(|s| s.to_string()),
+            timestamp: Utc::now(),
+            is_terminal,
+            data: vec![Data {
+                key: "state".to_string(),
+                value: Value::String(state.to_string()),
+            }],
+        }
+    }
+
+    fn create_test_layout_builder(type_key: &str) -> Box<dyn LayoutItemBuilder> {
+        BaseLayoutBuilderBuilder::default()
+            .type_key(type_key)
+            .termination_action(TerminationAction::Keep)
+            .state_transformer(StateTransformer::Identity)
+            .infallible_build()
+            .boxed()
+    }
+
+    #[test]
+    fn test_layout_item_builder_node_creation() {
+        let builder = create_test_layout_builder("task");
+        let node = LayoutItemBuilderNode::from(builder);
+
+        assert!(node.children.is_empty());
+        assert_eq!(node.builder.type_key(), "task");
+    }
+
+    #[test]
+    fn test_layout_item_builder_node_with_children() {
+        let parent_builder = create_test_layout_builder("parent");
+        let child1_builder = create_test_layout_builder("child1");
+        let child2_builder = create_test_layout_builder("child2");
+
+        let node = LayoutItemBuilderNode::from(parent_builder).with_children(vec![
+            LayoutItemBuilderNode::from(child1_builder),
+            LayoutItemBuilderNode::from(child2_builder),
+        ]);
+
+        assert_eq!(node.children.len(), 2);
+        assert_eq!(node.builder.type_key(), "parent");
+        assert_eq!(node.children[0].builder.type_key(), "child1");
+        assert_eq!(node.children[1].builder.type_key(), "child2");
+    }
+
+    #[test]
+    fn test_layout_item_builder_node_add_child() {
+        let parent_builder = create_test_layout_builder("parent");
+        let child_builder = create_test_layout_builder("child");
+
+        let node = LayoutItemBuilderNode::from(parent_builder)
+            .add_child(LayoutItemBuilderNode::from(child_builder));
+
+        assert_eq!(node.children.len(), 1);
+        assert_eq!(node.builder.type_key(), "parent");
+        assert_eq!(node.children[0].builder.type_key(), "child");
+    }
+
+    #[test]
+    fn test_progress_bar_pipe_initialization() {
+        let parent_builder = create_test_layout_builder("parent");
+        let child1_builder = create_test_layout_builder("child1");
+        let child2_builder = create_test_layout_builder("child2");
+
+        let root = LayoutItemBuilderNode::from(parent_builder).with_children(vec![
+            LayoutItemBuilderNode::from(child1_builder),
+            LayoutItemBuilderNode::from(child2_builder),
+        ]);
+
+        let multi = MultiProgress::new();
+        let mut pipe = ProgressBarPipe::new(multi, vec![root]);
+
+        let parent_obs = create_observation("parent", Some("1"), "running", false);
+        let child1_obs = create_observation("child1", Some("11"), "starting", false);
+
+        pipe.observe(log::Level::Info, parent_obs);
+        pipe.observe(log::Level::Info, child1_obs);
+    }
+
+    struct MockItem {
+        id: Option<String>,
+        bar: Option<ProgressBar>,
+        update_count: Arc<Mutex<usize>>,
+        tick_count: Arc<Mutex<usize>>,
+        update_action: UpdateAction,
+    }
+
+    impl MockItem {
+        fn new(id: Option<String>, update_action: UpdateAction) -> Self {
+            Self {
+                id,
+                bar: None,
+                update_count: Arc::new(Mutex::new(0)),
+                tick_count: Arc::new(Mutex::new(0)),
+                update_action,
+            }
+        }
+    }
+
+    impl LayoutItem for MockItem {
+        fn id(&self) -> Option<String> {
+            self.id.clone()
+        }
+
+        fn update(&mut self, _obs: &Observation) -> UpdateAction {
+            if let Ok(mut count) = self.update_count.lock() {
+                *count += 1;
+            }
+            self.update_action.clone()
+        }
+
+        fn tick(&mut self) {
+            if let Ok(mut count) = self.tick_count.lock() {
+                *count += 1;
+            }
+            if let Some(bar) = &self.bar {
+                bar.tick();
+            }
+        }
+
+        fn set_bar(&mut self, bar: ProgressBar) {
+            self.bar = Some(bar);
+        }
+
+        fn get_bar(&self) -> Option<&ProgressBar> {
+            self.bar.as_ref()
+        }
+    }
+
+    struct MockBuilder {
+        type_key: String,
+        depth: usize,
+        limit: Option<usize>,
+        mock_item: Arc<Mutex<Option<MockItem>>>,
+    }
+
+    impl MockBuilder {
+        fn new(type_key: &str, depth: usize, limit: Option<usize>, item: MockItem) -> Self {
+            Self {
+                type_key: type_key.to_string(),
+                depth,
+                limit,
+                mock_item: Arc::new(Mutex::new(Some(item))),
+            }
+        }
+
+        fn boxed(self) -> Box<dyn LayoutItemBuilder> {
+            Box::new(self)
+        }
+    }
+
+    impl LayoutItemBuilder for MockBuilder {
+        fn type_key(&self) -> &str {
+            &self.type_key
+        }
+
+        fn set_depth(&mut self, depth: usize) {
+            self.depth = depth;
+        }
+
+        fn visible_limit(&self) -> Option<usize> {
+            self.limit
+        }
+
+        fn build_item(&self, _obs: &Observation) -> Box<dyn LayoutItem> {
+            if let Ok(mut mock_item) = self.mock_item.lock() {
+                Box::new(mock_item.take().expect("MockItem already taken"))
+            } else {
+                panic!("Failed to lock mock_item");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_progress_bar_pipe_observable_lifecycle() {
+        let mock_item = MockItem::new(Some("item1".to_string()), UpdateAction::Continue);
+        let update_count = mock_item.update_count.clone();
+        let tick_count = mock_item.tick_count.clone();
+
+        let builder = MockBuilder::new("test_type", 0, None, mock_item).boxed();
+        let root = LayoutItemBuilderNode::from(builder);
+
+        let multi = MultiProgress::new();
+        let mut pipe = ProgressBarPipe::new(multi, vec![root]);
+
+        let obs = create_observation("test_type", Some("item1"), "running", false);
+        pipe.observe(log::Level::Info, obs.clone());
+        pipe.flush().await;
+
+        assert_eq!(*update_count.lock().unwrap(), 0);
+        assert_eq!(*tick_count.lock().unwrap(), 1);
+
+        pipe.observe(log::Level::Info, obs);
+        pipe.flush().await;
+
+        assert_eq!(*update_count.lock().unwrap(), 1);
+        assert_eq!(*tick_count.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_progress_bar_pipe_item_removal() {
+        let mock_item = MockItem::new(Some("item1".to_string()), UpdateAction::FinishedRemove);
+        let update_count = mock_item.update_count.clone();
+
+        let builder = MockBuilder::new("test_type", 0, None, mock_item).boxed();
+        let root = LayoutItemBuilderNode::from(builder);
+
+        let multi = MultiProgress::new();
+        let mut pipe = ProgressBarPipe::new(multi, vec![root]);
+
+        let obs1 = create_observation("test_type", Some("item1"), "running", false);
+        pipe.observe(log::Level::Info, obs1);
+
+        let obs2 = create_observation("test_type", Some("item1"), "completed", true);
+        pipe.observe(log::Level::Info, obs2);
+        pipe.flush().await;
+
+        assert_eq!(*update_count.lock().unwrap(), 1);
+
+        let mock_item2 = MockItem::new(Some("item1".to_string()), UpdateAction::Continue);
+        let builder2 = MockBuilder::new("test_type", 0, None, mock_item2).boxed();
+
+        pipe.builders
+            .insert(Key::Body("test_type".to_string()), Builder::Body(builder2));
+
+        let obs3 = create_observation("test_type", Some("item1"), "running", false);
+        pipe.observe(log::Level::Info, obs3);
+    }
+}

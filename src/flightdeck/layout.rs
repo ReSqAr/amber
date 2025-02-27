@@ -1,6 +1,6 @@
 use crate::flightdeck::observation::Observation;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum UpdateAction {
     Continue,
     FinishedRemove,
