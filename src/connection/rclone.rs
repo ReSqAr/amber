@@ -1,6 +1,5 @@
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
-use crate::repository::traits::RcloneTargetPath;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::rclone::{ConfigSection, RCloneTarget};
@@ -38,12 +37,6 @@ impl RCloneRemoteConfig {
     ) -> Result<WrappedRepository, InternalError> {
         let repository = RCloneStore::new(local, name, &self.remote_path).await?;
         Ok(WrappedRepository::RClone(repository))
-    }
-}
-
-impl RcloneTargetPath for RCloneRemoteConfig {
-    async fn rclone_path(&self, _transfer_id: u32) -> Result<String, InternalError> {
-        Ok(self.remote_path.clone())
     }
 }
 

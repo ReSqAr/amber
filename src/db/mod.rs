@@ -21,7 +21,7 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Erro
         .optimize_on_close(true, 10000000);
 
     SqlitePoolOptions::new()
-        .max_connections(5) // Adjust based on your needs
+        .max_connections(5)
         .connect_with(options)
         .await
 }
