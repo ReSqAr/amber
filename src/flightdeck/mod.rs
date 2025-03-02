@@ -26,7 +26,7 @@ pub struct FlightDeck {
 }
 
 pub async fn flightdeck<E: From<tokio::task::JoinError>>(
-    wrapped: impl std::future::Future<Output = Result<(), E>> + Sized,
+    wrapped: impl Future<Output = Result<(), E>> + Sized,
     root_builders: impl IntoIterator<Item = LayoutItemBuilderNode> + Sized + Send + Sync + 'static,
     path: impl Into<Option<PathBuf>>,
     file_level_filter: Option<log::LevelFilter>,

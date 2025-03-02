@@ -10,7 +10,6 @@ use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use log::error;
 use std::path::PathBuf;
-use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
 pub async fn missing(
@@ -122,7 +121,11 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
     Ok(())
 }
 
-fn generate_final_message(count_files: usize, count_blobs: usize, start_time: Instant) -> String {
+fn generate_final_message(
+    count_files: usize,
+    count_blobs: usize,
+    start_time: tokio::time::Instant,
+) -> String {
     if count_files > 0 {
         let duration = start_time.elapsed();
 

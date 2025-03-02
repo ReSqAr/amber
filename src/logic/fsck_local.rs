@@ -34,63 +34,61 @@ async fn fsck_blobs(
     let local_clone = local.clone();
     let count_clone = count.clone();
     let obs_clone = obs.clone();
-    let stream =
-        tokio_stream::StreamExt::map(stream, move |blob: Result<AvailableBlob, InternalError>| {
-            let local = local_clone.clone();
-            let count = count_clone.clone();
-            let obs = obs_clone.clone();
-            async move {
-                let blob = blob?;
-                let blob_path = local.blob_path(&blob.blob_id);
-                let mut o = BaseObserver::with_id("fsck:blob", blob.blob_id.clone());
+    let stream = StreamExt::map(stream, move |blob: Result<AvailableBlob, InternalError>| {
+        let local = local_clone.clone();
+        let count = count_clone.clone();
+        let obs = obs_clone.clone();
+        async move {
+            let blob = blob?;
+            let blob_path = local.blob_path(&blob.blob_id);
+            let mut o = BaseObserver::with_id("fsck:blob", blob.blob_id.clone());
 
-                let result = sha256::compute_sha256_and_size(&blob_path).await?;
-                let matching = result.hash == blob.blob_id && result.size == blob.blob_size as u64;
+            let result = sha256::compute_sha256_and_size(&blob_path).await?;
+            let matching = result.hash == blob.blob_id && result.size == blob.blob_size as u64;
 
-                match matching {
-                    true => o.observe_termination(log::Level::Debug, "checked"),
-                    false => {
-                        let quarantine_folder = local.repository_path().join("quarantine");
-                        let quarantine_filename =
-                            format!("{}.{}", result.hash, current_timestamp());
-                        let quarantine_path = quarantine_folder.join(quarantine_filename);
-                        o.observe_state_ext(
-                            log::Level::Debug,
-                            "quarantining blob".to_string(),
-                            [(
-                                "quarantine_path".into(),
-                                quarantine_path.rel().to_string_lossy().to_string(),
-                            )],
-                        );
+            match matching {
+                true => o.observe_termination(log::Level::Debug, "checked"),
+                false => {
+                    let quarantine_folder = local.repository_path().join("quarantine");
+                    let quarantine_filename = format!("{}.{}", result.hash, current_timestamp());
+                    let quarantine_path = quarantine_folder.join(quarantine_filename);
+                    o.observe_state_ext(
+                        log::Level::Debug,
+                        "quarantining blob".to_string(),
+                        [(
+                            "quarantine_path".into(),
+                            quarantine_path.rel().to_string_lossy().to_string(),
+                        )],
+                    );
 
-                        fs::create_dir_all(&quarantine_folder).await?;
-                        fs::rename(&blob_path, &quarantine_path).await?;
-                        o.observe_termination_ext(
-                            log::Level::Error,
-                            "blob corrupted".to_string(),
-                            [(
-                                "quarantine_path".into(),
-                                quarantine_path.rel().to_string_lossy().to_string(),
-                            )],
-                        )
-                    }
-                };
+                    fs::create_dir_all(&quarantine_folder).await?;
+                    fs::rename(&blob_path, &quarantine_path).await?;
+                    o.observe_termination_ext(
+                        log::Level::Error,
+                        "blob corrupted".to_string(),
+                        [(
+                            "quarantine_path".into(),
+                            quarantine_path.rel().to_string_lossy().to_string(),
+                        )],
+                    )
+                }
+            };
 
-                *count.lock().await += 1;
-                obs.lock()
-                    .await
-                    .observe_position(log::Level::Trace, *count.lock().await);
+            *count.lock().await += 1;
+            obs.lock()
+                .await
+                .observe_position(log::Level::Trace, *count.lock().await);
 
-                Ok::<InsertBlob, InternalError>(InsertBlob {
-                    repo_id: blob.repo_id,
-                    blob_id: blob.blob_id,
-                    blob_size: blob.blob_size,
-                    has_blob: matching,
-                    path: None,
-                    valid_from: chrono::Utc::now(),
-                })
-            }
-        });
+            Ok::<InsertBlob, InternalError>(InsertBlob {
+                repo_id: blob.repo_id,
+                blob_id: blob.blob_id,
+                blob_size: blob.blob_size,
+                has_blob: matching,
+                path: None,
+                valid_from: chrono::Utc::now(),
+            })
+        }
+    });
 
     let stream =
         futures::StreamExt::buffer_unordered(stream, local.buffer_size(BufferType::FsckBuffer));

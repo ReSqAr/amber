@@ -15,9 +15,7 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
-use futures::TryStreamExt;
-use futures::{FutureExt, TryFutureExt};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -152,7 +150,7 @@ impl Syncer<models::Repository> for GRPCClient {
     fn select(
         &self,
         _params: (),
-    ) -> impl std::future::Future<
+    ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::Repository, InternalError>>
                  + Unpin
                  + Send
@@ -169,7 +167,7 @@ impl Syncer<models::Repository> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = models::Repository> + Unpin + Send + 'static,
     {
@@ -189,7 +187,7 @@ impl Syncer<models::File> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl std::future::Future<
+    ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::File, InternalError>>
                  + Unpin
                  + Send
@@ -206,7 +204,7 @@ impl Syncer<models::File> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = models::File> + Unpin + Send + 'static,
     {
@@ -226,7 +224,7 @@ impl Syncer<models::Blob> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl std::future::Future<
+    ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
                  + Unpin
                  + Send
@@ -243,7 +241,7 @@ impl Syncer<models::Blob> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = models::Blob> + Unpin + Send + 'static,
     {
@@ -263,7 +261,7 @@ impl Syncer<models::RepositoryName> for GRPCClient {
     fn select(
         &self,
         last_index: i32,
-    ) -> impl std::future::Future<
+    ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
                  + Unpin
                  + Send
@@ -280,7 +278,7 @@ impl Syncer<models::RepositoryName> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl std::future::Future<Output = Result<(), InternalError>> + Send
+    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
     where
         S: futures::Stream<Item = models::RepositoryName> + Unpin + Send + 'static,
     {
@@ -311,12 +309,9 @@ impl RcloneTargetPath for GRPCClient {
 }
 
 impl Sender<models::BlobTransferItem> for GRPCClient {
-    fn prepare_transfer<S>(
-        &self,
-        s: S,
-    ) -> impl std::future::Future<Output = Result<u64, InternalError>> + Send
+    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
     where
-        S: Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
+        S: futures::Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
     {
         let arc_client = self.client.clone();
         async move {
@@ -336,8 +331,8 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
         transfer_id: u32,
         repo_id: String,
         paths: Vec<String>,
-    ) -> impl std::future::Future<
-        Output = impl Stream<Item = Result<models::BlobTransferItem, InternalError>>
+    ) -> impl Future<
+        Output = impl futures::Stream<Item = Result<models::BlobTransferItem, InternalError>>
                  + Unpin
                  + Send
                  + 'static,

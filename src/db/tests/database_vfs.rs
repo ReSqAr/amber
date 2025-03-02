@@ -4,7 +4,6 @@ mod tests {
 
     use crate::db::database::Database;
     use crate::db::migrations::run_migrations;
-    use crate::db::models;
     use crate::db::models::{
         FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation,
         VirtualFileState,
@@ -111,7 +110,7 @@ mod tests {
 
     async fn apply_observations(
         db: &Database,
-        observations: impl IntoIterator<Item = models::Observation>,
+        observations: impl IntoIterator<Item = Observation>,
     ) -> std::collections::HashMap<String, VirtualFileState> {
         let observations: Vec<_> = observations.into_iter().map(Flow::Data).collect();
         let input_stream = stream::iter(observations);

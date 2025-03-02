@@ -66,7 +66,7 @@ impl Sender<FileTransferItem> for RCloneStore {
         let stream = s;
         let mut count = 0;
         pin_mut!(stream);
-        while (tokio_stream::StreamExt::next(&mut stream).await).is_some() {
+        while tokio_stream::StreamExt::next(&mut stream).await.is_some() {
             count += 1
         }
 

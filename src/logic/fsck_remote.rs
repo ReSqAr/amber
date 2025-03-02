@@ -45,39 +45,34 @@ pub(crate) async fn fsck_remote(
         let stream = remote.available();
         let local_clone = local.clone();
         let fsck_files_path_clone = fsck_files_path.clone();
-        let stream = tokio_stream::StreamExt::map(
-            stream,
-            move |blob: Result<AvailableBlob, InternalError>| {
-                let local = local_clone.clone();
-                let fsck_files_path = fsck_files_path_clone.clone();
-                let tx = tx.clone();
-                async move {
-                    let blob = blob?;
-                    let blob_path = local.blob_path(&blob.blob_id);
-                    let mut o =
-                        BaseObserver::with_id("fsck:file:materialise", blob.blob_id.clone());
+        let stream = StreamExt::map(stream, move |blob: Result<AvailableBlob, InternalError>| {
+            let local = local_clone.clone();
+            let fsck_files_path = fsck_files_path_clone.clone();
+            let tx = tx.clone();
+            async move {
+                let blob = blob?;
+                let blob_path = local.blob_path(&blob.blob_id);
+                let mut o = BaseObserver::with_id("fsck:file:materialise", blob.blob_id.clone());
 
-                    if fs::metadata(&blob_path)
-                        .await
-                        .map(|m| m.is_file())
-                        .unwrap_or(false)
-                    {
-                        if let Some(path) = blob.path {
-                            files::create_hard_link(&blob_path, &fsck_files_path.join(&path))
-                                .await?;
-                            tx.send(path).await?;
-                            o.observe_termination(log::Level::Debug, "materialised");
-                        } else {
-                            o.observe_termination(log::Level::Debug, "skipped");
-                        }
+                if fs::metadata(&blob_path)
+                    .await
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+                {
+                    if let Some(path) = blob.path {
+                        files::create_hard_link(&blob_path, &fsck_files_path.join(&path)).await?;
+                        tx.send(path).await?;
+                        o.observe_termination(log::Level::Debug, "materialised");
                     } else {
                         o.observe_termination(log::Level::Debug, "skipped");
                     }
-
-                    Ok::<(), InternalError>(())
+                } else {
+                    o.observe_termination(log::Level::Debug, "skipped");
                 }
-            },
-        );
+
+                Ok::<(), InternalError>(())
+            }
+        });
 
         let mut stream = futures::StreamExt::buffer_unordered(
             stream,

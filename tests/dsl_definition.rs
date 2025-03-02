@@ -596,7 +596,7 @@ pub(crate) enum ServeResult {
     Error(ServeError),
 }
 
-pub(crate) async fn find_available_port() -> std::result::Result<u16, anyhow::Error> {
+pub(crate) async fn find_available_port() -> Result<u16, anyhow::Error> {
     use tokio::net::TcpListener;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     Ok(listener.local_addr()?.port())
@@ -772,7 +772,7 @@ impl russh_sftp::server::Handler for SftpSession {
         // If the client wants to write/create the file, then do so.
         if pflags.contains(OpenFlags::CREATE) || pflags.contains(OpenFlags::WRITE) {
             // Open for writing (create if it doesn't exist)
-            tokio::fs::OpenOptions::new()
+            fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
@@ -810,14 +810,14 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        let mut file = match tokio::fs::File::open(&file_path).await {
+        let mut file = match fs::File::open(&file_path).await {
             Ok(f) => f,
             Err(_) => return Err(StatusCode::PermissionDenied),
         };
 
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-        if (file.seek(std::io::SeekFrom::Start(offset)).await).is_err() {
+        if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
             return Err(StatusCode::Failure);
         }
 
@@ -844,7 +844,7 @@ impl russh_sftp::server::Handler for SftpSession {
         data: Vec<u8>,
     ) -> anyhow::Result<Status, Self::Error> {
         let file_path = self.repo_path.join(handle.clone());
-        let mut file = tokio::fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .write(true)
             .open(&file_path)
             .await
