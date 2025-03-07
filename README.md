@@ -21,6 +21,7 @@
   * [SSH](#ssh)
   * [rclone Supported Storage: S3/Backblaze/...](#rclone-supported-storage-s3backblaze)
   * [Syncing Metadata](#syncing-metadata)
+  * [I don't have any data but still want to play around with amber](#i-dont-have-any-data-but-still-want-to-play-around-with-amber)
 <!-- TOC -->
 
 ## Pitch
@@ -145,4 +146,15 @@ amber pull <connection name>
 
 Metadata here mainly means the availability of blobs in the repositories and the desired file structure.
 
+## I don't have any data but still want to play around with amber
 
+You are in luck.
+`examples/generate_repository.rs` is the tool you are looking for.
+Have a look at `--help` but the gist is:
+it creates a deterministic repository of configurable size
+with a configurable distribution of file sizes.
+
+```
+alias genrepo='cargo run --color=always --package amber --example generate_repository --profile dev --manifest-path /path/to/Cargo.toml --'
+genrepo --total 1GB .
+```
