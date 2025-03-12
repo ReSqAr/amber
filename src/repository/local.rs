@@ -2,8 +2,8 @@ use crate::connection::EstablishedConnection;
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, File,
-    FileTransferItem, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
+    File, FileTransferItem, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
     VirtualFile,
 };
 use crate::db::{establish_connection, models};
@@ -559,17 +559,21 @@ impl Receiver<BlobTransferItem> for LocalRepository {
             .boxed()
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
-        let rclone_target_path = self.rclone_target_path(transfer_id);
-        self.db
-            .select_blobs_transfer(transfer_id)
+    async fn finalise_transfer(
+        &self,
+        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
+        let local = self.clone();
+        let assimilation = self.clone();
+        let db = self.db.clone();
+        db.select_blobs_transfer(s)
             .await
             .map_ok(move |r| Item {
-                path: rclone_target_path.join(r.path),
+                path: local.rclone_target_path(r.transfer_id).join(r.path),
                 expected_blob_id: Some(r.blob_id),
             })
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate::assimilate(self, s).await
+                assimilate::assimilate(&assimilation, s).await
             })
             .await
     }
@@ -634,17 +638,21 @@ impl Receiver<FileTransferItem> for LocalRepository {
             .boxed()
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
-        let rclone_target_path = self.rclone_target_path(transfer_id);
-        self.db
-            .select_files_transfer(transfer_id)
+    async fn finalise_transfer(
+        &self,
+        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
+        let local = self.clone();
+        let assimilation = self.clone();
+        let db = self.db.clone();
+        db.select_files_transfer(s)
             .await
             .map_ok(move |r| Item {
-                path: rclone_target_path.join(r.path),
+                path: local.rclone_target_path(r.transfer_id).join(r.path),
                 expected_blob_id: Some(r.blob_id),
             })
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate::assimilate(self, s).await
+                assimilate::assimilate(&assimilation, s).await
             })
             .await
     }

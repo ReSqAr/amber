@@ -168,6 +168,22 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
+    let verification = BaseLayoutBuilderBuilder::default()
+        .type_key("verification")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                false => msg.unwrap_or("verifying...".into()),
+                true => msg.unwrap_or("verified".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
     [
         LayoutItemBuilderNode::from(connect),
         LayoutItemBuilderNode::from(sync_table),
@@ -175,6 +191,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             LayoutItemBuilderNode::from(prep),
             LayoutItemBuilderNode::from(rclone)
                 .with_children([LayoutItemBuilderNode::from(rclone_file)]),
+            LayoutItemBuilderNode::from(verification),
         ]),
     ]
 }

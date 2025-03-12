@@ -1,6 +1,7 @@
 use crate::db::database::DBOutputStream;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, MissingFile, Observation, VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, Observation,
+    VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -169,6 +170,6 @@ pub trait Receiver<T: TransferItem> {
 
     fn finalise_transfer(
         &self,
-        transfer_id: u32,
+        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
     ) -> impl Future<Output = Result<u64, InternalError>> + Send;
 }

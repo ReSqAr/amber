@@ -2,10 +2,10 @@ use crate::db::models;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
-    Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
-    FinaliseTransferRequest, FinaliseTransferResponse, LookupLastIndicesRequest,
-    LookupLastIndicesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
-    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
+    FinaliseTransferResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
+    PrepareTransferResponse, RclonePathRequest, RclonePathResponse, Repository, RepositoryName,
+    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
@@ -15,7 +15,7 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -352,14 +352,18 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
         }
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
-        let FinaliseTransferResponse { count } = self
-            .client
-            .write()
-            .await
-            .finalise_transfer(tonic::Request::new(FinaliseTransferRequest { transfer_id }))
-            .await?
-            .into_inner();
-        Ok(count)
+    fn finalise_transfer(
+        &self,
+        s: impl Stream<Item = models::CopiedTransferItem> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<u64, InternalError>> + Send {
+        let arc_client = self.client.clone();
+        async move {
+            let mut guard = arc_client.write().await;
+            let FinaliseTransferResponse { count } = guard
+                .finalise_transfer(s.map(CopiedTransferItem::from))
+                .await?
+                .into_inner();
+            Ok(count)
+        }
     }
 }

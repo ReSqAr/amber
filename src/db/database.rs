@@ -1,12 +1,12 @@
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CurrentRepository,
-    File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
-    InsertRepositoryName, Materialisation, MissingFile, Observation, ObservedBlob, Repository,
-    RepositoryName, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
+    CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
+    InsertMaterialisation, InsertRepositoryName, Materialisation, MissingFile, Observation,
+    ObservedBlob, Repository, RepositoryName, VirtualFile,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use futures::stream::BoxStream;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, stream};
 use log::debug;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
@@ -1049,12 +1049,41 @@ impl Database {
 
     pub(crate) async fn select_blobs_transfer(
         &self,
-        transfer_id: u32,
+        input_stream: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
     ) -> DBOutputStream<'static, BlobTransferItem> {
-        self.stream(
-            query("SELECT transfer_id, blob_id, path FROM transfers WHERE transfer_id = ?;")
-                .bind(transfer_id),
-        )
+        let pool = self.pool.clone();
+        input_stream.ready_chunks(self.max_variable_number / 2).then(move |chunk: Vec<CopiedTransferItem>| {
+            let pool = pool.clone();
+            Box::pin(async move {
+                if chunk.is_empty() { // SQL is otherwise not valid
+                    return stream::iter(vec![])
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!("
+                    WITH DATA(transfer_id, path) AS (VALUES {})
+                    SELECT transfer_id, blob_id, path FROM transfers INNER JOIN DATA using (transfer_id, path)
+                    ;
+                ", placeholders);
+
+                let mut query = sqlx::query_as::<_, BlobTransferItem>(&query_str);
+                for row in chunk {
+                    query = query
+                        .bind(row.transfer_id)
+                        .bind(row.path);
+                }
+
+                stream::iter(match query.fetch_all(&pool).await {
+                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<BlobTransferItem, sqlx::Error>>>(),
+                    Err(e) => vec!(Err(e)),
+                })
+            })
+        }).flatten().boxed()
     }
 
     pub(crate) async fn populate_missing_files_for_transfer(
@@ -1121,11 +1150,40 @@ impl Database {
 
     pub(crate) async fn select_files_transfer(
         &self,
-        transfer_id: u32,
+        input_stream: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
     ) -> DBOutputStream<'static, FileTransferItem> {
-        self.stream(
-            query("SELECT transfer_id, blob_id, blob_size, path FROM transfers WHERE transfer_id = ?;")
-                .bind(transfer_id),
-        )
+        let pool = self.pool.clone();
+        input_stream.ready_chunks(self.max_variable_number / 2).then(move |chunk: Vec<CopiedTransferItem>| {
+            let pool = pool.clone();
+            Box::pin(async move {
+                if chunk.is_empty() { // SQL is otherwise not valid
+                    return stream::iter(vec![])
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!("
+                    WITH DATA(transfer_id, path) AS (VALUES {})
+                    SELECT transfer_id, blob_id, blob_size, path FROM transfers INNER JOIN DATA using (transfer_id, path)
+                    ;
+                ", placeholders);
+
+                let mut query = sqlx::query_as::<_, FileTransferItem>(&query_str);
+                for row in chunk {
+                    query = query
+                        .bind(row.transfer_id)
+                        .bind(row.path);
+                }
+
+                stream::iter(match query.fetch_all(&pool).await {
+                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<FileTransferItem, sqlx::Error>>>(),
+                    Err(e) => vec!(Err(e)),
+                })
+            })
+        }).flatten().boxed()
     }
 }

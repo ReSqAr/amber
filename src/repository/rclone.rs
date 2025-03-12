@@ -1,5 +1,6 @@
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, FileTransferItem, InsertBlob, InsertRepositoryName,
+    AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem, InsertBlob,
+    InsertRepositoryName,
 };
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{
@@ -89,12 +90,15 @@ impl Receiver<FileTransferItem> for RCloneStore {
             .boxed()
     }
 
-    async fn finalise_transfer(&self, transfer_id: u32) -> Result<u64, InternalError> {
+    async fn finalise_transfer(
+        &self,
+        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
         let repo_id = self.repo_id.clone();
 
         self.local
             .db()
-            .select_files_transfer(transfer_id)
+            .select_files_transfer(s)
             .await
             .map_ok(move |i: FileTransferItem| InsertBlob {
                 repo_id: repo_id.clone(),

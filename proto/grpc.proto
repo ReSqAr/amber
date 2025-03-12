@@ -93,8 +93,9 @@ message CreateTransferRequestRequest {
     string repo_id = 2;
     repeated string paths = 3;
 }
-message FinaliseTransferRequest {
+message CopiedTransferItem {
     uint32 transfer_id = 1;
+    string path = 2;
 }
 message FinaliseTransferResponse {
     uint64 count = 1;
@@ -117,5 +118,5 @@ service Grpc {
   rpc RclonePath(RclonePathRequest) returns (RclonePathResponse);
   rpc PrepareTransfer(stream TransferItem) returns (PrepareTransferResponse);
   rpc CreateTransferRequest(CreateTransferRequestRequest) returns (stream TransferItem);
-  rpc FinaliseTransfer(FinaliseTransferRequest) returns (FinaliseTransferResponse);
+  rpc FinaliseTransfer(stream CopiedTransferItem) returns (FinaliseTransferResponse);
 }

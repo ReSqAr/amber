@@ -4,8 +4,9 @@ mod tests {
     use crate::db::migrations::run_migrations;
 
     use crate::db::models::{
-        AvailableBlob, Blob, Connection, ConnectionType, File, InsertBlob, InsertFile,
-        InsertMaterialisation, InsertRepositoryName, ObservedBlob, Repository, RepositoryName,
+        AvailableBlob, Blob, Connection, ConnectionType, CopiedTransferItem, File, InsertBlob,
+        InsertFile, InsertMaterialisation, InsertRepositoryName, ObservedBlob, Repository,
+        RepositoryName,
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
@@ -373,7 +374,7 @@ mod tests {
 
         let remote_blob = InsertBlob {
             repo_id: "remote_repo".into(),
-            blob_id: "remote_blob".into(),
+            blob_id: "1234567890".into(),
             blob_size: 50,
             has_blob: true,
             path: None,
@@ -384,8 +385,8 @@ mod tests {
             .expect("failed to add remote blob");
 
         let file = InsertFile {
-            path: "ath.txt".into(),
-            blob_id: Some("remote_blob".into()),
+            path: "path.txt".into(),
+            blob_id: Some("1234567890".into()),
             valid_from: now,
         };
         db.add_files(stream::iter([file]))
@@ -404,8 +405,12 @@ mod tests {
             !populated.is_empty(),
             "Expected at least one missing blob transfer item"
         );
+        let copied_stream = stream::iter([CopiedTransferItem {
+            transfer_id,
+            path: "12/34/567890".into(),
+        }]);
 
-        let mut select_stream = db.select_blobs_transfer(transfer_id).await;
+        let mut select_stream = db.select_blobs_transfer(copied_stream).await;
         let mut selected = Vec::new();
         while let Some(item) = select_stream.next().await {
             selected.push(item.expect("failed to select blobs transfer"));
@@ -425,14 +430,14 @@ mod tests {
 
         let file = InsertFile {
             path: "missing_file.txt".into(),
-            blob_id: Some("remote_blob".into()),
+            blob_id: Some("1234567890".into()),
             valid_from: now,
         };
         db.add_files(stream::iter([file])).await.expect("failed");
 
         let remote_blob = InsertBlob {
             repo_id: "remote_repo".into(),
-            blob_id: "remote_blob".into(),
+            blob_id: "1234567890".into(),
             blob_size: 75,
             has_blob: true,
             path: Some("missing_file.txt".into()),
@@ -459,8 +464,12 @@ mod tests {
             !populated.is_empty(),
             "Expected at least one missing file transfer item"
         );
+        let copied_stream = stream::iter([CopiedTransferItem {
+            transfer_id,
+            path: "missing_file.txt".into(),
+        }]);
 
-        let mut select_stream = db.select_files_transfer(transfer_id).await;
+        let mut select_stream = db.select_files_transfer(copied_stream).await;
         let mut selected = Vec::new();
         while let Some(item) = select_stream.next().await {
             selected.push(item.expect("failed to select files transfer"));
@@ -838,10 +847,14 @@ mod tests {
             .populate_missing_blobs_for_transfer(transfer_id, "remote_repo".into(), vec![])
             .await;
         while let Some(_item) = populate_stream.next().await {}
+        let copied_stream = stream::iter([CopiedTransferItem {
+            transfer_id,
+            path: "remote/path.txt".into(),
+        }]);
 
         db.clean().await.unwrap();
 
-        let mut select_stream = db.select_blobs_transfer(transfer_id).await;
+        let mut select_stream = db.select_blobs_transfer(copied_stream).await;
         let mut count = 0;
         while let Some(item) = select_stream.next().await {
             let _ = item.expect("select_blobs_transfer failed");

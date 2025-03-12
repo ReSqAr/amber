@@ -1,12 +1,12 @@
 use crate::db;
 use crate::grpc::definitions::{
-    Blob, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
-    CurrentRepositoryMetadataResponse, File, FinaliseTransferRequest, FinaliseTransferResponse,
-    LookupLastIndicesRequest, LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse,
-    MergeRepositoriesResponse, MergeRepositoryNamesResponse, PrepareTransferResponse,
-    RclonePathRequest, RclonePathResponse, Repository, RepositoryName, SelectBlobsRequest,
-    SelectFilesRequest, SelectRepositoriesRequest, SelectRepositoryNamesRequest, TransferItem,
-    UpdateLastIndicesRequest, UpdateLastIndicesResponse, grpc_server,
+    Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
+    CurrentRepositoryMetadataResponse, File, FinaliseTransferResponse, LookupLastIndicesRequest,
+    LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+    MergeRepositoryNamesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
+    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
+    UpdateLastIndicesResponse, grpc_server,
 };
 use crate::repository::traits::{
     LastIndices, LastIndicesSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
@@ -227,10 +227,13 @@ where
 
     async fn finalise_transfer(
         &self,
-        request: Request<FinaliseTransferRequest>,
+        request: Request<Streaming<CopiedTransferItem>>,
     ) -> Result<Response<FinaliseTransferResponse>, Status> {
-        let FinaliseTransferRequest { transfer_id } = request.into_inner();
-        let count = self.repository.finalise_transfer(transfer_id).await?;
+        let count = request
+            .into_inner()
+            .map_ok::<models::CopiedTransferItem, _>(CopiedTransferItem::into)
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.finalise_transfer(s))
+            .await?;
         Ok(Response::new(FinaliseTransferResponse { count }))
     }
 }

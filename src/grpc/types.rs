@@ -1,5 +1,7 @@
 use crate::db::models;
-use crate::grpc::definitions::{Blob, File, Repository, RepositoryName, TransferItem};
+use crate::grpc::definitions::{
+    Blob, CopiedTransferItem, File, Repository, RepositoryName, TransferItem,
+};
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 
@@ -124,6 +126,24 @@ impl From<models::BlobTransferItem> for TransferItem {
         Self {
             transfer_id: i.transfer_id,
             blob_id: i.blob_id,
+            path: i.path,
+        }
+    }
+}
+
+impl From<CopiedTransferItem> for models::CopiedTransferItem {
+    fn from(i: CopiedTransferItem) -> Self {
+        Self {
+            transfer_id: i.transfer_id,
+            path: i.path,
+        }
+    }
+}
+
+impl From<models::CopiedTransferItem> for CopiedTransferItem {
+    fn from(i: models::CopiedTransferItem) -> Self {
+        Self {
+            transfer_id: i.transfer_id,
             path: i.path,
         }
     }

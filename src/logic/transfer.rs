@@ -1,4 +1,5 @@
 use crate::connection::EstablishedConnection;
+use crate::db::models::CopiedTransferItem;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
 use crate::repository::traits::{
@@ -19,8 +20,9 @@ use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 
 #[derive(Debug)]
 enum Direction {
@@ -67,6 +69,7 @@ async fn execute_rclone(
     destination: impl RCloneTarget,
     rclone_files_path: &Path,
     expected_count: u64,
+    tx: UnboundedSender<String>,
 ) -> Result<u64, InternalError> {
     let count = Arc::new(AtomicU64::new(0));
     let start_time = tokio::time::Instant::now();
@@ -98,6 +101,10 @@ async fn execute_rclone(
 
                 let new_count = count_clone.fetch_add(1, Ordering::Relaxed) + 1;
                 obs.observe_position(log::Level::Trace, new_count);
+
+                if let Err(e) = tx.send(name) {
+                    log::error!("error while sending completion message: {e}")
+                }
             }
             RcloneEvent::Stats(RcloneStats {
                 bytes,
@@ -263,26 +270,39 @@ pub async fn transfer<T: TransferItem>(
     };
     transfer_obs.observe_state(log::Level::Info, msg);
 
+    let (tx, rx) = mpsc::unbounded_channel();
+    let stream = UnboundedReceiverStream::new(rx);
+
     transfer_obs.observe_state(log::Level::Debug, "copying");
-    execute_rclone(
-        &local.staging_id_path(transfer_id).abs().clone(),
-        rclone_source,
-        rclone_destination,
-        rclone_files.abs(),
-        expected_count,
-    )
-    .await?;
+    let staging_path = local.staging_id_path(transfer_id);
+    let rclone_handle = tokio::spawn(async move {
+        execute_rclone(
+            &staging_path.abs().clone(),
+            rclone_source,
+            rclone_destination,
+            rclone_files.abs(),
+            expected_count,
+            tx,
+        )
+        .await
+    });
+
+    let stream = stream.map(move |path| CopiedTransferItem { path, transfer_id });
+
+    let mut ver_obs = Observer::without_id("verification");
 
     let start_time = tokio::time::Instant::now();
-    transfer_obs.observe_state(log::Level::Debug, "verifying");
-    let count = destination.finalise_transfer(transfer_id).await?;
+    ver_obs.observe_state(log::Level::Debug, "verifying");
+    let count = destination.finalise_transfer(stream).await?;
     let msg = if count > 0 {
         let duration = start_time.elapsed();
         format!("verified {count} blobs in {duration:.2?}")
     } else {
         "no files to be verified".into()
     };
-    transfer_obs.observe_state(log::Level::Info, msg);
+    ver_obs.observe_termination(log::Level::Info, msg);
+
+    rclone_handle.await??;
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
 
