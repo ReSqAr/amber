@@ -1,9 +1,13 @@
 use crate::db::models;
+use crate::flightdeck;
+use crate::grpc::definitions::flightdeck_data::Value;
 use crate::grpc::definitions::{
-    Blob, CopiedTransferItem, File, Repository, RepositoryName, TransferItem,
+    Blob, CopiedTransferItem, File, FlightdeckData, FlightdeckMessage, FlightdeckObservation,
+    Repository, RepositoryName, TransferItem,
 };
 use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
+use std::str::FromStr;
 
 fn datetime_to_timestamp(dt: &DateTime<Utc>) -> Option<Timestamp> {
     Some(Timestamp {
@@ -145,6 +149,86 @@ impl From<models::CopiedTransferItem> for CopiedTransferItem {
         Self {
             transfer_id: i.transfer_id,
             path: i.path,
+        }
+    }
+}
+
+impl From<FlightdeckMessage> for flightdeck::observation::Message {
+    fn from(m: FlightdeckMessage) -> Self {
+        Self {
+            level: log::Level::from_str(&m.level).unwrap_or(log::Level::Info),
+            observation: m.observation.unwrap().into(),
+        }
+    }
+}
+
+impl From<flightdeck::observation::Message> for FlightdeckMessage {
+    fn from(m: flightdeck::observation::Message) -> Self {
+        Self {
+            level: m.level.to_string(),
+            observation: Some(m.observation.into()),
+        }
+    }
+}
+
+impl From<FlightdeckObservation> for flightdeck::observation::Observation {
+    fn from(o: FlightdeckObservation) -> Self {
+        Self {
+            type_key: o.type_key,
+            id: o.id,
+            timestamp: timestamp_to_datetime(&o.timestamp),
+            is_terminal: o.is_terminal,
+            data: o.data.into_iter().map(|d| d.into()).collect(),
+        }
+    }
+}
+
+impl From<flightdeck::observation::Observation> for FlightdeckObservation {
+    fn from(o: flightdeck::observation::Observation) -> Self {
+        Self {
+            type_key: o.type_key,
+            id: o.id,
+            timestamp: datetime_to_timestamp(&o.timestamp),
+            is_terminal: o.is_terminal,
+            data: o.data.into_iter().map(|d| d.into()).collect(),
+        }
+    }
+}
+
+impl From<FlightdeckData> for flightdeck::observation::Data {
+    fn from(m: FlightdeckData) -> Self {
+        Self {
+            key: m.key,
+            value: m.value.unwrap().into(),
+        }
+    }
+}
+
+impl From<flightdeck::observation::Data> for FlightdeckData {
+    fn from(m: flightdeck::observation::Data) -> Self {
+        Self {
+            key: m.key,
+            value: Some(m.value.into()),
+        }
+    }
+}
+
+impl From<Value> for flightdeck::observation::Value {
+    fn from(m: Value) -> Self {
+        match m {
+            Value::String(s) => flightdeck::observation::Value::String(s),
+            Value::U64(u64) => flightdeck::observation::Value::U64(u64),
+            Value::Bool(b) => flightdeck::observation::Value::Bool(b),
+        }
+    }
+}
+
+impl From<flightdeck::observation::Value> for Value {
+    fn from(m: flightdeck::observation::Value) -> Self {
+        match m {
+            flightdeck::observation::Value::String(s) => Value::String(s),
+            flightdeck::observation::Value::U64(u64) => Value::U64(u64),
+            flightdeck::observation::Value::Bool(b) => Value::Bool(b),
         }
     }
 }

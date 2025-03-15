@@ -101,6 +101,30 @@ message FinaliseTransferResponse {
     uint64 count = 1;
 }
 
+message FlightdeckMessageRequest {}
+
+message FlightdeckData {
+    string key = 1;
+    oneof value {
+        string string = 2;
+        uint64 u64 = 3;
+        bool bool = 4;
+    }
+}
+
+message FlightdeckObservation {
+    string type_key = 1;
+    optional string id = 2;
+    google.protobuf.Timestamp timestamp = 3;
+    bool is_terminal = 4;
+    repeated FlightdeckData data = 5;
+}
+
+message FlightdeckMessage {
+    string level = 1;
+    FlightdeckObservation observation = 2;
+}
+
 service Grpc {
   rpc CurrentRepositoryMetadata (CurrentRepositoryMetadataRequest) returns (CurrentRepositoryMetadataResponse);
   rpc MergeRepositories (stream Repository) returns (MergeRepositoriesResponse);
@@ -119,4 +143,6 @@ service Grpc {
   rpc PrepareTransfer(stream TransferItem) returns (PrepareTransferResponse);
   rpc CreateTransferRequest(CreateTransferRequestRequest) returns (stream TransferItem);
   rpc FinaliseTransfer(stream CopiedTransferItem) returns (FinaliseTransferResponse);
+
+  rpc FlightdeckMessages(FlightdeckMessageRequest) returns (stream FlightdeckMessage);
 }

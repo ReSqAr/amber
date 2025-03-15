@@ -1,8 +1,11 @@
 use crate::db;
+use crate::flightdeck::global::Flow;
+use crate::flightdeck::global::GLOBAL_LOGGER;
 use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
-    CurrentRepositoryMetadataResponse, File, FinaliseTransferResponse, LookupLastIndicesRequest,
-    LookupLastIndicesResponse, MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
+    CurrentRepositoryMetadataResponse, File, FinaliseTransferResponse, FlightdeckMessage,
+    FlightdeckMessageRequest, LookupLastIndicesRequest, LookupLastIndicesResponse,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
     MergeRepositoryNamesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
     Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
@@ -17,6 +20,7 @@ use db::models;
 use futures::Stream;
 use futures::TryStreamExt;
 use std::pin::Pin;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
 pub struct Service<T> {
@@ -235,5 +239,26 @@ where
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.finalise_transfer(s))
             .await?;
         Ok(Response::new(FinaliseTransferResponse { count }))
+    }
+
+    type FlightdeckMessagesStream =
+        Pin<Box<dyn Stream<Item = Result<FlightdeckMessage, Status>> + Send + 'static>>;
+
+    async fn flightdeck_messages(
+        &self,
+        _: Request<FlightdeckMessageRequest>,
+    ) -> Result<Response<Self::FlightdeckMessagesStream>, Status> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut rx_guard = GLOBAL_LOGGER.rx.lock().await;
+            while let Some(Flow::Data(data)) = rx_guard.recv().await {
+                if tx.send(Ok(data.into())).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let stream = UnboundedReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream)))
     }
 }
