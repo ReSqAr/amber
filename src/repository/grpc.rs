@@ -1,11 +1,14 @@
 use crate::db::models;
+use crate::flightdeck;
+use crate::flightdeck::global::send;
+use crate::flightdeck::observation::Message;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
-    FinaliseTransferResponse, LookupLastIndicesRequest, LookupLastIndicesResponse,
-    PrepareTransferResponse, RclonePathRequest, RclonePathResponse, Repository, RepositoryName,
-    SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
+    FinaliseTransferResponse, FlightdeckMessageRequest, LookupLastIndicesRequest,
+    LookupLastIndicesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
+    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
     SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
@@ -20,6 +23,7 @@ use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
 
@@ -56,15 +60,11 @@ impl GRPCClient {
         auth_key: String,
         shutdown: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, InternalError> {
-        let shutdown: Box<dyn Fn() + Send + Sync + 'static> = Box::new(shutdown);
-        let shutdown = Arc::new(std::sync::RwLock::new(Some(shutdown)));
-
         let attempts = Arc::new(AtomicUsize::new(0));
         let op = || {
             let attempts = attempts.clone();
             let addr = addr.clone();
             let auth_key = auth_key.clone();
-            let shutdown = shutdown.clone();
 
             async move {
                 let current_attempt = attempts.fetch_add(1, Ordering::SeqCst) + 1;
@@ -91,17 +91,48 @@ impl GRPCClient {
                 let client = GrpcClient::with_interceptor(channel, interceptor);
 
                 debug!("connected to {}", &addr);
-                Ok(Self::new(client, shutdown.clone()))
+                Ok(client)
             }
         };
 
         let backoff = ExponentialBackoff::default();
-        let client = retry(backoff, op).await?;
+        let mut client = retry(backoff, op).await?;
         debug!(
             "Successfully connected after {} attempt(s)",
             attempts.load(Ordering::SeqCst)
         );
-        Ok(client)
+
+        let flightdeck_handle = Self::forward_flightdeck_messages(&mut client).await?;
+
+        let shutdown: Box<dyn Fn() + Send + Sync + 'static> = Box::new(move || {
+            shutdown();
+            flightdeck_handle.abort();
+        });
+        let shutdown = Arc::new(std::sync::RwLock::new(Some(shutdown)));
+
+        Ok(Self::new(client, shutdown.clone()))
+    }
+
+    async fn forward_flightdeck_messages(
+        client: &mut GrpcClient<InterceptedService<Channel, ClientAuth>>,
+    ) -> Result<JoinHandle<()>, InternalError> {
+        let flightdesk_request = tonic::Request::new(FlightdeckMessageRequest {});
+        let mut stream = client
+            .flightdeck_messages(flightdesk_request)
+            .await?
+            .into_inner()
+            .map_ok(flightdeck::observation::Message::from);
+
+        let forward_handle = tokio::spawn(async move {
+            while let Some(msg) = stream.next().await {
+                match msg {
+                    Ok(Message { level, observation }) => send(level, observation),
+                    Err(e) => eprintln!("failed to forward flightdeck observation: {e}"),
+                };
+            }
+        });
+        
+        Ok(forward_handle)
     }
 }
 
