@@ -25,6 +25,9 @@ pub struct FlightDeck {
     manager: Pipes,
 }
 
+const DEFAULT_TERMINAL_FILTER: log::LevelFilter = log::LevelFilter::Info;
+const DEFAULT_FILE_FILTER: log::LevelFilter = log::LevelFilter::Debug;
+
 pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     wrapped: impl Future<Output = Result<(), E>> + Sized,
     root_builders: impl IntoIterator<Item = LayoutItemBuilderNode> + Sized + Send + Sync + 'static,
@@ -58,13 +61,13 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
                 None => OutputStream::Output(output),
                 Some(mp) => OutputStream::MultiProgress(mp),
             },
-            terminal_level_filter.unwrap_or(log::LevelFilter::Info),
+            terminal_level_filter.unwrap_or(DEFAULT_TERMINAL_FILTER),
         );
         let mut flightdeck = match path {
             None => flightdeck,
             Some(path) => {
                 flightdeck
-                    .with_file(path, file_level_filter.unwrap_or(log::LevelFilter::Debug))
+                    .with_file(path, file_level_filter.unwrap_or(DEFAULT_FILE_FILTER))
                     .await
             }
         };

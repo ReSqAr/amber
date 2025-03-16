@@ -170,17 +170,36 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    let verification = BaseLayoutBuilderBuilder::default()
-        .type_key("verification")
+    let file = BaseLayoutBuilderBuilder::default()
+        .type_key("sha")
+        .limit(5)
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
+            let id = id.unwrap_or("<missing>".into());
+            match done {
+                true => format!("hashed {}", id),
+                false => format!("hashing {}", id),
+            }
+        })))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} {decimal_bytes}/{decimal_total_bytes}"
+                .into(),
+            done: "{prefix}✓ {msg} {decimal_bytes}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    let assimilate = BaseLayoutBuilderBuilder::default()
+        .type_key("assimilate")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::StateFn(Box::new(
             |done, msg| match done {
-                false => msg.unwrap_or("verifying...".into()),
-                true => msg.unwrap_or("verified".into()),
+                false => msg.unwrap_or("assimilating...".into()),
+                true => msg.unwrap_or("assimilated".into()),
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
@@ -226,7 +245,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             LayoutItemBuilderNode::from(prep),
             LayoutItemBuilderNode::from(rclone)
                 .with_children([LayoutItemBuilderNode::from(rclone_file)]),
-            LayoutItemBuilderNode::from(verification),
+            LayoutItemBuilderNode::from(assimilate)
+                .with_children([LayoutItemBuilderNode::from(file)]),
         ]),
         LayoutItemBuilderNode::from(materialise).add_child(materialise_file),
     ]

@@ -105,7 +105,7 @@ impl SshConfig {
         tokio::spawn(async move {
             let result = setup_app_via_ssh(ssh_config, local_port).await;
             if let Err(e) = tx.send(result).await {
-                eprintln!("Failed to send ThreadResponse: {e}");
+                log::error!("Failed to send ThreadResponse: {e}");
             }
         });
 

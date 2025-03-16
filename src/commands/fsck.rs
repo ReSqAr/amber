@@ -8,14 +8,13 @@ use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 pub async fn fsck(
     maybe_root: Option<PathBuf>,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
-    let root_path = local.root().abs().clone();
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
@@ -41,31 +40,19 @@ pub async fn fsck(
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(
-        wrapped,
-        root_builders(&root_path),
-        log_path,
-        None,
-        None,
-        output,
-    )
-    .await
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
 }
 
-fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
-    let root = root_path.display().to_string() + "/";
-
-    let root_clone = root.clone();
+fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
     let sha = BaseLayoutBuilderBuilder::default()
         .type_key("sha")
         .limit(5)
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
             let id = id.unwrap_or("<missing>".into());
-            let path = id.strip_prefix(root_clone.as_str()).unwrap_or(id.as_str());
             match done {
-                true => format!("hashed {}", path),
-                false => format!("hashing {}", path),
+                true => format!("hashed {}", id),
+                false => format!("hashing {}", id),
             }
         })))
         .style(Style::Template {
@@ -92,17 +79,15 @@ fn root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilder
         .infallible_build()
         .boxed();
 
-    let root_clone = root.clone();
     let file_materialise = BaseLayoutBuilderBuilder::default()
         .type_key("fsck:file:materialise")
         .limit(5)
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdFn(Box::new(move |done, id| {
             let id = id.unwrap_or("<missing>".into());
-            let path = id.strip_prefix(root_clone.as_str()).unwrap_or(id.as_str());
             match done {
-                true => format!("materialising {}", path),
-                false => format!("materialised {}", path),
+                true => format!("materialising {}", id),
+                false => format!("materialised {}", id),
             }
         })))
         .style(Style::Template {

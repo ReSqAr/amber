@@ -150,7 +150,7 @@ pub async fn run() {
     let cli = Cli::parse();
 
     if let Err(err) = run_cli(cli, crate::flightdeck::output::Output::default()).await {
-        eprintln!("\nerror: {}", err);
+        log::error!("\nerror: {}", err);
         process::exit(1);
     }
 }

@@ -26,7 +26,7 @@ pub(crate) async fn blobify(
     let sha256::HashWithSize {
         hash: blob_id,
         size: blob_size,
-    } = sha256::compute_sha256_and_size(&path).await?;
+    } = sha256::compute_sha256_and_size(path).await?;
     let result = Blobify {
         blob_id: blob_id.clone(),
         blob_size,

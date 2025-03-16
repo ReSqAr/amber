@@ -288,19 +288,7 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let stream = stream.map(move |path| CopiedTransferItem { path, transfer_id });
-
-    let mut ver_obs = Observer::without_id("verification");
-
-    let start_time = tokio::time::Instant::now();
-    ver_obs.observe_state(log::Level::Debug, "verifying");
     let count = destination.finalise_transfer(stream).await?;
-    let msg = if count > 0 {
-        let duration = start_time.elapsed();
-        format!("verified {count} blobs in {duration:.2?}")
-    } else {
-        "no files to be verified".into()
-    };
-    ver_obs.observe_termination(log::Level::Info, msg);
 
     rclone_handle.await??;
 

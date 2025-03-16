@@ -127,11 +127,11 @@ impl GRPCClient {
             while let Some(msg) = stream.next().await {
                 match msg {
                     Ok(Message { level, observation }) => send(level, observation),
-                    Err(e) => eprintln!("failed to forward flightdeck observation: {e}"),
+                    Err(e) => log::error!("failed to forward flightdeck observation: {e}"),
                 };
             }
         });
-        
+
         Ok(forward_handle)
     }
 }

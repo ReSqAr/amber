@@ -1,8 +1,8 @@
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
+use crate::utils::path::RepoPath;
 use sha2::{Digest, Sha256};
 use std::io;
-use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
@@ -11,11 +11,9 @@ pub(crate) struct HashWithSize {
     pub(crate) size: u64,
 }
 
-pub(crate) async fn compute_sha256_and_size(
-    file_path: impl AsRef<Path> + Clone,
-) -> io::Result<HashWithSize> {
+pub(crate) async fn compute_sha256_and_size(file_path: &RepoPath) -> io::Result<HashWithSize> {
     let mut obs = Observer::with_auto_termination(
-        BaseObservable::with_id("sha", file_path.clone().as_ref().display().to_string()),
+        BaseObservable::with_id("sha", file_path.rel().display().to_string()),
         log::Level::Trace,
         BaseObservation::TerminalState("done".into()),
     );
@@ -57,11 +55,12 @@ mod tests {
     #[tokio::test]
     async fn test_compute_sha256_and_size() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
-        let file_path = dir.path().join("hello.txt");
+        let path = RepoPath::from_root(dir.path());
+        let file_path = path.join("hello.txt");
         let mut file = fs::File::create(&file_path).await?;
         file.write_all(b"Hello world!").await?;
 
-        let result = compute_sha256_and_size(file_path).await.unwrap();
+        let result = compute_sha256_and_size(&file_path).await.unwrap();
         assert_eq!(
             result.hash,
             "c0535e4be2b79ffd93291305436bf889314e4a3faec05ecffcbb7df31ad9e51a"

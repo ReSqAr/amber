@@ -1,4 +1,5 @@
 use crate::db::models::InsertBlob;
+use crate::flightdeck::observer::Observer;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
 use crate::utils::errors::{AppError, InternalError};
@@ -7,9 +8,10 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::sha256;
 use async_lock::Mutex;
 use dashmap::DashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use log::debug;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 
 pub(crate) type BlobLockMap = Arc<DashMap<String, Arc<Mutex<()>>>>;
@@ -80,13 +82,31 @@ pub(crate) async fn assimilate<S>(
 where
     S: Stream<Item = Item> + Unpin + Send + 'static,
 {
+    let start_time = tokio::time::Instant::now();
+    let mut obs = Observer::without_id("assimilate");
     let blob_locks: BlobLockMap = Arc::new(DashMap::new());
     let meta = local.current().await?;
-    stream
+    let counter = AtomicU64::new(0);
+
+    let count = stream
         .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))
         .buffer_unordered(local.buffer_size(BufferType::Assimilate))
+        .inspect_ok(|_| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            obs.observe_position(log::Level::Trace, counter.load(Ordering::Relaxed));
+        })
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
-        .await
+        .await?;
+
+    let msg = if count > 0 {
+        let duration = start_time.elapsed();
+        format!("assimilated {count} blobs in {duration:.2?}")
+    } else {
+        "no files to be assimilated".into()
+    };
+    obs.observe_termination(log::Level::Info, msg);
+
+    Ok(count)
 }
 
 #[cfg(test)]
