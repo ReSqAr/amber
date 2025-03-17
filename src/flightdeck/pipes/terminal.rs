@@ -1,16 +1,16 @@
 use crate::flightdeck::observation::{Data, Observation, Value};
-use crate::flightdeck::output::OutputStream;
+use crate::flightdeck::output::Output;
 use colored::*;
 use tokio::task;
 
 pub struct TerminalPipe {
     level_filter: log::LevelFilter,
-    out: OutputStream,
+    out: Output,
     buffer: Vec<String>,
 }
 
 impl TerminalPipe {
-    pub(crate) fn new(out: OutputStream, level_filter: log::LevelFilter) -> Self {
+    pub(crate) fn new(out: Output, level_filter: log::LevelFilter) -> Self {
         Self {
             out,
             level_filter,
@@ -28,7 +28,7 @@ impl TerminalPipe {
             None => return,
         };
 
-        let with_color = matches!(self.out, OutputStream::MultiProgress(_));
+        let with_color = matches!(self.out, Output::MultiProgressBar(_));
 
         let colored_state = if with_color {
             match level {
@@ -68,24 +68,10 @@ impl TerminalPipe {
         let data = self.buffer.join("\n");
         self.buffer.clear();
 
-        match &self.out {
-            OutputStream::MultiProgress(multi) => {
-                let multi = multi.clone();
-                match task::spawn_blocking(move || multi.println(&data)).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        eprintln!("could not write to the terminal via indactif: {}", e)
-                    }
-                    Err(e) => eprintln!("could not write to the terminal: {}", e),
-                }
-            }
-            OutputStream::Output(output) => {
-                let output = output.clone();
-                match task::spawn_blocking(move || output.println(data.to_string())).await {
-                    Ok(()) => {}
-                    Err(e) => eprintln!("could not write to the terminal: {}", e),
-                }
-            }
+        let output = self.out.clone();
+        match task::spawn_blocking(move || output.println(data)).await {
+            Ok(()) => {}
+            Err(e) => eprintln!("could not write to the terminal: {}", e),
         }
     }
 

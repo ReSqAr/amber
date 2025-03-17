@@ -95,7 +95,7 @@ impl Pipes {
 #[cfg(test)]
 mod tests {
     use crate::flightdeck::observation::{Data, Observation, Value};
-    use crate::flightdeck::output::{Output, OutputStream};
+    use crate::flightdeck::output::Output;
     use crate::flightdeck::pipes::Pipes;
     use crate::flightdeck::pipes::file::FilePipe;
     use crate::flightdeck::pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
@@ -219,8 +219,7 @@ mod tests {
         let write_box: Box<dyn std::io::Write + Send + Sync> = Box::new(writer);
         let output = Output::Override(Arc::new(Mutex::new(write_box)));
 
-        let mut terminal_pipe =
-            TerminalPipe::new(OutputStream::Output(output), log::LevelFilter::Info);
+        let mut terminal_pipe = TerminalPipe::new(output, log::LevelFilter::Info);
 
         let observation = Observation {
             type_key: "test".to_string(),
@@ -274,7 +273,7 @@ mod tests {
         let write_box: Box<dyn std::io::Write + Send + Sync> = Box::new(writer);
         let output = Output::Override(Arc::new(Mutex::new(write_box)));
 
-        let terminal_pipe = TerminalPipe::new(OutputStream::Output(output), log::LevelFilter::Info);
+        let terminal_pipe = TerminalPipe::new(output, log::LevelFilter::Info);
 
         pipes = pipes.set_terminal(terminal_pipe);
 

@@ -44,8 +44,3 @@ impl Output {
         }
     }
 }
-
-pub enum OutputStream {
-    MultiProgress(indicatif::MultiProgress),
-    Output(Output),
-}

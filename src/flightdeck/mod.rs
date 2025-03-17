@@ -1,7 +1,6 @@
 use crate::flightdeck::global::{Flow, GLOBAL_LOGGER, send_shutdown_signal};
 use crate::flightdeck::observation::Message;
 use output::Output;
-use output::OutputStream;
 use pipes::Pipes;
 use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
@@ -35,25 +34,16 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     terminal_level_filter: Option<log::LevelFilter>,
     output: Output,
 ) -> Result<(), E> {
-    let multi = match output.clone() {
-        Output::MultiProgressBar(multi) => Some(multi),
-        Output::Override(_) => None,
-        Output::Raw => None,
-    };
-
     let path = path.into();
     let join_handle = tokio::spawn(async move {
         let flightdeck = FlightDeck::new();
-        let flightdeck = if let Some(multi) = multi.clone() {
+        let flightdeck = if let Some(multi) = output.multi_progress_bar() {
             flightdeck.with_progress(multi, root_builders)
         } else {
             flightdeck
         };
         let flightdeck = flightdeck.with_terminal(
-            match multi.clone() {
-                None => OutputStream::Output(output),
-                Some(mp) => OutputStream::MultiProgress(mp),
-            },
+            output,
             terminal_level_filter.unwrap_or(DEFAULT_TERMINAL_FILTER),
         );
         let mut flightdeck = match path {
@@ -113,7 +103,7 @@ impl FlightDeck {
         }
     }
 
-    pub fn with_terminal(self, output: OutputStream, level_filter: log::LevelFilter) -> Self {
+    pub fn with_terminal(self, output: Output, level_filter: log::LevelFilter) -> Self {
         Self {
             manager: self
                 .manager
