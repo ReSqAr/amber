@@ -519,6 +519,21 @@ async fn integration_test_rclone_repo_fsck_corrupted_file_detection() -> Result<
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_rclone_repo_fsck_no_files() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber fsck store
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_test_rm() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
