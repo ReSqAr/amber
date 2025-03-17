@@ -5,7 +5,7 @@ use crate::utils::port;
 use crate::utils::rclone::{ConfigSection, RCloneTarget};
 use base64::Engine;
 use cipher::{KeyIvInit, StreamCipher};
-use log::{debug, error, warn};
+use log::{debug, error, info};
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use russh::client::AuthResult;
@@ -330,7 +330,7 @@ async fn setup_app_via_ssh(
                 let mut remote_stream = channel.into_stream();
                 match tokio::io::copy_bidirectional(&mut local_stream, &mut remote_stream).await {
                     Ok((u, d)) => debug!("up: {u} bytes down: {d} bytes"),
-                    Err(e) => warn!("tokio::io::copy_bidirectional: {e}"),
+                    Err(e) => info!("tokio::io::copy_bidirectional: {e}"),
                 };
             });
         }
