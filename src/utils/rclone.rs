@@ -243,7 +243,12 @@ fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
                 }
             } else if let Some(stats) = json_log.stats {
                 RcloneEvent::Stats(stats)
-            } else if json_log.msg.starts_with("Copied") {
+            } else if json_log.msg.to_lowercase().starts_with("copied")
+                || json_log
+                    .msg
+                    .to_lowercase()
+                    .starts_with("multi-thread copied")
+            {
                 if let Some(object) = json_log.object {
                     RcloneEvent::Copied(object)
                 } else {
@@ -325,6 +330,17 @@ mod tests {
     #[tokio::test]
     async fn test_parse_rclone_line_copied() {
         let json_line = r#"{"level": "info", "msg": "Copied", "object": "file2.txt"}"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::Copied(object) => assert_eq!(object, "file2.txt"),
+            _ => panic!("Expected RcloneEvent::Copied, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_multi_threaded_copied() {
+        let json_line =
+            r#"{"level": "info", "msg": "Multi-thread Copied (new)", "object": "file2.txt"}"#;
         let event = parse_rclone_line("stdout", json_line);
         match event {
             RcloneEvent::Copied(object) => assert_eq!(object, "file2.txt"),
