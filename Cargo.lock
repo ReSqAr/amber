@@ -106,6 +106,7 @@ dependencies = [
  "ignore",
  "indexmap 2.7.1",
  "indicatif",
+ "indicatif-log-bridge",
  "log",
  "once_cell",
  "prost",
@@ -1801,6 +1802,16 @@ dependencies = [
  "portable-atomic",
  "unicode-width",
  "web-time",
+]
+
+[[package]]
+name = "indicatif-log-bridge"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63703cf9069b85dbe6fe26e1c5230d013dee99d3559cd3d02ba39e099ef7ab02"
+dependencies = [
+ "indicatif",
+ "log",
 ]
 
 [[package]]

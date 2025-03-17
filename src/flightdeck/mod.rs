@@ -6,7 +6,6 @@ use pipes::Pipes;
 use pipes::file::FilePipe;
 use pipes::progress_bars::{LayoutItemBuilderNode, ProgressBarPipe};
 use pipes::terminal::TerminalPipe;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -36,16 +35,10 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
     terminal_level_filter: Option<log::LevelFilter>,
     output: Output,
 ) -> Result<(), E> {
-    let multi = match output {
-        Output::Default => {
-            if std::io::stdout().is_terminal() {
-                let draw_target = indicatif::ProgressDrawTarget::stdout_with_hz(10);
-                Some(indicatif::MultiProgress::with_draw_target(draw_target))
-            } else {
-                None
-            }
-        }
+    let multi = match output.clone() {
+        Output::MultiProgressBar(multi) => Some(multi),
         Output::Override(_) => None,
+        Output::Raw => None,
     };
 
     let path = path.into();

@@ -149,7 +149,10 @@ impl From<ConnectionType> for db::models::ConnectionType {
 pub async fn run() {
     let cli = Cli::parse();
 
-    if let Err(err) = run_cli(cli, crate::flightdeck::output::Output::default()).await {
+    let output = crate::flightdeck::output::Output::default();
+    init_logger(&output);
+
+    if let Err(err) = run_cli(cli, output).await {
         log::error!("\nerror: {}", err);
         process::exit(1);
     }
@@ -205,5 +208,21 @@ pub async fn run_cli(
                 commands::config::set_name(cli.path, name, output).await
             }
         },
+    }
+}
+
+fn init_logger(output: &crate::flightdeck::output::Output) {
+    let env = env_logger::Env::default().default_filter_or("info");
+    let mut builder = env_logger::Builder::from_env(env);
+
+    if let Some(m) = output.multi_progress_bar() {
+        let logger = builder.build();
+        let level = logger.filter();
+        indicatif_log_bridge::LogWrapper::new(m.clone(), logger)
+            .try_init()
+            .unwrap();
+        log::set_max_level(level);
+    } else {
+        builder.init()
     }
 }

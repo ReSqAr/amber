@@ -74,16 +74,16 @@ impl TerminalPipe {
                 match task::spawn_blocking(move || multi.println(&data)).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        log::error!("could not write to the terminal via indactif: {}", e)
+                        eprintln!("could not write to the terminal via indactif: {}", e)
                     }
-                    Err(e) => log::error!("could not write to the terminal: {}", e),
+                    Err(e) => eprintln!("could not write to the terminal: {}", e),
                 }
             }
             OutputStream::Output(output) => {
                 let output = output.clone();
                 match task::spawn_blocking(move || output.println(data.to_string())).await {
                     Ok(()) => {}
-                    Err(e) => log::error!("could not write to the terminal: {}", e),
+                    Err(e) => eprintln!("could not write to the terminal: {}", e),
                 }
             }
         }
