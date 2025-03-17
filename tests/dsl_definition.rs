@@ -1262,9 +1262,15 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     write_file(&repo_instance.path, &filename, &data).await?;
                 }
                 CommandLine::RemoveFile { repo, filename } => {
-                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
-                        anyhow!("Repository {} not found for remove command", repo)
-                    })?;
+                    let repo_instance = env.repos.entry(repo.clone()).or_insert_with(|| {
+                        let repo_path = root.join(&repo);
+                        std::fs::create_dir_all(&repo_path)
+                            .expect("failed to create repository folder");
+                        RepoInstance {
+                            id: repo.clone(),
+                            path: repo_path,
+                        }
+                    });
                     remove_file(&repo_instance.path, &filename).await?;
                 }
                 CommandLine::AssertExists {

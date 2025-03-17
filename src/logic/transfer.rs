@@ -293,7 +293,7 @@ pub async fn transfer<T: TransferItem>(
     rclone_handle.await??;
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
-    
+
     if count < expected_count {
         Err(AppError::IncompleteTransfer {
             count,
