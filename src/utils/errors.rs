@@ -33,6 +33,10 @@ pub enum AppError {
     HardlinksNotSupported(String),
     #[error("rclone is required but: {0}")]
     RCloneErr(String),
+    #[error(
+        "the transfer was incomplete: expected {expected_count} files but only {count} files were copied"
+    )]
+    IncompleteTransfer { count: u64, expected_count: u64 },
 }
 
 #[derive(Error, Debug)]

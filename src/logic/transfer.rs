@@ -5,7 +5,7 @@ use crate::flightdeck::observer::Observer;
 use crate::repository::traits::{
     BufferType, Config, Local, Metadata, RcloneTargetPath, Receiver, Sender, TransferItem,
 };
-use crate::utils::errors::InternalError;
+use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
@@ -127,7 +127,7 @@ async fn execute_rclone(
                     f.observe_state(
                         log::Level::Debug,
                         format!(
-                            "{}/{}",
+                            "copying... ({}/{})",
                             units::human_readable_size(transfer.bytes),
                             units::human_readable_size(transfer.size),
                         ),
@@ -137,14 +137,14 @@ async fn execute_rclone(
                 files.retain(|key, _| seen_files.contains(key));
 
                 let msg = format!(
-                    "{}/{} speed: {}/s ETA: {}",
-                    units::human_readable_size(bytes),
-                    units::human_readable_size(total_bytes),
-                    units::human_readable_size(speed.unwrap_or(0f64) as u64),
+                    "ETA: {} speed: {}/s ({}/{})",
                     match eta {
                         None => "-".into(),
                         Some(eta) => format!("{}s", eta),
                     },
+                    units::human_readable_size(speed.unwrap_or(0f64) as u64),
+                    units::human_readable_size(bytes),
+                    units::human_readable_size(total_bytes),
                 );
                 obs.observe_state(log::Level::Debug, msg);
             }
@@ -293,8 +293,14 @@ pub async fn transfer<T: TransferItem>(
     rclone_handle.await??;
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
-
-    // TODO: cleanup staging folder - source
-
-    Ok(count)
+    
+    if count < expected_count {
+        Err(AppError::IncompleteTransfer {
+            count,
+            expected_count,
+        }
+        .into())
+    } else {
+        Ok(count)
+    }
 }
