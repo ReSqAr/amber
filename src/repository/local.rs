@@ -23,6 +23,8 @@ use crate::utils::pipe::TryForwardIntoExt;
 use fs2::FileExt;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
 use log::debug;
+use rand::Rng;
+use rand::distr::Alphanumeric;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -209,14 +211,19 @@ impl Local for LocalRepository {
     }
 
     fn log_path(&self) -> RepoPath {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|x| x.as_millis() as i64)
-            .unwrap_or(0);
+        let ts = chrono::Utc::now()
+            .format("%Y-%m-%d_%H_%M_%S_%6f")
+            .to_string();
+
+        let random: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(4)
+            .map(char::from)
+            .collect();
 
         self.repository_path()
             .join("logs")
-            .join(format!("run_{}.txt.gz", timestamp))
+            .join(format!("run_{ts}-{random}.txt.gz"))
     }
 }
 
