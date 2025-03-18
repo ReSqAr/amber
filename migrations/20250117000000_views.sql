@@ -57,7 +57,7 @@ SELECT
 FROM latest_blob_version
 WHERE has_blob = 1;
 
--- view: latest_filesystem_files
+-- view: latest_repository_names
 CREATE VIEW latest_repository_names AS
 WITH versioned_repository_names AS (
     SELECT
