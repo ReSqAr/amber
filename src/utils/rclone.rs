@@ -435,8 +435,7 @@ mod tests {
             dest_target,
             callback,
         )
-        .await
-        .expect("rclone copy failed");
+        .await?;
 
         // check that the file now exists in the destination directory
         let dest_file = dest_dir.join("test.txt");
