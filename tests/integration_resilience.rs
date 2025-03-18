@@ -17,7 +17,9 @@ async fn integration_test_resilience_missing_materialisations() -> Result<(), an
         
         # check 1
         @a amber status
+        assert_output_contains "detected 1 incomplete files"
         @a amber fsck
+        assert_output_contains "detected 0 altered files and 1 incomplete files"
         
         # action 2
         @a amber add
@@ -26,6 +28,7 @@ async fn integration_test_resilience_missing_materialisations() -> Result<(), an
         @a amber status
         assert_output_contains "detected 1 materialised files"
         @a amber fsck
+        assert_output_contains "found no altered and no incomplete files"
     "#;
     dsl_definition::run_dsl_script(script).await
 }
@@ -45,15 +48,18 @@ async fn integration_test_resilience_missing_blobs() -> Result<(), anyhow::Error
         
         # check 1
         @a amber status
+        assert_output_contains "detected 1 incomplete files"
         @a amber fsck
+        assert_output_contains "detected 0 altered files and 1 incomplete files"
         
         # action 2
         @a amber add
         
         # check 2
         @a amber status
-        assert_output_contains "detected 1 materialised files"        
+        assert_output_contains "detected 1 materialised files"
         @a amber fsck
+        assert_output_contains "found no altered and no incomplete files"
     "#;
     dsl_definition::run_dsl_script(script).await
 }
