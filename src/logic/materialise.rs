@@ -4,8 +4,10 @@ use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
+use crate::utils::fs::are_hardlinked;
 use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
+use log::debug;
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -29,6 +31,8 @@ pub async fn materialise(
         })
     };
 
+    fs::create_dir_all(&local.staging_path()).await?;
+
     {
         let (state_handle, stream) = state::state(local.clone(), WalkerConfig::default()).await?;
 
@@ -47,7 +51,24 @@ pub async fn materialise(
             match state {
                 VirtualFileState::New => None,
                 VirtualFileState::Ok { .. } => None,
-                VirtualFileState::OkMaterialisationMissing { .. } => None,
+                VirtualFileState::OkMaterialisationMissing {
+                    target_blob_id,
+                    local_has_target_blob,
+                } => match (local_has_target_blob, target_blob_id) {
+                    (true, Some(target_blob_id)) => Some(Ok(ToMaterialise {
+                        path,
+                        target_blob_id: Some(target_blob_id),
+                    })),
+                    (_, None) => Some(Ok(ToMaterialise {
+                        path,
+                        target_blob_id: None,
+                    })),
+                    (false, Some(_)) => {
+                        BaseObserver::with_id("materialise:file", path)
+                            .observe_termination(log::Level::Warn, "unavailable");
+                        None
+                    }
+                },
                 VirtualFileState::Missing {
                     target_blob_id,
                     local_has_target_blob,
@@ -111,13 +132,21 @@ pub async fn materialise(
                                 .map(|m| m.is_file())
                                 .unwrap_or(false)
                             {
-                                files::forced_atomic_hard_link(
-                                    local,
-                                    &object_path,
-                                    &target_path,
-                                    &target_blob_id,
-                                )
-                                .await?;
+                                if !are_hardlinked(&object_path, &target_path).await? {
+                                    files::forced_atomic_hard_link(
+                                        local,
+                                        &object_path,
+                                        &target_path,
+                                        &target_blob_id,
+                                    )
+                                    .await?;
+                                } else {
+                                    debug!(
+                                        "{} and {} are already hard linked. no action needed.",
+                                        object_path.display(),
+                                        target_path.display()
+                                    );
+                                }
                             } else {
                                 files::create_hard_link(&object_path, &target_path).await?;
                             }

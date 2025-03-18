@@ -196,7 +196,7 @@ mod tests {
             has_blob: true,
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
         }];
-        let mtrlstns = [TestMaterialisation{
+        let mtrlstns = [TestMaterialisation {
             path: "test".to_string(),
             blob_id: Some("blob1".into()),
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
@@ -335,7 +335,7 @@ mod tests {
             has_blob: true,
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
         }];
-        let mtrlstns = [TestMaterialisation{
+        let mtrlstns = [TestMaterialisation {
             path: "test".to_string(),
             blob_id: Some("blob1".into()),
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
