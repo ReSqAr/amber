@@ -218,6 +218,7 @@ impl From<Value> for flightdeck::observation::Value {
         match m {
             Value::String(s) => flightdeck::observation::Value::String(s),
             Value::U64(u64) => flightdeck::observation::Value::U64(u64),
+            Value::F64(f64) => flightdeck::observation::Value::F64(f64),
             Value::Bool(b) => flightdeck::observation::Value::Bool(b),
         }
     }
@@ -228,6 +229,7 @@ impl From<flightdeck::observation::Value> for Value {
         match m {
             flightdeck::observation::Value::String(s) => Value::String(s),
             flightdeck::observation::Value::U64(u64) => Value::U64(u64),
+            flightdeck::observation::Value::F64(f64) => Value::F64(f64),
             flightdeck::observation::Value::Bool(b) => Value::Bool(b),
         }
     }
