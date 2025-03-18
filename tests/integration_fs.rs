@@ -54,6 +54,7 @@ async fn integration_test_rm() -> anyhow::Result<(), anyhow::Error> {
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn integration_test_rm_soft() -> anyhow::Result<(), anyhow::Error> {

@@ -196,7 +196,11 @@ mod tests {
             has_blob: true,
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
         }];
-        let mtrlstns = [];
+        let mtrlstns = [TestMaterialisation{
+            path: "test".to_string(),
+            blob_id: Some("blob1".into()),
+            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
+        }];
         let seen_files = [FileSeen {
             path: "test".into(),
             seen_id: 42,
@@ -331,7 +335,11 @@ mod tests {
             has_blob: true,
             valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
         }];
-        let mtrlstns = [];
+        let mtrlstns = [TestMaterialisation{
+            path: "test".to_string(),
+            blob_id: Some("blob1".into()),
+            valid_from: Utc.timestamp_opt(BEGINNING + 20, 0).unwrap(),
+        }];
         let seen_files = [FileSeen {
             path: "test".into(),
             seen_id: 42,

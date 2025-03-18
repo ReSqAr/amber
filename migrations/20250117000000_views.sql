@@ -1,3 +1,21 @@
+-- view: valid_files
+CREATE VIEW valid_files AS
+SELECT f.id, f.uuid, f.path, f.blob_id, f.valid_from
+FROM files f
+WHERE f.blob_id IS NULL OR EXISTS (
+    SELECT 1 FROM blobs b
+    WHERE b.blob_id = f.blob_id
+);
+
+-- view: valid_materialisations
+CREATE VIEW valid_materialisations AS
+SELECT m.id, m.path, m.blob_id, m.valid_from
+FROM materialisations m
+WHERE EXISTS (
+    SELECT 1 FROM valid_files f
+    WHERE f.path = m.path AND f.blob_id IS m.blob_id
+);
+
 -- view: latest_filesystem_files
 CREATE VIEW latest_filesystem_files AS
 WITH versioned_files AS (
@@ -8,7 +26,7 @@ WITH versioned_files AS (
             PARTITION BY path
             ORDER BY valid_from DESC, blob_id DESC
         ) AS rn
-    FROM files
+    FROM valid_files
 ),
 latest_file_version AS (
     SELECT
@@ -93,7 +111,7 @@ WITH versioned_materialisations AS (
             PARTITION BY path
             ORDER BY valid_from DESC, blob_id DESC
             ) AS rn
-    FROM materialisations
+    FROM valid_materialisations
 ),
      latest_materialisations_version AS (
          SELECT

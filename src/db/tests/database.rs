@@ -247,7 +247,15 @@ mod tests {
             path: Some("avail.txt".into()),
             valid_from: now,
         };
-        db.add_blobs(stream::iter([avail_blob]))
+        let remote_blob = InsertBlob {
+            repo_id: "somewhere_else".into(),
+            blob_id: "missing_blob".into(),
+            blob_size: 50,
+            has_blob: true,
+            path: None,
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter([avail_blob, remote_blob]))
             .await
             .expect("failed");
 
@@ -285,6 +293,27 @@ mod tests {
     async fn test_lookup_last_materialisation() {
         let db = setup_test_db().await;
         let now = Utc::now();
+
+        let mat_blob = InsertBlob {
+            repo_id: "somewhere".into(),
+            blob_id: "mat_blob".into(),
+            blob_size: 50,
+            has_blob: true,
+            path: None,
+            valid_from: now,
+        };
+        db.add_blobs(stream::iter([mat_blob]))
+            .await
+            .expect("failed");
+
+        let mat_file = InsertFile {
+            path: "mat_file.txt".into(),
+            blob_id: Some("mat_blob".into()),
+            valid_from: now,
+        };
+        db.add_files(stream::iter([mat_file]))
+            .await
+            .expect("failed");
 
         let mat = InsertMaterialisation {
             path: "mat_file.txt".into(),
