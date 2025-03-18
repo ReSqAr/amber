@@ -48,6 +48,7 @@ pub async fn materialise(
                 VirtualFileState::New => None,
                 VirtualFileState::Ok { .. } => None,
                 VirtualFileState::OkMaterialisationMissing { .. } => None,
+                VirtualFileState::OkBlobMissing { .. } => None,
                 VirtualFileState::Missing {
                     target_blob_id,
                     local_has_target_blob,

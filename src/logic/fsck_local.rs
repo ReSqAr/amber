@@ -129,37 +129,44 @@ async fn find_altered_files(
 
     let mut count: u64 = 0;
     let mut altered_count: u64 = 0;
+    let mut incomplete_count: u64 = 0;
     while let Some(file_result) = stream.next().await {
         count += 1;
         checker_obs.observe_position(log::Level::Trace, count);
 
         let file = file_result?;
-        if let VirtualFileState::Altered { .. } = file.state {
-            altered_count += 1;
-            BaseObserver::with_id("file", file.path.clone())
-                .observe_termination(log::Level::Error, "altered");
-        } else {
-            BaseObserver::with_id("file", file.path.clone()).observe_termination(
-                log::Level::Debug,
-                match file.state {
-                    VirtualFileState::New => "new",
-                    VirtualFileState::Missing { .. } => "missing",
-                    VirtualFileState::Ok { .. } => "ok",
-                    VirtualFileState::OkMaterialisationMissing { .. } => "incomplete",
-                    VirtualFileState::Altered { .. } => "altered",
-                    VirtualFileState::Outdated { .. } => "outdated",
-                },
-            );
-        }
+        BaseObserver::with_id("file", file.path.clone()).observe_termination(
+            log::Level::Debug,
+            match file.state {
+                VirtualFileState::New => "new",
+                VirtualFileState::Missing { .. } => "missing",
+                VirtualFileState::Ok { .. } => "ok",
+                VirtualFileState::OkBlobMissing { .. } => {
+                    incomplete_count += 1;
+                    "incomplete"
+                }
+                VirtualFileState::OkMaterialisationMissing { .. } => {
+                    incomplete_count += 1;
+                    "incomplete"
+                }
+                VirtualFileState::Altered { .. } => {
+                    altered_count += 1;
+                    "altered"
+                }
+                VirtualFileState::Outdated { .. } => "outdated",
+            },
+        );
     }
 
     handle.await??;
 
-    let final_msg = if altered_count > 0 {
+    let final_msg = if altered_count > 0 || incomplete_count > 0 {
         let duration = start_time.elapsed();
-        format!("detected {} altered files in {duration:.2?}", altered_count)
+        format!(
+            "detected {altered_count} altered files and {incomplete_count} incomplete files in {duration:.2?}"
+        )
     } else {
-        "found no altered files".into()
+        "found no altered and no incomplete files".into()
     };
     checker_obs.observe_termination(log::Level::Info, final_msg);
 

@@ -9,7 +9,6 @@ use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesyste
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
 use futures::StreamExt;
-use log::error;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -93,7 +92,7 @@ enum State {
     New,
     Missing,
     Ok,
-    OkMaterialisationMissing,
+    Incomplete,
     Altered,
     Outdated,
 }
@@ -104,7 +103,8 @@ impl From<VirtualFileState> for State {
             VirtualFileState::New => Self::New,
             VirtualFileState::Missing { .. } => Self::Missing,
             VirtualFileState::Ok { .. } => Self::Ok,
-            VirtualFileState::OkMaterialisationMissing { .. } => Self::OkMaterialisationMissing,
+            VirtualFileState::OkMaterialisationMissing { .. } => Self::Incomplete,
+            VirtualFileState::OkBlobMissing { .. } => Self::Incomplete,
             VirtualFileState::Altered { .. } => Self::Altered,
             VirtualFileState::Outdated { .. } => Self::Outdated,
         }
@@ -125,26 +125,21 @@ pub async fn show_status(
         total_count += 1;
         checker_obs.observe_position(log::Level::Trace, total_count);
 
-        match file_result {
-            Ok(file) => {
-                let mut obs = BaseObserver::with_id("file", file.path.clone());
+        let file = file_result?;
+        let mut obs = BaseObserver::with_id("file", file.path.clone());
 
-                let state = file.state;
-                *count.entry(state.clone().into()).or_insert(0) += 1;
-                let (level, state) = match state {
-                    VirtualFileState::New => (log::Level::Info, "new"),
-                    VirtualFileState::Missing { .. } => (log::Level::Warn, "missing"),
-                    VirtualFileState::Outdated { .. } => (log::Level::Info, "outdated"),
-                    VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
-                    VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
-                    VirtualFileState::OkMaterialisationMissing { .. } => (log::Level::Debug, "incomplete"),
-                };
-                obs.observe_termination(level, state);
-            }
-            Err(e) => {
-                error!("error during traversal: {e}");
-            }
-        }
+        let state = file.state;
+        *count.entry(state.clone().into()).or_insert(0) += 1;
+        let (level, state) = match state {
+            VirtualFileState::New => (log::Level::Info, "new"),
+            VirtualFileState::Missing { .. } => (log::Level::Warn, "missing"),
+            VirtualFileState::Outdated { .. } => (log::Level::Info, "outdated"),
+            VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
+            VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
+            VirtualFileState::OkMaterialisationMissing { .. } => (log::Level::Debug, "incomplete"),
+            VirtualFileState::OkBlobMissing { .. } => (log::Level::Debug, "incomplete"),
+        };
+        obs.observe_termination(level, state);
     }
 
     handle.await??;
@@ -163,7 +158,7 @@ fn generate_final_message(
     let missing_count = *count.entry(State::Missing).or_default();
     let outdated_count = *count.entry(State::Outdated).or_default();
     let ok_count = *count.entry(State::Ok).or_default();
-    let incomplete_count = *count.entry(State::OkMaterialisationMissing).or_default();
+    let incomplete_count = *count.entry(State::Incomplete).or_default();
     let altered_count = *count.entry(State::Altered).or_default();
 
     let mut parts = Vec::new();
