@@ -104,7 +104,6 @@ impl From<VirtualFileState> for State {
             VirtualFileState::Missing { .. } => Self::Missing,
             VirtualFileState::Ok { .. } => Self::Ok,
             VirtualFileState::OkMaterialisationMissing { .. } => Self::Incomplete,
-            VirtualFileState::OkBlobMissing { .. } => Self::Incomplete,
             VirtualFileState::Altered { .. } => Self::Altered,
             VirtualFileState::Outdated { .. } => Self::Outdated,
         }
@@ -137,7 +136,6 @@ pub async fn show_status(
             VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
             VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
             VirtualFileState::OkMaterialisationMissing { .. } => (log::Level::Debug, "incomplete"),
-            VirtualFileState::OkBlobMissing { .. } => (log::Level::Debug, "incomplete"),
         };
         obs.observe_termination(level, state);
     }

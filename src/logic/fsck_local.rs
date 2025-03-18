@@ -141,10 +141,6 @@ async fn find_altered_files(
                 VirtualFileState::New => "new",
                 VirtualFileState::Missing { .. } => "missing",
                 VirtualFileState::Ok { .. } => "ok",
-                VirtualFileState::OkBlobMissing { .. } => {
-                    incomplete_count += 1;
-                    "incomplete"
-                }
                 VirtualFileState::OkMaterialisationMissing { .. } => {
                     incomplete_count += 1;
                     "incomplete"

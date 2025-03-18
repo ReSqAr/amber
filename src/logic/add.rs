@@ -69,7 +69,6 @@ pub(crate) async fn add_files(
                 VirtualFileState::Missing { .. } => false,
                 VirtualFileState::Ok { .. } => false,
                 VirtualFileState::OkMaterialisationMissing { .. } => true,
-                VirtualFileState::OkBlobMissing { .. } => true,
                 VirtualFileState::Altered { .. } => false,
                 VirtualFileState::Outdated { .. } => false,
             }

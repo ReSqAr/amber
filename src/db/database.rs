@@ -877,7 +877,6 @@ impl Database {
                                     )
                                     WHEN target_blob_size IS NOT NULL AND fs_last_size IS NOT NULL AND fs_last_size IS DISTINCT FROM target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
                                     WHEN check_last_hash IS DISTINCT FROM materialisation_last_blob_id THEN 'ok_materialisation_missing' -- materialisation needs to be recorded
-                                    WHEN NOT local_has_target_blob THEN 'ok_blob_missing' 
                                     ELSE 'ok' -- hash is the same and the size is the same -> OK
                                 END
                             )

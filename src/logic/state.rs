@@ -100,9 +100,6 @@ pub enum VirtualFileState {
         target_blob_id: String,
         local_has_target_blob: bool,
     },
-    OkBlobMissing {
-        target_blob_id: String,
-    },
     Altered {
         target_blob_id: Option<String>,
         local_has_target_blob: bool,
@@ -140,12 +137,6 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                 state: VirtualFileState::OkMaterialisationMissing {
                     target_blob_id: vf.target_blob_id.unwrap(),
                     local_has_target_blob: vf.local_has_target_blob,
-                },
-            }),
-            models::VirtualFileState::OkBlobMissing => Ok(Self {
-                path: vf.path,
-                state: VirtualFileState::OkBlobMissing {
-                    target_blob_id: vf.target_blob_id.unwrap(),
                 },
             }),
             models::VirtualFileState::Altered => Ok(Self {

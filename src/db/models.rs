@@ -127,7 +127,6 @@ pub enum VirtualFileState {
     New,
     Ok,
     OkMaterialisationMissing,
-    OkBlobMissing,
     Altered,
     Outdated,
     NeedsCheck,
