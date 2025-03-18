@@ -145,6 +145,7 @@ async fn find_altered_files(
                     VirtualFileState::New => "new",
                     VirtualFileState::Missing { .. } => "missing",
                     VirtualFileState::Ok { .. } => "ok",
+                    VirtualFileState::OkMaterialisationMissing { .. } => "incomplete",
                     VirtualFileState::Altered { .. } => "altered",
                     VirtualFileState::Outdated { .. } => "outdated",
                 },

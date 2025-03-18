@@ -866,7 +866,7 @@ impl Database {
                         target_blob_id,
                         local_has_target_blob,
                         CASE
-                            WHEN target_blob_id IS NULL AND materialisation_last_blob_id is NULL THEN 'new'
+                            WHEN target_blob_id IS NULL AND materialisation_last_blob_id IS NULL THEN 'new'
                             WHEN fs_last_modified_dttm <= check_last_dttm THEN ( -- we can trust the check
                                 CASE
                                     WHEN check_last_hash IS DISTINCT FROM target_blob_id THEN ( -- check says: they are not the same
@@ -875,7 +875,8 @@ impl Database {
                                             ELSE 'altered'
                                         END
                                     )
-                                    WHEN fs_last_size IS DISTINCT FROM target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
+                                    WHEN target_blob_size IS NOT NULL AND fs_last_size IS NOT NULL AND fs_last_size IS DISTINCT FROM target_blob_size THEN 'needs_check' -- shouldn't have trusted the check
+                                    WHEN check_last_hash IS DISTINCT FROM materialisation_last_blob_id THEN 'ok_materialisation_missing' -- materialisation needs to be recorded
                                     ELSE 'ok' -- hash is the same and the size is the same -> OK
                                 END
                             )

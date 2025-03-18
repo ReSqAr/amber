@@ -126,6 +126,7 @@ impl<'r> FromRow<'r, SqliteRow> for BlobAssociatedToFiles {
 pub enum VirtualFileState {
     New,
     Ok,
+    OkMaterialisationMissing,
     Altered,
     Outdated,
     NeedsCheck,

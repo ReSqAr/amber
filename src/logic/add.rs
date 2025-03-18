@@ -63,7 +63,14 @@ pub(crate) async fn add_files(
 
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
         let state = file_result.state.clone();
-        async move { state == VirtualFileState::New }
+        async move { match state {
+            VirtualFileState::New => true,
+            VirtualFileState::Missing { .. } => false,
+            VirtualFileState::Ok { .. } => false,
+            VirtualFileState::OkMaterialisationMissing { .. } => true,
+            VirtualFileState::Altered { .. } => false,
+            VirtualFileState::Outdated { .. } => false,
+        } }
     });
 
     let mut count = 0;

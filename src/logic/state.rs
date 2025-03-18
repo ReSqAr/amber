@@ -93,17 +93,18 @@ pub enum VirtualFileState {
         local_has_target_blob: bool,
     },
     Ok {
-        materialisation_last_blob_id: String,
+        target_blob_id: String,
+        local_has_target_blob: bool,
+    },
+    OkMaterialisationMissing {
         target_blob_id: String,
         local_has_target_blob: bool,
     },
     Altered {
-        materialisation_last_blob_id: String,
         target_blob_id: Option<String>,
         local_has_target_blob: bool,
     },
     Outdated {
-        materialisation_last_blob_id: String,
         target_blob_id: Option<String>,
         local_has_target_blob: bool,
     },
@@ -127,7 +128,13 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
             models::VirtualFileState::Ok => Ok(Self {
                 path: vf.path,
                 state: VirtualFileState::Ok {
-                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
+                    target_blob_id: vf.target_blob_id.unwrap(),
+                    local_has_target_blob: vf.local_has_target_blob,
+                },
+            }),
+            models::VirtualFileState::OkMaterialisationMissing => Ok(Self {
+                path: vf.path,
+                state: VirtualFileState::OkMaterialisationMissing {
                     target_blob_id: vf.target_blob_id.unwrap(),
                     local_has_target_blob: vf.local_has_target_blob,
                 },
@@ -135,7 +142,6 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
             models::VirtualFileState::Altered => Ok(Self {
                 path: vf.path,
                 state: VirtualFileState::Altered {
-                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
                     target_blob_id: vf.target_blob_id,
                     local_has_target_blob: vf.local_has_target_blob,
                 },
@@ -143,7 +149,6 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
             models::VirtualFileState::Outdated => Ok(Self {
                 path: vf.path,
                 state: VirtualFileState::Outdated {
-                    materialisation_last_blob_id: vf.materialisation_last_blob_id.unwrap(),
                     target_blob_id: vf.target_blob_id,
                     local_has_target_blob: vf.local_has_target_blob,
                 },

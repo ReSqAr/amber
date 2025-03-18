@@ -93,6 +93,7 @@ enum State {
     New,
     Missing,
     Ok,
+    OkMaterialisationMissing,
     Altered,
     Outdated,
 }
@@ -103,6 +104,7 @@ impl From<VirtualFileState> for State {
             VirtualFileState::New => Self::New,
             VirtualFileState::Missing { .. } => Self::Missing,
             VirtualFileState::Ok { .. } => Self::Ok,
+            VirtualFileState::OkMaterialisationMissing { .. } => Self::OkMaterialisationMissing,
             VirtualFileState::Altered { .. } => Self::Altered,
             VirtualFileState::Outdated { .. } => Self::Outdated,
         }
@@ -135,6 +137,7 @@ pub async fn show_status(
                     VirtualFileState::Outdated { .. } => (log::Level::Info, "outdated"),
                     VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
                     VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
+                    VirtualFileState::OkMaterialisationMissing { .. } => (log::Level::Debug, "incomplete"),
                 };
                 obs.observe_termination(level, state);
             }
@@ -160,6 +163,7 @@ fn generate_final_message(
     let missing_count = *count.entry(State::Missing).or_default();
     let outdated_count = *count.entry(State::Outdated).or_default();
     let ok_count = *count.entry(State::Ok).or_default();
+    let incomplete_count = *count.entry(State::OkMaterialisationMissing).or_default();
     let altered_count = *count.entry(State::Altered).or_default();
 
     let mut parts = Vec::new();
@@ -174,6 +178,9 @@ fn generate_final_message(
     }
     if outdated_count > 0 {
         parts.push(format!("{} outdated files", outdated_count))
+    }
+    if incomplete_count > 0 {
+        parts.push(format!("{} incomplete files", incomplete_count))
     }
     if ok_count > 0 {
         parts.push(format!("{} materialised files", ok_count))
