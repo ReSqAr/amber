@@ -11,13 +11,15 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Erro
     let options = SqliteConnectOptions::from_str(database_url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .log_slow_statements(log::LevelFilter::Off, std::time::Duration::from_secs(30))
+        .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(30))
         .busy_timeout(std::time::Duration::from_secs(120))
         .pragma("cache_size", "-1048576")
         .pragma("temp_store", "MEMORY")
         .pragma("synchronous", "NORMAL")
-        .pragma("mmap_size", "30000000000")
-        .pragma("page_size", "32768")
+        .pragma("mmap_size", "1000000000")
+        .pragma("page_size", "8192")
+        .pragma("journal_size_limit", "500000000")
+        .pragma("wal_autocheckpoint", "10000")
         .optimize_on_close(true, 10000000);
 
     SqlitePoolOptions::new()
