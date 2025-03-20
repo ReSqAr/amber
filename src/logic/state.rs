@@ -360,10 +360,13 @@ pub async fn state(
                                 .expect("failed to send error to output stream")
                         }
                     }
-                    Err(e) => tx_clone
-                        .send(Err(e))
-                        .await
-                        .expect("failed to send error to output stream"),
+                    Err(e) => {
+                        log::error!("state check error: {:?}", e);
+                        tx_clone
+                            .send(Err(e))
+                            .await
+                            .expect("failed to send error to output stream")
+                    }
                 }
             })
             .await;
