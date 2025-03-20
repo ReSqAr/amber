@@ -34,10 +34,10 @@ fn write_rclone_files_clone<T: TransferItem>(
     local: &impl Config,
     rclone_files: PathBuf,
 ) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<T>) {
-    let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriter);
+    let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriterChunkSize);
     let (tx, rx) = mpsc::channel::<T>(channel_buffer_size);
 
-    let writer_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesStream);
+    let writer_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesStreamChunkSize);
     let writing_task = tokio::spawn(async move {
         let file = File::create(rclone_files)
             .await

@@ -198,8 +198,8 @@ pub async fn state(
        - needs_check: files which need to be looked at
        - output channel
     */
-    let buffer_size = vfs.buffer_size(BufferType::State);
-    let checker_buffer_size = vfs.buffer_size(BufferType::StateChecker);
+    let buffer_size = vfs.buffer_size(BufferType::StateBufferChannelSize);
+    let checker_buffer_size = vfs.buffer_size(BufferType::StateCheckerParallelism);
     let (obs_tx, obs_rx) = mpsc::channel(buffer_size);
     let (needs_check_tx, needs_check_rx) = mpsc::channel(buffer_size);
     let (tx, rx) = mpsc::channel(buffer_size);
@@ -208,7 +208,7 @@ pub async fn state(
     let (walker_handle, mut walker_rx) = walk(
         root.abs().clone(),
         config,
-        vfs.buffer_size(BufferType::Walker),
+        vfs.buffer_size(BufferType::WalkerChannelSize),
     )
     .await?;
 

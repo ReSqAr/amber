@@ -76,7 +76,7 @@ pub(crate) async fn fsck_remote(
 
         let mut stream = futures::StreamExt::buffer_unordered(
             stream,
-            local.buffer_size(BufferType::FsckMaterialiseBuffer),
+            local.buffer_size(BufferType::FsckMaterialiseBufferParallelism),
         );
 
         let mut count = 0u64;
@@ -148,10 +148,10 @@ fn write_rclone_files_clone(
     local: &impl Config,
     rclone_files: PathBuf,
 ) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<String>) {
-    let channel_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesWriter);
+    let channel_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesWriterBufferSize);
     let (tx, rx) = mpsc::channel::<String>(channel_buffer_size);
 
-    let writer_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesStream);
+    let writer_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesStreamChunkSize);
     let writing_task = tokio::spawn(async move {
         let file = File::create(rclone_files)
             .await

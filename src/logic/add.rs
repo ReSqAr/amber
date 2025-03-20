@@ -29,7 +29,8 @@ pub(crate) async fn add_files(
     let start_time = tokio::time::Instant::now();
     let mut adder_obs = BaseObserver::without_id("adder");
 
-    let (file_tx, file_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFiles));
+    let (file_tx, file_rx) =
+        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFilesChannelSize));
     let db_file_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -38,7 +39,8 @@ pub(crate) async fn add_files(
                 .await
         })
     };
-    let (blob_tx, blob_rx) = mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddBlobs));
+    let (blob_tx, blob_rx) =
+        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddBlobsChannelSize));
     let db_blob_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -48,7 +50,7 @@ pub(crate) async fn add_files(
         })
     };
     let (mat_tx, mat_rx) =
-        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddMaterialisations));
+        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize));
     let db_mat_handle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
@@ -131,7 +133,7 @@ pub(crate) async fn add_files(
         // allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(
             stream,
-            repository.buffer_size(BufferType::AddFilesBlobifyFutureFileBuffer),
+            repository.buffer_size(BufferType::AddFilesBlobifyFutureFileParallelism),
         );
 
         pin_mut!(stream);

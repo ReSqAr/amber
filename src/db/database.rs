@@ -29,7 +29,7 @@ pub struct Database {
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
-const DEFAULT_CLEANUP_INTERVAL: usize = 100;
+const DEFAULT_CLEANUP_INTERVAL: usize = 1000;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {

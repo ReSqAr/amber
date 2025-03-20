@@ -90,7 +90,7 @@ where
 
     let count = stream
         .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))
-        .buffer_unordered(local.buffer_size(BufferType::Assimilate))
+        .buffer_unordered(local.buffer_size(BufferType::AssimilateParallelism))
         .inspect_ok(|_| {
             counter.fetch_add(1, Ordering::Relaxed);
             obs.observe_position(log::Level::Trace, counter.load(Ordering::Relaxed));

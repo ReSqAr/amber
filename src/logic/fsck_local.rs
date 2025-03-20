@@ -90,8 +90,10 @@ async fn fsck_blobs(
         }
     });
 
-    let stream =
-        futures::StreamExt::buffer_unordered(stream, local.buffer_size(BufferType::FsckBuffer));
+    let stream = futures::StreamExt::buffer_unordered(
+        stream,
+        local.buffer_size(BufferType::FsckBufferParallelism),
+    );
 
     stream
         .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })

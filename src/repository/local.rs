@@ -230,22 +230,22 @@ impl Local for LocalRepository {
 impl Config for LocalRepository {
     fn buffer_size(&self, buffer: BufferType) -> usize {
         match buffer {
-            BufferType::Assimilate => 20,
-            BufferType::TransferRcloneFilesStream => 10000,
-            BufferType::TransferRcloneFilesWriter => 1000,
-            BufferType::AddFilesBlobifyFutureFileBuffer => 20,
-            BufferType::AddFilesDBAddFiles => 1000,
-            BufferType::AddFilesDBAddBlobs => 1000,
-            BufferType::AddFilesDBAddMaterialisations => 1000,
-            BufferType::PrepareTransfer => 1000,
-            BufferType::State => 10000,
-            BufferType::StateChecker => 10000,
-            BufferType::Walker => 10000,
-            BufferType::Materialise => 100,
-            BufferType::FsckBuffer => 20,
-            BufferType::FsckMaterialiseBuffer => 100,
-            BufferType::FsckRcloneFilesWriter => 10000,
-            BufferType::FsckRcloneFilesStream => 1000,
+            BufferType::AssimilateParallelism => 20,
+            BufferType::TransferRcloneFilesStreamChunkSize => 10000,
+            BufferType::TransferRcloneFilesWriterChunkSize => 1000,
+            BufferType::AddFilesBlobifyFutureFileParallelism => 20,
+            BufferType::AddFilesDBAddFilesChannelSize => 1000,
+            BufferType::AddFilesDBAddBlobsChannelSize => 1000,
+            BufferType::AddFilesDBAddMaterialisationsChannelSize => 1000,
+            BufferType::PrepareTransferParallelism => 100,
+            BufferType::StateBufferChannelSize => 10000,
+            BufferType::StateCheckerParallelism => 100,
+            BufferType::WalkerChannelSize => 10000,
+            BufferType::MaterialiseParallelism => 100,
+            BufferType::FsckBufferParallelism => 20,
+            BufferType::FsckMaterialiseBufferParallelism => 100,
+            BufferType::FsckRcloneFilesWriterBufferSize => 10000,
+            BufferType::FsckRcloneFilesStreamChunkSize => 1000,
         }
     }
 }
@@ -530,7 +530,8 @@ impl Sender<BlobTransferItem> for LocalRepository {
         });
 
         // allow multiple hard link operations to run concurrently
-        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
+        let stream =
+            stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransferParallelism));
 
         let mut count = 0;
         pin_mut!(stream);
@@ -609,7 +610,8 @@ impl Sender<FileTransferItem> for LocalRepository {
         });
 
         // allow multiple hard link operations to run concurrently
-        let stream = stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransfer));
+        let stream =
+            stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransferParallelism));
 
         let mut count = 0;
         pin_mut!(stream);

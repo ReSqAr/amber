@@ -30,22 +30,22 @@ pub trait Metadata {
 }
 
 pub enum BufferType {
-    Assimilate,
-    TransferRcloneFilesWriter,
-    TransferRcloneFilesStream,
-    AddFilesBlobifyFutureFileBuffer,
-    AddFilesDBAddFiles,
-    AddFilesDBAddBlobs,
-    AddFilesDBAddMaterialisations,
-    PrepareTransfer,
-    State,
-    Walker,
-    StateChecker,
-    Materialise,
-    FsckBuffer,
-    FsckMaterialiseBuffer,
-    FsckRcloneFilesWriter,
-    FsckRcloneFilesStream,
+    AssimilateParallelism,
+    TransferRcloneFilesWriterChunkSize,
+    TransferRcloneFilesStreamChunkSize,
+    AddFilesBlobifyFutureFileParallelism,
+    AddFilesDBAddFilesChannelSize,
+    AddFilesDBAddBlobsChannelSize,
+    AddFilesDBAddMaterialisationsChannelSize,
+    PrepareTransferParallelism,
+    StateBufferChannelSize,
+    WalkerChannelSize,
+    StateCheckerParallelism,
+    MaterialiseParallelism,
+    FsckBufferParallelism,
+    FsckMaterialiseBufferParallelism,
+    FsckRcloneFilesWriterBufferSize,
+    FsckRcloneFilesStreamChunkSize,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;

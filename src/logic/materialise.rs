@@ -21,7 +21,7 @@ pub async fn materialise(
     let mut materialise_obs = BaseObserver::without_id("materialise");
 
     let (mat_tx, mat_rx) =
-        mpsc::channel(local.buffer_size(BufferType::AddFilesDBAddMaterialisations));
+        mpsc::channel(local.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize));
     let db_mat_handle = {
         let local_repository = local.clone();
         tokio::spawn(async move {
@@ -188,7 +188,7 @@ pub async fn materialise(
         // allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(
             stream,
-            local.buffer_size(BufferType::Materialise),
+            local.buffer_size(BufferType::MaterialiseParallelism),
         );
 
         pin_mut!(stream);
