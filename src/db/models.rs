@@ -204,3 +204,13 @@ pub struct CopiedTransferItem {
     pub transfer_id: u32,
     pub path: String,
 }
+
+#[derive(Debug, FromRow, Clone)]
+pub struct WalCheckpoint {
+    #[allow(dead_code)]
+    pub busy: i64,
+    #[allow(dead_code)]
+    pub log: i64,
+    #[allow(dead_code)]
+    pub checkpointed: i64,
+}

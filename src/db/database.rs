@@ -2,7 +2,7 @@ use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
     InsertMaterialisation, InsertRepositoryName, Materialisation, MissingFile, Observation,
-    ObservedBlob, Repository, RepositoryName, VirtualFile,
+    ObservedBlob, Repository, RepositoryName, VirtualFile, WalCheckpoint,
 };
 use crate::utils::flow::{ExtFlow, Flow};
 use async_stream::try_stream;
@@ -14,7 +14,7 @@ use sqlx::sqlite::SqliteArguments;
 use sqlx::{Either, Executor, FromRow, Sqlite, SqlitePool, query};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, MutexGuard, RwLock};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -29,7 +29,7 @@ pub struct Database {
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
-const DEFAULT_CLEANUP_INTERVAL: usize = 100;
+const DEFAULT_CLEANUP_INTERVAL: usize = 1000;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {
@@ -78,24 +78,25 @@ impl Database {
         Box::pin(stream)
     }
 
-    pub async fn periodic_cleanup(&self) -> Result<(), sqlx::Error> {
+    pub async fn periodic_cleanup(&self) -> Result<Option<MutexGuard<()>>, sqlx::Error> {
         if self.stream_access_lock.try_write().is_err() {
-            debug!("Skipping periodic cleanup because a long running stream is active");
-            return Ok(());
+            debug!("skipping periodic cleanup because a long running stream is active");
+            return Ok(None);
         }
 
-        let _cleanup_guard = self.cleanup_mutex.lock().await;
+        let cleanup_guard = self.cleanup_mutex.lock().await;
 
         let count = self.cleanup_counter.fetch_add(1, Ordering::SeqCst) + 1;
         if count > self.cleanup_interval {
             debug!("triggered periodic cleanup");
-            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
-                .execute(&self.pool)
+            let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
+                .fetch_one(&self.pool)
                 .await?;
+            debug!("cleanup result: {result:?}");
             self.cleanup_counter.store(0, Ordering::SeqCst);
         }
 
-        Ok(())
+        Ok(Some(cleanup_guard))
     }
 
     pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, sqlx::Error> {
@@ -144,7 +145,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -192,7 +193,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -243,7 +244,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -305,7 +306,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -398,7 +399,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -451,7 +452,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -498,7 +499,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -548,7 +549,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -689,7 +690,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup().await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -882,12 +883,13 @@ impl Database {
                     }
                 ).collect();
 
-                if let Err(e) = s.periodic_cleanup().await {
-                    return match shutting_down {
+                let _cleanup_guard = match s.periodic_cleanup().await {
+                    Ok(guard) => guard,
+                    Err(e) => return match shutting_down {
                         true => ExtFlow::Shutdown(Err(e)),
                         false => ExtFlow::Data(Err(e))
                     }
-                }
+                };
 
                 if observations.is_empty() { // SQL is otherwise not valid
                     return match shutting_down {
