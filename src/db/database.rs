@@ -29,7 +29,7 @@ pub struct Database {
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
-const DEFAULT_CLEANUP_INTERVAL: usize = 1000;
+const DEFAULT_CLEANUP_INTERVAL: usize = 100;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {
@@ -88,7 +88,8 @@ impl Database {
 
         let count = self.cleanup_counter.fetch_add(1, Ordering::SeqCst) + 1;
         if count > self.cleanup_interval {
-            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            debug!("triggered periodic cleanup");
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
                 .execute(&self.pool)
                 .await?;
             self.cleanup_counter.store(0, Ordering::SeqCst);
