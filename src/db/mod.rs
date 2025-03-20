@@ -19,7 +19,7 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Erro
         .pragma("mmap_size", "1000000000")
         .pragma("page_size", "8192")
         .pragma("journal_size_limit", "500000000")
-        .pragma("wal_autocheckpoint", "10000")
+        .pragma("wal_autocheckpoint", "1000")
         .optimize_on_close(true, 10000000);
 
     SqlitePoolOptions::new()
