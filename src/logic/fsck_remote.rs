@@ -148,7 +148,7 @@ fn write_rclone_files_clone(
     local: &impl Config,
     rclone_files: PathBuf,
 ) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<String>) {
-    let channel_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesWriterBufferSize);
+    let channel_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesWriterChannelSize);
     let (tx, rx) = mpsc::channel::<String>(channel_buffer_size);
 
     let writer_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesStreamChunkSize);

@@ -44,7 +44,7 @@ pub enum BufferType {
     MaterialiseParallelism,
     FsckBufferParallelism,
     FsckMaterialiseBufferParallelism,
-    FsckRcloneFilesWriterBufferSize,
+    FsckRcloneFilesWriterChannelSize,
     FsckRcloneFilesStreamChunkSize,
 }
 pub trait Config {

@@ -237,14 +237,14 @@ impl Config for LocalRepository {
             BufferType::AddFilesDBAddFilesChannelSize => 1000,
             BufferType::AddFilesDBAddBlobsChannelSize => 1000,
             BufferType::AddFilesDBAddMaterialisationsChannelSize => 1000,
-            BufferType::PrepareTransferParallelism => 100,
+            BufferType::PrepareTransferParallelism => 20,
             BufferType::StateBufferChannelSize => 10000,
-            BufferType::StateCheckerParallelism => 100,
+            BufferType::StateCheckerParallelism => 20,
             BufferType::WalkerChannelSize => 10000,
             BufferType::MaterialiseParallelism => 100,
             BufferType::FsckBufferParallelism => 20,
-            BufferType::FsckMaterialiseBufferParallelism => 100,
-            BufferType::FsckRcloneFilesWriterBufferSize => 10000,
+            BufferType::FsckMaterialiseBufferParallelism => 20,
+            BufferType::FsckRcloneFilesWriterChannelSize => 10000,
             BufferType::FsckRcloneFilesStreamChunkSize => 1000,
         }
     }
