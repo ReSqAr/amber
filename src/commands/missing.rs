@@ -8,7 +8,6 @@ use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Availability, ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use log::error;
 use std::path::PathBuf;
 use tokio_stream::StreamExt;
 
@@ -75,43 +74,37 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
     let mut count_files = 0usize;
     let mut count_blobs = 0usize;
     while let Some(blob_result) = missing_blobs.next().await {
-        match blob_result {
-            Ok(BlobAssociatedToFiles {
-                paths,
-                blob_id,
-                mut repositories_with_blob,
-            }) => {
-                count_files += paths.len();
-                count_blobs += 1;
-                missing_obs.observe_position(log::Level::Trace, count_blobs as u64);
+        let BlobAssociatedToFiles {
+            paths,
+            blob_id,
+            mut repositories_with_blob,
+        } = blob_result?;
+        count_files += paths.len();
+        count_blobs += 1;
+        missing_obs.observe_position(log::Level::Trace, count_blobs as u64);
 
-                repositories_with_blob.sort();
-                repositories_with_blob.dedup();
-                let detail: String = if !repositories_with_blob.is_empty() {
-                    format!("(exists in: {})", repositories_with_blob.join(", "))
-                } else {
-                    "(lost - no known location)".into()
-                };
+        repositories_with_blob.sort();
+        repositories_with_blob.dedup();
+        let detail: String = if !repositories_with_blob.is_empty() {
+            format!("(exists in: {})", repositories_with_blob.join(", "))
+        } else {
+            "(lost - no known location)".into()
+        };
 
-                for path in paths {
-                    let mut file_obs = BaseObserver::with_id("file", path);
-                    file_obs.observe_termination_ext(
-                        log::Level::Info,
-                        "missing",
-                        [
-                            ("detail".into(), detail.clone()),
-                            ("blob_id".into(), blob_id.clone()),
-                            (
-                                "repositories_with_blob".into(),
-                                repositories_with_blob.join(","),
-                            ),
-                        ],
-                    );
-                }
-            }
-            Err(e) => {
-                error!("error during traversal: {e}");
-            }
+        for path in paths {
+            let mut file_obs = BaseObserver::with_id("file", path);
+            file_obs.observe_termination_ext(
+                log::Level::Info,
+                "missing",
+                [
+                    ("detail".into(), detail.clone()),
+                    ("blob_id".into(), blob_id.clone()),
+                    (
+                        "repositories_with_blob".into(),
+                        repositories_with_blob.join(","),
+                    ),
+                ],
+            );
         }
     }
 

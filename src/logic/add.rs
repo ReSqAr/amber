@@ -138,18 +138,12 @@ pub(crate) async fn add_files(
 
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
-            match maybe_path {
-                Ok(path) => {
-                    BaseObserver::with_id("add", path.rel().display().to_string())
-                        .observe_termination(log::Level::Info, "added");
+            let path = maybe_path?;
+            BaseObserver::with_id("add", path.rel().display().to_string())
+                .observe_termination(log::Level::Info, "added");
 
-                    count += 1;
-                    adder_obs.observe_position(log::Level::Trace, count);
-                }
-                Err(e) => {
-                    println!("error: {e}");
-                }
-            }
+            count += 1;
+            adder_obs.observe_position(log::Level::Trace, count);
         }
 
         state_handle.await??;
