@@ -78,7 +78,10 @@ impl Database {
         Box::pin(stream)
     }
 
-    pub async fn periodic_cleanup(&self) -> Result<Option<RwLockReadGuard<()>>, sqlx::Error> {
+    pub async fn periodic_cleanup(
+        &self,
+        n: usize,
+    ) -> Result<Option<RwLockReadGuard<()>>, sqlx::Error> {
         if self.stream_access_lock.try_write().is_err() {
             debug!("skipping periodic cleanup because a long running stream is active");
             return Ok(None);
@@ -87,7 +90,7 @@ impl Database {
         {
             let _cleanup_write_guard = self.cleanup_lock.write().await;
 
-            let count = self.cleanup_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let count = self.cleanup_counter.fetch_add(n, Ordering::SeqCst) + n;
             if count > self.cleanup_interval {
                 debug!("triggered periodic cleanup");
                 let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -147,7 +150,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -195,7 +198,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -246,7 +249,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -308,7 +311,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -401,7 +404,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -454,7 +457,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -501,7 +504,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -551,7 +554,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -692,7 +695,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup().await?;
+            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -885,7 +888,7 @@ impl Database {
                     }
                 ).collect();
 
-                let _cleanup_guard = match s.periodic_cleanup().await {
+                let _cleanup_guard = match s.periodic_cleanup(chunk.len()).await {
                     Ok(guard) => guard,
                     Err(e) => return match shutting_down {
                         true => ExtFlow::Shutdown(Err(e)),
