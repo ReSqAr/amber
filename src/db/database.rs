@@ -14,7 +14,7 @@ use sqlx::sqlite::SqliteArguments;
 use sqlx::{Either, Executor, FromRow, Sqlite, SqlitePool, query};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{Mutex, MutexGuard, RwLock};
+use tokio::sync::{RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -24,7 +24,7 @@ pub struct Database {
     cleanup_interval: usize,
     cleanup_counter: Arc<AtomicUsize>,
     stream_access_lock: Arc<RwLock<()>>,
-    cleanup_mutex: Arc<Mutex<()>>,
+    cleanup_lock: Arc<RwLock<()>>,
 }
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
@@ -39,7 +39,7 @@ impl Database {
             cleanup_interval: DEFAULT_CLEANUP_INTERVAL,
             cleanup_counter: Arc::new(AtomicUsize::new(0)),
             stream_access_lock: Arc::new(RwLock::new(())),
-            cleanup_mutex: Arc::new(Mutex::new(())),
+            cleanup_lock: Arc::new(RwLock::new(())),
         }
     }
 
@@ -61,7 +61,7 @@ impl Database {
         let stream_access_lock = self.stream_access_lock.clone();
 
         let stream = try_stream! {
-            let _guard = stream_access_lock.write().await;
+            let _guard = stream_access_lock.read().await;
 
             let mut rows = pool.fetch_many(q);
             while let Some(item) = rows.next().await {
@@ -78,25 +78,27 @@ impl Database {
         Box::pin(stream)
     }
 
-    pub async fn periodic_cleanup(&self) -> Result<Option<MutexGuard<()>>, sqlx::Error> {
+    pub async fn periodic_cleanup(&self) -> Result<Option<RwLockReadGuard<()>>, sqlx::Error> {
         if self.stream_access_lock.try_write().is_err() {
             debug!("skipping periodic cleanup because a long running stream is active");
             return Ok(None);
         }
 
-        let cleanup_guard = self.cleanup_mutex.lock().await;
+        {
+            let _cleanup_write_guard = self.cleanup_lock.write().await;
 
-        let count = self.cleanup_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        if count > self.cleanup_interval {
-            debug!("triggered periodic cleanup");
-            let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
-                .fetch_one(&self.pool)
-                .await?;
-            debug!("cleanup result: {result:?}");
-            self.cleanup_counter.store(0, Ordering::SeqCst);
+            let count = self.cleanup_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            if count > self.cleanup_interval {
+                debug!("triggered periodic cleanup");
+                let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
+                    .fetch_one(&self.pool)
+                    .await?;
+                debug!("cleanup result: {result:?}");
+                self.cleanup_counter.store(0, Ordering::SeqCst);
+            }
         }
 
-        Ok(Some(cleanup_guard))
+        Ok(Some(self.cleanup_lock.read().await))
     }
 
     pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, sqlx::Error> {
