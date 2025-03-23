@@ -234,8 +234,8 @@ pub async fn state(
                         size,
                     });
 
-                    // we have a loop in the streams, this gives the checker observations priority
-                    // otherwise we run into deadlocks
+                    // we have a loop in the data flow. this code gives the checker
+                    // observation stream priority. otherwise we run into deadlocks
                     let max_delay = tokio::time::Duration::from_millis(10);
                     let mut current_delay = tokio::time::Duration::from_millis(1);
                     loop {
