@@ -21,23 +21,23 @@ use uuid::Uuid;
 pub struct Database {
     pool: SqlitePool,
     max_variable_number: usize,
-    cleanup_interval: usize,
-    cleanup_counter: Arc<AtomicUsize>,
+    cleanup_row_threshold: usize,
+    cleanup_row_counter: Arc<AtomicUsize>,
     stream_access_lock: Arc<RwLock<()>>,
     cleanup_lock: Arc<RwLock<()>>,
 }
 
-pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
+const DEFAULT_CLEANUP_ROW_THRESHOLD: usize = 1000;
 
-const DEFAULT_CLEANUP_INTERVAL: usize = 1000;
+pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
             max_variable_number: 32000, // 32766 - actually: https://sqlite.org/limits.html
-            cleanup_interval: DEFAULT_CLEANUP_INTERVAL,
-            cleanup_counter: Arc::new(AtomicUsize::new(0)),
+            cleanup_row_threshold: DEFAULT_CLEANUP_ROW_THRESHOLD,
+            cleanup_row_counter: Arc::new(AtomicUsize::new(0)),
             stream_access_lock: Arc::new(RwLock::new(())),
             cleanup_lock: Arc::new(RwLock::new(())),
         }
@@ -90,14 +90,14 @@ impl Database {
         {
             let _cleanup_write_guard = self.cleanup_lock.write().await;
 
-            let count = self.cleanup_counter.fetch_add(n, Ordering::SeqCst) + n;
-            if count > self.cleanup_interval {
+            let rows = self.cleanup_row_counter.fetch_add(n, Ordering::SeqCst) + n;
+            if rows > self.cleanup_row_threshold {
                 debug!("triggered periodic cleanup");
                 let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
                     .fetch_one(&self.pool)
                     .await?;
                 debug!("cleanup result: {result:?}");
-                self.cleanup_counter.store(0, Ordering::SeqCst);
+                self.cleanup_row_counter.store(0, Ordering::SeqCst);
             }
         }
 
