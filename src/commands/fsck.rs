@@ -171,7 +171,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
             done: "refreshed".into(),
         })
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({elapsed})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
@@ -179,10 +179,8 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
 
     [
         LayoutItemBuilderNode::from(fsck_blobs).add_child(sha),
-        LayoutItemBuilderNode::from(status).with_children([
-            LayoutItemBuilderNode::from(vfs_refresh),
-            LayoutItemBuilderNode::from(file),
-        ]),
+        LayoutItemBuilderNode::from(vfs_refresh),
+        LayoutItemBuilderNode::from(status).with_children([LayoutItemBuilderNode::from(file)]),
         LayoutItemBuilderNode::from(files_materialise).add_child(file_materialise),
         LayoutItemBuilderNode::from(rclone),
     ]

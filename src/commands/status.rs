@@ -41,7 +41,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
             done: "refreshed".into(),
         })
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg}".into(),
+            in_progress: "{prefix}{spinner:.green} {msg} ({elapsed})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
@@ -81,10 +81,10 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(status).with_children([
+    [
         LayoutItemBuilderNode::from(vfs_refresh),
-        LayoutItemBuilderNode::from(file),
-    ])]
+        LayoutItemBuilderNode::from(status).with_children([LayoutItemBuilderNode::from(file)]),
+    ]
 }
 
 #[derive(Eq, Hash, PartialEq, Debug)]

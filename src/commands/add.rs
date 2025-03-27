@@ -65,5 +65,39 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
         .infallible_build()
         .boxed();
 
-    [LayoutItemBuilderNode::from(adder).add_child(file)]
+    let vfs_refresh = BaseLayoutBuilderBuilder::default()
+        .type_key("vfs:refresh")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::Static {
+            msg: "refreshing virtual file system...".into(),
+            done: "refreshed".into(),
+        })
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} ({elapsed})".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    let scanner = BaseLayoutBuilderBuilder::default()
+        .type_key("scanner")
+        .termination_action(TerminationAction::Remove)
+        .state_transformer(StateTransformer::StateFn(Box::new(
+            |done, msg| match done {
+                true => msg.unwrap_or("scanned files".into()),
+                false => msg.unwrap_or("scanning files".into()),
+            },
+        )))
+        .style(Style::Template {
+            in_progress: "{prefix}{spinner:.green} {msg} ({pos})".into(),
+            done: "{prefix}✓ {msg}".into(),
+        })
+        .infallible_build()
+        .boxed();
+
+    [
+        LayoutItemBuilderNode::from(vfs_refresh),
+        LayoutItemBuilderNode::from(scanner)
+            .add_child(LayoutItemBuilderNode::from(adder).add_child(file)),
+    ]
 }

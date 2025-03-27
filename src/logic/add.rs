@@ -27,6 +27,7 @@ pub(crate) async fn add_files(
     skip_deduplication: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
+    let mut scanner_obs = BaseObserver::without_id("scanner");
     let mut adder_obs = BaseObserver::without_id("adder");
 
     let (file_tx, file_rx) =
@@ -63,7 +64,11 @@ pub(crate) async fn add_files(
     fs::create_dir_all(&repository.staging_path()).await?;
     let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
 
+    let mut scan_count = 0;
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
+        scan_count += 1;
+        scanner_obs.observe_position(log::Level::Trace, scan_count);
+
         let state = file_result.state.clone();
         async move {
             match state {
@@ -163,6 +168,12 @@ pub(crate) async fn add_files(
         "no files added".into()
     };
     adder_obs.observe_termination(log::Level::Info, msg);
+    let msg = if scan_count > 0 {
+        format!("scanned {scan_count} files in {duration:.2?}")
+    } else {
+        "no files scanned".into()
+    };
+    scanner_obs.observe_termination(log::Level::Debug, msg);
 
     Ok(())
 }
