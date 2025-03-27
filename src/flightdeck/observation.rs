@@ -66,6 +66,7 @@ mod tests {
         Completed,
     }
 
+    #[derive(Clone)]
     struct TestObservable {
         type_key: String,
         id: Option<String>,

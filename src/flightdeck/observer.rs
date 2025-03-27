@@ -1,7 +1,7 @@
 use crate::flightdeck::global;
 use crate::flightdeck::observation::Observation;
 
-pub trait Observable: Send + Sync {
+pub trait Observable: Clone + Send + Sync {
     type Observation: Clone;
 
     // mutation
@@ -10,14 +10,15 @@ pub trait Observable: Send + Sync {
     fn is_in_terminal_state(&self) -> bool;
 }
 
+#[derive(Clone)]
 pub struct Observer<T: Observable> {
     inner: T,
-    default_terminal_log: Option<(log::Level, T::Observation)>,
+    default_termination_observation: Option<(log::Level, T::Observation)>,
 }
 
 impl<T: Observable> Drop for Observer<T> {
     fn drop(&mut self) {
-        if let Some((level, observation)) = self.default_terminal_log.clone() {
+        if let Some((level, observation)) = self.default_termination_observation.clone() {
             if !self.inner.is_in_terminal_state() {
                 self.observe(level, observation);
             }
@@ -28,12 +29,12 @@ impl<T: Observable> Drop for Observer<T> {
 impl<T: Observable> Observer<T> {
     pub(crate) fn with(
         mut inner: T,
-        default_terminal_log: Option<(log::Level, T::Observation)>,
+        default_termination_observation: Option<(log::Level, T::Observation)>,
     ) -> Self {
         global::send(log::Level::Trace, inner.generate_observation(None));
         Self {
             inner,
-            default_terminal_log,
+            default_termination_observation,
         }
     }
 

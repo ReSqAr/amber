@@ -5,6 +5,7 @@ use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::fs::are_hardlinked;
+use crate::utils::tracker::Trackable;
 use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
 use log::debug;
@@ -26,7 +27,7 @@ pub async fn materialise(
         let local_repository = local.clone();
         tokio::spawn(async move {
             local_repository
-                .add_materialisation(ReceiverStream::new(mat_rx))
+                .add_materialisation(ReceiverStream::new(mat_rx).track("materialise::mat_rx"))
                 .await
         })
     };

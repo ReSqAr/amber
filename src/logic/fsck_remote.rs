@@ -9,6 +9,7 @@ use crate::repository::traits::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
+use crate::utils::tracker::Trackable;
 use crate::utils::units;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -40,7 +41,7 @@ pub(crate) async fn fsck_remote(
 
     let expected_count = {
         let (writing_task, tx) =
-            write_rclone_files_clone(local, rclone_files.clone().abs().clone());
+            write_rclone_files_fsck_clone(local, rclone_files.clone().abs().clone());
 
         let stream = remote.available();
         let local_clone = local.clone();
@@ -101,7 +102,7 @@ pub(crate) async fn fsck_remote(
     let local_clone = local.clone();
     let repo_id = remote.current().await?.id;
     let result_handler = tokio::spawn(async move {
-        let stream = UnboundedReceiverStream::new(rx);
+        let stream = UnboundedReceiverStream::new(rx).track("fsck_remote::rx");
         let stream = stream.map(|r: RCloneResult| match r {
             RCloneResult::Success(object) => {
                 BaseObserver::with_id("rclone:check", object.clone())
@@ -144,7 +145,7 @@ pub(crate) async fn fsck_remote(
     Ok(())
 }
 
-fn write_rclone_files_clone(
+fn write_rclone_files_fsck_clone(
     local: &impl Config,
     rclone_files: PathBuf,
 ) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<String>) {
@@ -158,8 +159,10 @@ fn write_rclone_files_clone(
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream =
-            futures::StreamExt::ready_chunks(ReceiverStream::new(rx), writer_buffer_size);
+        let mut chunked_stream = futures::StreamExt::ready_chunks(
+            ReceiverStream::new(rx).track("write_rclone_files_fsck_clone::rx"),
+            writer_buffer_size,
+        );
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, path| {
                 acc.push_str(&(path + "\n"));

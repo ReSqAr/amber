@@ -6,6 +6,7 @@ use crate::utils;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
+use crate::utils::tracker::Trackable;
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
 use futures::{Stream, StreamExt, future};
 use log::{debug, error};
@@ -213,7 +214,9 @@ pub async fn state(
     .await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
-    let db_output_stream = vfs.add_observations(ReceiverStream::new(obs_rx)).await;
+    let db_output_stream = vfs
+        .add_observations(ReceiverStream::new(obs_rx).track("state::obs_rx"))
+        .await;
 
     // transforms the files seen by the filesystem walker into observations suitable for the DB
     let tx_clone = tx.clone();
@@ -333,6 +336,7 @@ pub async fn state(
     let needs_check_tx_clone = needs_check_tx.clone();
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
         ReceiverStream::new(needs_check_rx)
+            .track("state::needs_check_rx")
             .take_while(|message| future::ready(matches!(message, Flow::Data(_))))
             .filter_map(|message| {
                 future::ready(match message {
@@ -399,5 +403,5 @@ pub async fn state(
         }
     });
 
-    Ok((final_handle, ReceiverStream::new(rx)))
+    Ok((final_handle, ReceiverStream::new(rx).track("state::rx")))
 }

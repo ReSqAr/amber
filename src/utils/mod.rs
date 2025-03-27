@@ -6,5 +6,6 @@ pub(crate) mod pipe;
 pub(crate) mod port;
 pub(crate) mod rclone;
 pub(crate) mod sha256;
+pub(crate) mod tracker;
 pub(crate) mod units;
 pub(crate) mod walker;

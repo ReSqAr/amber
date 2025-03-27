@@ -16,6 +16,7 @@ use crate::repository::traits::{
     Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
+use crate::utils::tracker::Trackable;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -195,6 +196,7 @@ impl Syncer<models::Repository> for GRPCClient {
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::Repository::from))
                 .await
+                .track("GRPCClient::Syncer<models::Repository>::select")
         }
     }
 
@@ -232,6 +234,7 @@ impl Syncer<models::File> for GRPCClient {
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::File::from))
                 .await
+                .track("GRPCClient::Syncer<models::File>::select")
         }
     }
 
@@ -269,6 +272,7 @@ impl Syncer<models::Blob> for GRPCClient {
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::Blob::from))
                 .await
+                .track("GRPCClient::Syncer<models::Blob>::select")
         }
     }
 
@@ -306,6 +310,7 @@ impl Syncer<models::RepositoryName> for GRPCClient {
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::RepositoryName::from))
                 .await
+                .track("GRPCClient::Syncer<models::RepositoryName>::select")
         }
     }
 
@@ -380,6 +385,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
                 .map_ok(tonic::Response::into_inner)
                 .map(|r| r.unwrap().err_into().map_ok(models::BlobTransferItem::from))
                 .await
+                .track("GRPCClient::Receiver<models::BlobTransferItem>>::create_transfer_request")
         }
     }
 

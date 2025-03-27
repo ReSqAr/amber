@@ -6,6 +6,7 @@ use crate::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
+use crate::utils::tracker::Trackable;
 use crate::utils::walker::WalkerConfig;
 use dashmap::DashMap;
 use futures::pin_mut;
@@ -36,7 +37,7 @@ pub(crate) async fn add_files(
         let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
-                .add_files(ReceiverStream::new(file_rx))
+                .add_files(ReceiverStream::new(file_rx).track("add_files::file_rx"))
                 .await
         })
     };
@@ -46,7 +47,7 @@ pub(crate) async fn add_files(
         let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
-                .add_blobs(ReceiverStream::new(blob_rx))
+                .add_blobs(ReceiverStream::new(blob_rx).track("add_files::blob_rx"))
                 .await
         })
     };
@@ -56,7 +57,7 @@ pub(crate) async fn add_files(
         let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
-                .add_materialisation(ReceiverStream::new(mat_rx))
+                .add_materialisation(ReceiverStream::new(mat_rx).track("add_files::mat_rx"))
                 .await
         })
     };

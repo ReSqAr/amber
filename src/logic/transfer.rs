@@ -9,6 +9,7 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
+use crate::utils::tracker::Trackable;
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -44,7 +45,9 @@ fn write_rclone_files_clone<T: TransferItem>(
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream = ReceiverStream::new(rx).ready_chunks(writer_buffer_size);
+        let mut chunked_stream = ReceiverStream::new(rx)
+            .track("write_rclone_files_clone::rx")
+            .ready_chunks(writer_buffer_size);
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item| {
                 acc.push_str(&(item.path() + "\n"));
@@ -271,7 +274,7 @@ pub async fn transfer<T: TransferItem>(
     transfer_obs.observe_state(log::Level::Info, msg);
 
     let (tx, rx) = mpsc::unbounded_channel();
-    let stream = UnboundedReceiverStream::new(rx);
+    let stream = UnboundedReceiverStream::new(rx).track("transfer::rx");
 
     transfer_obs.observe_state(log::Level::Debug, "copying");
     let staging_path = local.staging_id_path(transfer_id);

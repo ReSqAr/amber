@@ -6,6 +6,7 @@ use derive_builder::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
 pub enum BaseObservation {
@@ -27,7 +28,7 @@ pub enum BaseObservation {
 pub struct BaseObservable {
     type_key: String,
     id: Option<String>,
-    is_terminal: bool,
+    is_terminal: Arc<AtomicBool>,
 }
 
 impl BaseObservable {
@@ -35,7 +36,7 @@ impl BaseObservable {
         Self {
             type_key: type_key.into(),
             id: None,
-            is_terminal: false,
+            is_terminal: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,7 +44,7 @@ impl BaseObservable {
         Self {
             type_key: type_key.into(),
             id: Some(id.into()),
-            is_terminal: false,
+            is_terminal: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -87,26 +88,30 @@ impl Observable for BaseObservable {
             }],
         };
 
-        self.is_terminal |= match observation {
-            None => false,
-            Some(BaseObservation::State(_)) => false,
-            Some(BaseObservation::StateWithData { .. }) => false,
-            Some(BaseObservation::TerminalState(_)) => true,
-            Some(BaseObservation::TerminalStateWithData { .. }) => true,
-            Some(BaseObservation::Position(_)) => false,
-            Some(BaseObservation::Length(_)) => false,
-        };
+        let is_terminal = self.is_terminal.load(Ordering::Relaxed)
+            | match observation {
+                None => false,
+                Some(BaseObservation::State(_)) => false,
+                Some(BaseObservation::StateWithData { .. }) => false,
+                Some(BaseObservation::TerminalState(_)) => true,
+                Some(BaseObservation::TerminalStateWithData { .. }) => true,
+                Some(BaseObservation::Position(_)) => false,
+                Some(BaseObservation::Length(_)) => false,
+            };
+        if is_terminal {
+            self.is_terminal.store(is_terminal, Ordering::Relaxed);
+        }
 
         Observation {
             type_key: self.type_key.clone(),
             id: self.id.clone(),
             timestamp: Utc::now(),
-            is_terminal: self.is_terminal,
+            is_terminal,
             data,
         }
     }
     fn is_in_terminal_state(&self) -> bool {
-        self.is_terminal
+        self.is_terminal.load(Ordering::Relaxed)
     }
 }
 

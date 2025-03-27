@@ -5,6 +5,7 @@ use crate::db::models::{
     ObservedBlob, Repository, RepositoryName, VirtualFile, WalCheckpoint,
 };
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::tracker::Trackable;
 use async_stream::try_stream;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
@@ -53,9 +54,13 @@ impl Database {
         Ok(())
     }
 
-    fn stream<'a, T>(&self, q: Query<'a, Sqlite, SqliteArguments<'a>>) -> DBOutputStream<'a, T>
+    fn stream<'a, T>(
+        &self,
+        name: &str,
+        q: Query<'static, Sqlite, SqliteArguments<'static>>,
+    ) -> DBOutputStream<'a, T>
     where
-        T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'a,
+        T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'static,
     {
         let pool = self.pool.clone();
         let stream_access_lock = self.stream_access_lock.clone();
@@ -75,7 +80,7 @@ impl Database {
             }
         };
 
-        Box::pin(stream)
+        Box::pin(Box::pin(stream).track(name))
     }
 
     pub async fn periodic_cleanup(
@@ -351,13 +356,14 @@ impl Database {
     }
 
     pub async fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
-        self.stream(query(
+        self.stream("Database::select_repositories", query(
             "SELECT repo_id, last_file_index, last_blob_index, last_name_index FROM repositories",
         ))
     }
 
     pub async fn select_files(&self, last_index: i32) -> DBOutputStream<'static, File> {
         self.stream(
+            "Database::select_files",
             query(
                 "
             SELECT uuid, path, blob_id, valid_from
@@ -370,6 +376,7 @@ impl Database {
 
     pub async fn select_blobs(&self, last_index: i32) -> DBOutputStream<'static, Blob> {
         self.stream(
+            "Database::select_blobs",
             query(
                 "
                 SELECT uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from
@@ -385,6 +392,7 @@ impl Database {
         last_index: i32,
     ) -> DBOutputStream<'static, RepositoryName> {
         self.stream(
+            "Database::select_repository_names",
             query(
                 "
                 SELECT uuid, repo_id, name, valid_from
@@ -637,6 +645,7 @@ impl Database {
     ) -> impl Stream<Item = Result<AvailableBlob, sqlx::Error>> + Unpin + Send + Sized + 'static
     {
         self.stream(
+            "Database::available_blobs",
             query(
                 "
                 SELECT repo_id, blob_id, blob_size, path
@@ -653,6 +662,7 @@ impl Database {
     ) -> impl Stream<Item = Result<BlobAssociatedToFiles, sqlx::Error>> + Unpin + Send + Sized + 'static
     {
         self.stream(
+            "Database::missing_blobs",
             query(
                 "
                 WITH blobs_with_repository_names AS (
@@ -853,7 +863,7 @@ impl Database {
         &self,
         last_seen_id: i64,
     ) -> DBOutputStream<'static, MissingFile> {
-        self.stream(
+        self.stream("Database::select_missing_files_on_virtual_filesystem",
             query(
                 "
                     SELECT
@@ -1060,7 +1070,7 @@ impl Database {
         remote_repo_id: String,
         paths: Vec<String>,
     ) -> DBOutputStream<'static, BlobTransferItem> {
-        self.stream(
+        self.stream("Database::populate_missing_blobs_for_transfer",
             query(
                 "
             INSERT INTO transfers (transfer_id, blob_id, blob_size, path)
@@ -1162,6 +1172,7 @@ impl Database {
         paths: Vec<String>,
     ) -> DBOutputStream<'static, FileTransferItem> {
         self.stream(
+            "Database::populate_missing_files_for_transfer",
             query(
                 "
             INSERT INTO transfers (transfer_id, blob_id, blob_size, path)
