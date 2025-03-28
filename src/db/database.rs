@@ -1022,7 +1022,7 @@ impl Database {
                     false => ExtFlow::Data(result)
                 }
             })
-        })
+        }).track("Database::add_virtual_filesystem_observations")
     }
 
     pub async fn add_connection(&self, connection: &Connection) -> Result<(), sqlx::Error> {
@@ -1161,7 +1161,7 @@ impl Database {
                     Err(e) => vec!(Err(e)),
                 })
             })
-        }).flatten().boxed()
+        }).flatten().track("Database::select_blobs_transfer").boxed()
     }
 
     pub(crate) async fn populate_missing_files_for_transfer(
@@ -1263,6 +1263,6 @@ impl Database {
                     Err(e) => vec!(Err(e)),
                 })
             })
-        }).flatten().boxed()
+        }).flatten().track("Database::select_files_transfer").boxed()
     }
 }
