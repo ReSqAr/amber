@@ -222,7 +222,7 @@ pub async fn state(
     let tx_clone = tx.clone();
     let obs_tx_clone = obs_tx.clone();
     let walker_transformer_handle: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(file_result) = walker_rx.recv().await {
+        while let Some(file_result) = walker_rx.next().await {
             match file_result {
                 Ok(FileObservation {
                     rel_path,

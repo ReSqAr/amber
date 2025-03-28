@@ -1,13 +1,15 @@
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-
 use crate::utils::errors::InternalError;
+use crate::utils::tracker::Trackable;
+use futures::Stream;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use std::path::PathBuf;
 use thiserror::Error;
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_stream::wrappers::ReceiverStream;
 
 pub struct WalkerConfig {
     pub patterns: Vec<String>,
@@ -96,7 +98,13 @@ pub async fn walk(
     root_path: PathBuf,
     config: WalkerConfig,
     buffer_size: usize,
-) -> Result<(JoinHandle<()>, Receiver<Result<FileObservation, Error>>), InternalError> {
+) -> Result<
+    (
+        JoinHandle<()>,
+        impl Stream<Item = Result<FileObservation, Error>>,
+    ),
+    InternalError,
+> {
     let root = root_path.to_path_buf();
 
     let mut override_builder = OverrideBuilder::new(&root);
@@ -139,12 +147,13 @@ pub async fn walk(
         drop(tx);
     });
 
-    Ok((handle, rx))
+    Ok((handle, ReceiverStream::new(rx).track("walk::rx")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use tempfile::tempdir;
     use tokio::fs;
 
@@ -178,7 +187,7 @@ mod tests {
 
         let mut found_files = Vec::new();
 
-        while let Some(result) = rx.recv().await {
+        while let Some(result) = rx.next().await {
             match result {
                 Ok(file_obs) => {
                     found_files.push(file_obs.rel_path.to_string_lossy().into_owned());
