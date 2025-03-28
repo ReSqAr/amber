@@ -1,6 +1,6 @@
 use crate::db::models::{InsertBlob, InsertFile, InsertMaterialisation};
+use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
-use crate::flightdeck::stream::Trackable;
 use crate::logic::blobify::{BlobLockMap, Blobify};
 use crate::logic::state::{VirtualFile, VirtualFileState};
 use crate::logic::{blobify, state};
@@ -12,8 +12,6 @@ use dashmap::DashMap;
 use futures::pin_mut;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 pub(crate) async fn add_files(
     repository: impl Metadata
@@ -31,35 +29,29 @@ pub(crate) async fn add_files(
     let mut scanner_obs = BaseObserver::without_id("scanner");
     let mut adder_obs = BaseObserver::without_id("adder");
 
-    let (file_tx, file_rx) =
-        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddFilesChannelSize));
+    let (file_tx, file_rx) = flightdeck::tracked::mpsc_channel(
+        "add_files::file",
+        repository.buffer_size(BufferType::AddFilesDBAddFilesChannelSize),
+    );
     let db_file_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move {
-            local_repository
-                .add_files(ReceiverStream::new(file_rx).track("add_files::file_rx"))
-                .await
-        })
+        tokio::spawn(async move { local_repository.add_files(file_rx).await })
     };
-    let (blob_tx, blob_rx) =
-        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddBlobsChannelSize));
+    let (blob_tx, blob_rx) = flightdeck::tracked::mpsc_channel(
+        "add_files::blob",
+        repository.buffer_size(BufferType::AddFilesDBAddBlobsChannelSize),
+    );
     let db_blob_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move {
-            local_repository
-                .add_blobs(ReceiverStream::new(blob_rx).track("add_files::blob_rx"))
-                .await
-        })
+        tokio::spawn(async move { local_repository.add_blobs(blob_rx).await })
     };
-    let (mat_tx, mat_rx) =
-        mpsc::channel(repository.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize));
+    let (mat_tx, mat_rx) = flightdeck::tracked::mpsc_channel(
+        "add_files::mat",
+        repository.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize),
+    );
     let db_mat_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move {
-            local_repository
-                .add_materialisation(ReceiverStream::new(mat_rx).track("add_files::mat_rx"))
-                .await
-        })
+        tokio::spawn(async move { local_repository.add_materialisation(mat_rx).await })
     };
 
     fs::create_dir_all(&repository.staging_path()).await?;

@@ -3,7 +3,7 @@ use crate::db::models::{AvailableBlob, ObservedBlob};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
-use crate::flightdeck::stream::Trackable;
+use crate::flightdeck::tracked::stream::Trackable;
 use crate::logic::files;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,

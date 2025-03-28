@@ -1,8 +1,9 @@
 use crate::connection::EstablishedConnection;
 use crate::db::models::CopiedTransferItem;
+use crate::flightdeck;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
-use crate::flightdeck::stream::Trackable;
+use crate::flightdeck::tracked::stream::Trackable;
 use crate::repository::traits::{
     BufferType, Config, Local, Metadata, RcloneTargetPath, Receiver, Sender, TransferItem,
 };
@@ -23,7 +24,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[derive(Debug)]
 enum Direction {
@@ -34,9 +35,13 @@ enum Direction {
 fn write_rclone_files_clone<T: TransferItem>(
     local: &impl Config,
     rclone_files: PathBuf,
-) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<T>) {
+) -> (
+    JoinHandle<Result<(), InternalError>>,
+    flightdeck::tracked::sender::TrackedSender<T, flightdeck::tracked::sender::Adapter>,
+) {
     let channel_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesWriterChunkSize);
-    let (tx, rx) = mpsc::channel::<T>(channel_buffer_size);
+    let (tx, rx) =
+        flightdeck::tracked::mpsc_channel("write_rclone_files_clone", channel_buffer_size);
 
     let writer_buffer_size = local.buffer_size(BufferType::TransferRcloneFilesStreamChunkSize);
     let writing_task = tokio::spawn(async move {
@@ -45,11 +50,9 @@ fn write_rclone_files_clone<T: TransferItem>(
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream = ReceiverStream::new(rx)
-            .track("write_rclone_files_clone::rx")
-            .ready_chunks(writer_buffer_size);
+        let mut chunked_stream = rx.ready_chunks(writer_buffer_size);
         while let Some(chunk) = chunked_stream.next().await {
-            let data: String = chunk.into_iter().fold(String::new(), |mut acc, item| {
+            let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
                 acc.push_str(&(item.path() + "\n"));
                 acc
             });
@@ -274,7 +277,7 @@ pub async fn transfer<T: TransferItem>(
     transfer_obs.observe_state(log::Level::Info, msg);
 
     let (tx, rx) = mpsc::unbounded_channel();
-    let stream = UnboundedReceiverStream::new(rx).track("transfer::rx");
+    let stream = UnboundedReceiverStream::new(rx).track("transfer");
 
     transfer_obs.observe_state(log::Level::Debug, "copying");
     let staging_path = local.staging_id_path(transfer_id);

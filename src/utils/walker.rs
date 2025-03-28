@@ -1,4 +1,4 @@
-use crate::flightdeck::stream::Trackable;
+use crate::flightdeck;
 use crate::utils::errors::InternalError;
 use futures::Stream;
 use ignore::overrides::OverrideBuilder;
@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::PathBuf;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::ReceiverStream;
 
 pub struct WalkerConfig {
     pub patterns: Vec<String>,
@@ -128,7 +126,7 @@ pub async fn walk(
         );
 
     let walker = walk_builder.build_parallel();
-    let (tx, rx) = mpsc::channel(buffer_size);
+    let (tx, rx) = flightdeck::tracked::mpsc_channel("walker", buffer_size);
     let handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
         walker.run(|| {
             let root = root.clone();
@@ -147,7 +145,7 @@ pub async fn walk(
         drop(tx);
     });
 
-    Ok((handle, ReceiverStream::new(rx).track("walk::rx")))
+    Ok((handle, rx))
 }
 
 #[cfg(test)]

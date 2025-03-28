@@ -13,7 +13,7 @@ pub trait Tracker: Send + Sync + Clone + Unpin + 'static {
     fn on_drop(&mut self, count: u64);
 }
 
-pub struct TrackingStream<S, T: Tracker> {
+pub struct TrackedStream<S, T: Tracker> {
     inner: S,
     #[allow(dead_code)]
     name: String,
@@ -22,7 +22,7 @@ pub struct TrackingStream<S, T: Tracker> {
     tracker: T,
 }
 
-impl<S, T: Tracker> TrackingStream<S, T> {
+impl<S, T: Tracker> TrackedStream<S, T> {
     fn new(s: S, name: &str, duration: Duration) -> Self {
         let counter = Arc::new(AtomicU64::new(0));
         let tracker = T::new(name);
@@ -47,7 +47,7 @@ impl<S, T: Tracker> TrackingStream<S, T> {
     }
 }
 
-impl<S, T> Stream for TrackingStream<S, T>
+impl<S, T> Stream for TrackedStream<S, T>
 where
     S: Stream + Unpin,
     T: Tracker,
@@ -67,7 +67,7 @@ where
     }
 }
 
-impl<S, T> Drop for TrackingStream<S, T>
+impl<S, T> Drop for TrackedStream<S, T>
 where
     T: Tracker,
 {
@@ -107,20 +107,20 @@ impl Tracker for Adapter {
 /// Extension trait to add the `.track()` method.
 pub trait Trackable: Stream + Sized {
     /// Wraps this stream in a tracking wrapper that logs periodic heartbeat messages.
-    fn track(self, name: &str) -> TrackingStream<Self, Adapter>;
-    fn track_with<O: Tracker>(self, name: &str, interval: Duration) -> TrackingStream<Self, O>;
+    fn track(self, name: &str) -> TrackedStream<Self, Adapter>;
+    fn track_with<O: Tracker>(self, name: &str, interval: Duration) -> TrackedStream<Self, O>;
 }
 
 impl<S> Trackable for S
 where
     S: Stream + Unpin + Send + 'static,
 {
-    fn track(self, name: &str) -> TrackingStream<Self, Adapter> {
+    fn track(self, name: &str) -> TrackedStream<Self, Adapter> {
         self.track_with::<Adapter>(name, Duration::from_secs(1))
     }
 
-    fn track_with<T: Tracker>(self, name: &str, duration: Duration) -> TrackingStream<Self, T> {
-        TrackingStream::new(self, name, duration)
+    fn track_with<T: Tracker>(self, name: &str, duration: Duration) -> TrackedStream<Self, T> {
+        TrackedStream::new(self, name, duration)
     }
 }
 
@@ -159,7 +159,7 @@ mod tests {
         }
     }
 
-    impl<S, O: Tracker> TrackingStream<S, O> {
+    impl<S, O: Tracker> TrackedStream<S, O> {
         pub fn get_counter(&self) -> Arc<AtomicU64> {
             self.counter.clone()
         }

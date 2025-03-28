@@ -1,6 +1,6 @@
 use crate::db::models::InsertMaterialisation;
+use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
-use crate::flightdeck::stream::Trackable;
 use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
@@ -10,8 +10,6 @@ use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
 use log::debug;
 use tokio::fs;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn materialise(
     local: &(impl Metadata + Local + Adder + VirtualFilesystem + Config + Clone + Send + Sync + 'static),
@@ -21,15 +19,13 @@ pub async fn materialise(
     let start_time = tokio::time::Instant::now();
     let mut materialise_obs = BaseObserver::without_id("materialise");
 
-    let (mat_tx, mat_rx) =
-        mpsc::channel(local.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize));
+    let (mat_tx, mat_rx) = flightdeck::tracked::mpsc_channel(
+        "materialise::mat",
+        local.buffer_size(BufferType::AddFilesDBAddMaterialisationsChannelSize),
+    );
     let db_mat_handle = {
         let local_repository = local.clone();
-        tokio::spawn(async move {
-            local_repository
-                .add_materialisation(ReceiverStream::new(mat_rx).track("materialise::mat_rx"))
-                .await
-        })
+        tokio::spawn(async move { local_repository.add_materialisation(mat_rx).await })
     };
 
     fs::create_dir_all(&local.staging_path()).await?;

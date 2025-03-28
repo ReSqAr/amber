@@ -1,7 +1,8 @@
 use crate::db::models;
 use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
+use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
-use crate::flightdeck::stream::Trackable;
+use crate::flightdeck::tracked::sender;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
@@ -10,10 +11,7 @@ use crate::utils::sha256;
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
 use futures::{Stream, StreamExt, future};
 use log::{debug, error};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::ReceiverStream;
 use utils::fs::are_hardlinked;
 
 fn current_timestamp() -> i64 {
@@ -53,7 +51,7 @@ async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation,
 }
 
 async fn close(
-    tx: Sender<Result<VirtualFile, InternalError>>,
+    tx: sender::TrackedSender<Result<VirtualFile, InternalError>, sender::Adapter>,
     vfs: impl VirtualFilesystem + Local + Send + Sync + Clone,
     last_seen_id: i64,
 ) -> Result<(), InternalError> {
@@ -201,9 +199,10 @@ pub async fn state(
     */
     let buffer_size = vfs.buffer_size(BufferType::StateBufferChannelSize);
     let checker_buffer_size = vfs.buffer_size(BufferType::StateCheckerParallelism);
-    let (obs_tx, obs_rx) = mpsc::channel(buffer_size);
-    let (needs_check_tx, needs_check_rx) = mpsc::channel(buffer_size);
-    let (tx, rx) = mpsc::channel(buffer_size);
+    let (obs_tx, obs_rx) = flightdeck::tracked::mpsc_channel("state::obs", buffer_size);
+    let (needs_check_tx, needs_check_rx) =
+        flightdeck::tracked::mpsc_channel("state::needs_check", buffer_size);
+    let (tx, rx) = flightdeck::tracked::mpsc_channel("state", buffer_size);
 
     // get the channel of the filesystem walker
     let (walker_handle, mut walker_rx) = walk(
@@ -214,9 +213,7 @@ pub async fn state(
     .await?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
-    let db_output_stream = vfs
-        .add_observations(ReceiverStream::new(obs_rx).track("state::obs_rx"))
-        .await;
+    let db_output_stream = vfs.add_observations(obs_rx).await;
 
     // transforms the files seen by the filesystem walker into observations suitable for the DB
     let tx_clone = tx.clone();
@@ -275,6 +272,7 @@ pub async fn state(
     // - needs_check channel: needs_check or unknown
     let tx_clone = tx.clone();
     let needs_check_tx_clone = needs_check_tx.clone();
+    let db_output_stream = db_output_stream.boxed();
     let splitter_handle: JoinHandle<()> = tokio::spawn(async move {
         let mut db_output_stream = db_output_stream;
         while let Some(vf_result) = db_output_stream.next().await {
@@ -335,8 +333,7 @@ pub async fn state(
     let obs_tx_clone = obs_tx.clone();
     let needs_check_tx_clone = needs_check_tx.clone();
     let checker_handle: JoinHandle<()> = tokio::spawn(async move {
-        ReceiverStream::new(needs_check_rx)
-            .track("state::needs_check_rx")
+        needs_check_rx
             .take_while(|message| future::ready(matches!(message, Flow::Data(_))))
             .filter_map(|message| {
                 future::ready(match message {
@@ -403,5 +400,5 @@ pub async fn state(
         }
     });
 
-    Ok((final_handle, ReceiverStream::new(rx).track("state::rx")))
+    Ok((final_handle, rx))
 }

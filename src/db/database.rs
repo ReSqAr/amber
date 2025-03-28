@@ -4,7 +4,7 @@ use crate::db::models::{
     InsertMaterialisation, InsertRepositoryName, Materialisation, MissingFile, Observation,
     ObservedBlob, Repository, RepositoryName, VirtualFile, WalCheckpoint,
 };
-use crate::flightdeck::stream::Trackable;
+use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
 use async_stream::try_stream;
 use futures::stream::BoxStream;
