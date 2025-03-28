@@ -221,4 +221,12 @@ mod tests {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn test_tracking_stream_size_hint() {
+        let inner = stream::iter(vec![1, 2, 3, 4]);
+        let tracked = inner.track_with::<DummyTracker>("dummy_size_hint", Duration::from_secs(1));
+        let size_hint = tracked.size_hint();
+        assert_eq!(size_hint, (4, Some(4)));
+    }
 }
