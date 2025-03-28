@@ -2,6 +2,7 @@ use crate::connection::EstablishedConnection;
 use crate::db::models::CopiedTransferItem;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
+use crate::flightdeck::stream::Trackable;
 use crate::repository::traits::{
     BufferType, Config, Local, Metadata, RcloneTargetPath, Receiver, Sender, TransferItem,
 };
@@ -9,7 +10,6 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
-use crate::utils::tracker::Trackable;
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;

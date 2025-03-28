@@ -1,12 +1,12 @@
 use crate::db::models;
 use crate::db::models::{FileCheck, FileSeen, MissingFile, Observation};
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::stream::Trackable;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
-use crate::utils::tracker::Trackable;
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
 use futures::{Stream, StreamExt, future};
 use log::{debug, error};

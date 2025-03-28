@@ -2,6 +2,7 @@ use crate::db::models;
 use crate::flightdeck;
 use crate::flightdeck::global::send;
 use crate::flightdeck::observation::Message;
+use crate::flightdeck::stream::Trackable;
 use crate::grpc::auth::ClientAuth;
 use crate::grpc::definitions::grpc_client::GrpcClient;
 use crate::grpc::definitions::{
@@ -16,7 +17,6 @@ use crate::repository::traits::{
     Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::tracker::Trackable;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};

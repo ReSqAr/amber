@@ -1,5 +1,5 @@
+use crate::flightdeck::stream::Trackable;
 use crate::utils::errors::InternalError;
-use crate::utils::tracker::Trackable;
 use futures::Stream;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};

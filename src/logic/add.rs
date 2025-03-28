@@ -1,12 +1,12 @@
 use crate::db::models::{InsertBlob, InsertFile, InsertMaterialisation};
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::stream::Trackable;
 use crate::logic::blobify::{BlobLockMap, Blobify};
 use crate::logic::state::{VirtualFile, VirtualFileState};
 use crate::logic::{blobify, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
-use crate::utils::tracker::Trackable;
 use crate::utils::walker::WalkerConfig;
 use dashmap::DashMap;
 use futures::pin_mut;

@@ -80,13 +80,13 @@ where
 }
 
 #[derive(Clone)]
-pub struct FlightDeckAdapter {
+pub struct Adapter {
     inner: BaseObserver,
 }
 
-impl Tracker for FlightDeckAdapter {
+impl Tracker for Adapter {
     fn new(name: &str) -> Self {
-        FlightDeckAdapter {
+        Adapter {
             inner: BaseObserver::with_id("stream", name),
         }
     }
@@ -98,7 +98,7 @@ impl Tracker for FlightDeckAdapter {
     fn on_drop(&mut self, position: u64) {
         self.inner.observe_termination_ext(
             log::Level::Debug,
-            "stream completed",
+            "completed",
             [("position".into(), position)],
         );
     }
@@ -107,7 +107,7 @@ impl Tracker for FlightDeckAdapter {
 /// Extension trait to add the `.track()` method.
 pub trait Trackable: Stream + Sized {
     /// Wraps this stream in a tracking wrapper that logs periodic heartbeat messages.
-    fn track(self, name: &str) -> TrackingStream<Self, FlightDeckAdapter>;
+    fn track(self, name: &str) -> TrackingStream<Self, Adapter>;
     fn track_with<O: Tracker>(self, name: &str, interval: Duration) -> TrackingStream<Self, O>;
 }
 
@@ -115,8 +115,8 @@ impl<S> Trackable for S
 where
     S: Stream + Unpin + Send + 'static,
 {
-    fn track(self, name: &str) -> TrackingStream<Self, FlightDeckAdapter> {
-        self.track_with::<FlightDeckAdapter>(name, Duration::from_secs(1))
+    fn track(self, name: &str) -> TrackingStream<Self, Adapter> {
+        self.track_with::<Adapter>(name, Duration::from_secs(1))
     }
 
     fn track_with<T: Tracker>(self, name: &str, duration: Duration) -> TrackingStream<Self, T> {
