@@ -65,7 +65,7 @@ impl Tracker for FlightDeckAdapter {
             inner: BaseObserver::with_id("stream", name),
         }
     }
-    
+
     fn heartbeat(&mut self, position: u64) {
         self.inner.observe_position(log::Level::Debug, position);
     }
