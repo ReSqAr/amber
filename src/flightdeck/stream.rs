@@ -9,8 +9,8 @@ use tokio::time::{self, Duration};
 
 pub trait Tracker: Send + Sync + Clone + Unpin + 'static {
     fn new(name: &str) -> Self;
-    fn heartbeat(&mut self, position: u64);
-    fn on_drop(&mut self, position: u64);
+    fn heartbeat(&mut self, count: u64);
+    fn on_drop(&mut self, count: u64);
 }
 
 pub struct TrackingStream<S, T: Tracker> {
@@ -37,7 +37,7 @@ impl<S, T: Tracker> TrackingStream<S, T> {
             }
         });
 
-        TrackingStream {
+        Self {
             inner: s,
             name: name.into(),
             counter,
@@ -91,15 +91,15 @@ impl Tracker for Adapter {
         }
     }
 
-    fn heartbeat(&mut self, position: u64) {
-        self.inner.observe_position(log::Level::Debug, position);
+    fn heartbeat(&mut self, count: u64) {
+        self.inner.observe_position(log::Level::Debug, count);
     }
 
-    fn on_drop(&mut self, position: u64) {
+    fn on_drop(&mut self, count: u64) {
         self.inner.observe_termination_ext(
             log::Level::Debug,
             "completed",
-            [("position".into(), position)],
+            [("position".into(), count)],
         );
     }
 }
@@ -151,11 +151,11 @@ mod tests {
         fn new(_name: &str) -> Self {
             Self::new_instance()
         }
-        fn heartbeat(&mut self, position: u64) {
-            self.heartbeats.lock().unwrap().push(position);
+        fn heartbeat(&mut self, count: u64) {
+            self.heartbeats.lock().unwrap().push(count);
         }
-        fn on_drop(&mut self, position: u64) {
-            self.drops.lock().unwrap().push(position);
+        fn on_drop(&mut self, count: u64) {
+            self.drops.lock().unwrap().push(count);
         }
     }
 
@@ -207,9 +207,12 @@ mod tests {
             original_stream.track_with::<DummyTracker>("dummy_drop", Duration::from_secs(1));
         let tracker = tracked_stream.get_tracker();
         let _collected: Vec<_> = tracked_stream.collect().await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let drops = tracker.drops.lock().unwrap();
-        assert_eq!(drops.first().copied().unwrap_or(0), 2);
+        assert_eventually_eq(
+            || async { tracker.drops.lock().unwrap().clone() },
+            vec![2],
+            Duration::from_millis(100),
+        )
+        .await;
     }
 
     /// Test that heartbeat is called shortly after starting the tracking.
