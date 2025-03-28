@@ -22,6 +22,31 @@ pub struct TrackingStream<S, T: Tracker> {
     tracker: T,
 }
 
+impl<S, T: Tracker> TrackingStream<S, T> {
+    fn new(s: S, name: &str, duration: Duration) -> Self {
+        let counter = Arc::new(AtomicU64::new(0));
+        let tracker = T::new(name);
+
+        let counter_clone = counter.clone();
+        let mut tracker_clone = tracker.clone();
+        let heartbeat_handle = tokio::spawn(async move {
+            let mut interval = time::interval(duration);
+            loop {
+                interval.tick().await;
+                tracker_clone.heartbeat(counter_clone.load(Ordering::Relaxed));
+            }
+        });
+
+        TrackingStream {
+            inner: s,
+            name: name.into(),
+            counter,
+            tracker,
+            heartbeat_handle: Some(heartbeat_handle),
+        }
+    }
+}
+
 impl<S, T> Stream for TrackingStream<S, T>
 where
     S: Stream + Unpin,
@@ -94,27 +119,8 @@ where
         self.track_with::<FlightDeckAdapter>(name, Duration::from_secs(1))
     }
 
-    fn track_with<O: Tracker>(self, name: &str, duration: Duration) -> TrackingStream<Self, O> {
-        let counter = Arc::new(AtomicU64::new(0));
-        let obs = O::new(name);
-
-        let counter_clone = counter.clone();
-        let mut obs_clone = obs.clone();
-        let heartbeat_handle = tokio::spawn(async move {
-            let mut interval = time::interval(duration);
-            loop {
-                interval.tick().await;
-                obs_clone.heartbeat(counter_clone.load(Ordering::Relaxed));
-            }
-        });
-
-        TrackingStream {
-            inner: self,
-            name: name.to_string(),
-            counter,
-            tracker: obs,
-            heartbeat_handle: Some(heartbeat_handle),
-        }
+    fn track_with<T: Tracker>(self, name: &str, duration: Duration) -> TrackingStream<Self, T> {
+        TrackingStream::new(self, name, duration)
     }
 }
 
