@@ -37,6 +37,14 @@ struct Cli {
     /// Exponent α for weighting: weight = (file_size)^(–α).
     #[arg(long, default_value_t = 0.5)]
     alpha: f64,
+
+    /// Minimum number of subdirectories per first-level directory.
+    #[arg(long, default_value_t = 2)]
+    min_dirs: usize,
+
+    /// Maximum number of subdirectories per first-level directory.
+    #[arg(long, default_value_t = 5)]
+    max_dirs: usize,
 }
 
 /// Constants for folder structure, filenames, and placement weights.
@@ -189,6 +197,8 @@ fn folder_to_path(folder: &Folder, target: &Path) -> PathBuf {
 fn create_folders_and_return_folders(
     target: &Path,
     rng: &mut ChaCha8Rng,
+    min_subfolders: usize,
+    max_subfolders: usize,
 ) -> io::Result<Vec<Folder>> {
     let mut folders = Vec::new();
     // The root folder.
@@ -204,8 +214,8 @@ fn create_folders_and_return_folders(
     let mut sub_candidates: Vec<&str> = SUBFOLDER_CANDIDATES_ORIG.to_vec();
     sub_candidates.shuffle(rng);
     for &parent in TOP_LEVEL_FOLDERS.iter() {
-        // Randomly choose between 2 and 5 subfolders.
-        let count = rng.random_range(2..6);
+        // Randomly choose a number of subfolders using an inclusive range.
+        let count = rng.random_range(min_subfolders..=max_subfolders);
         let chosen: Vec<&str> = sub_candidates.iter().take(count).copied().collect();
         sub_candidates.drain(0..count);
         sub_candidates.extend(chosen.iter().copied());
@@ -433,7 +443,8 @@ fn main() -> io::Result<()> {
     let mut rng = ChaCha8Rng::seed_from_u64(cli.seed);
 
     // Create folder structure (as structured Folder values).
-    let folders = create_folders_and_return_folders(&cli.target_path, &mut rng)?;
+    let folders =
+        create_folders_and_return_folders(&cli.target_path, &mut rng, cli.min_dirs, cli.max_dirs)?;
 
     // Collect file creation tasks.
     let (tasks, accumulated) = collect_tasks(total_target, &sizes, &weights, &mut rng, &folders);
