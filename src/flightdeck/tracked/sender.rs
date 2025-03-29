@@ -53,6 +53,7 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
     }
 
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {
+        self.counter.fetch_add(1, Ordering::Relaxed);
         self.inner.blocking_send(msg)
     }
 
