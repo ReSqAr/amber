@@ -126,7 +126,7 @@ pub async fn walk(
         );
 
     let walker = walk_builder.build_parallel();
-    let (tx, rx) = flightdeck::tracked::mpsc_channel("walker", buffer_size);
+    let (tx, rx) = flightdeck::tracked::mpsc_channel("walk", buffer_size);
     let handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
         walker.run(|| {
             let root = root.clone();
