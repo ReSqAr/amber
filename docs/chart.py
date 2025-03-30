@@ -153,7 +153,7 @@ app.layout = html.Div(
                     ],
                     value=default_file,
                     clearable=False,
-                    style={"width": "1200px"},
+                    style={"width": "400px"},
                 ),
                 html.Button("Refresh Files", id="refresh-button", n_clicks=0),
                 html.Button("Redraw Graph", id="redraw-button", n_clicks=0),

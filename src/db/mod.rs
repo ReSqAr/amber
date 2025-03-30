@@ -1,3 +1,4 @@
+pub(crate) mod cleaner;
 pub(crate) mod database;
 pub(crate) mod migrations;
 pub(crate) mod models;

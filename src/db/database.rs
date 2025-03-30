@@ -1,8 +1,9 @@
+use crate::db::cleaner::Cleaner;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
     InsertMaterialisation, InsertRepositoryName, Materialisation, MissingFile, Observation,
-    ObservedBlob, Repository, RepositoryName, VirtualFile, WalCheckpoint,
+    ObservedBlob, Repository, RepositoryName, VirtualFile,
 };
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -13,40 +14,24 @@ use log::debug;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
 use sqlx::{Either, Executor, FromRow, Sqlite, SqlitePool, query};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
-use tokio::sync::{RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
     max_variable_number: usize,
-    cleanup_row_threshold: usize,
-    cleanup_deadtime: Duration,
-    cleanup_row_counter: Arc<AtomicUsize>,
-    cleanup_last_cleanup: Arc<RwLock<Option<tokio::time::Instant>>>,
-    stream_access_lock: Arc<RwLock<()>>,
-    cleanup_lock: Arc<RwLock<()>>,
+    cleaner: Cleaner,
 }
-
-const DEFAULT_CLEANUP_ROW_THRESHOLD: usize = 10000;
-const DEFAULT_CLEANUP_DEADTIME: Duration = Duration::from_secs(2);
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {
+        let cleaner = Cleaner::new(pool.clone());
         Self {
             pool,
             max_variable_number: 32000, // 32766 - actually: https://sqlite.org/limits.html
-            cleanup_row_threshold: DEFAULT_CLEANUP_ROW_THRESHOLD,
-            cleanup_deadtime: DEFAULT_CLEANUP_DEADTIME,
-            cleanup_row_counter: Arc::new(AtomicUsize::new(0)),
-            cleanup_last_cleanup: Arc::new(RwLock::new(None)),
-            stream_access_lock: Arc::new(RwLock::new(())),
-            cleanup_lock: Arc::new(RwLock::new(())),
+            cleaner,
         }
     }
 
@@ -54,9 +39,9 @@ impl Database {
         sqlx::query("DELETE FROM transfers;")
             .execute(&self.pool)
             .await?;
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
-            .execute(&self.pool)
-            .await?;
+
+        let _ = self.cleaner.try_periodic_cleanup().await?;
+
         Ok(())
     }
 
@@ -68,15 +53,18 @@ impl Database {
     where
         T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'static,
     {
-        let this = self.clone();
+        let pool = self.pool.clone();
+        let cleaner = self.cleaner.clone();
         let stream = try_stream! {
-            if let Err(e) = this.try_periodic_cleanup().await {
-                log::error!("periodic cleanup error: {}", e);
+            let _long_running_stream_guard = match cleaner.try_periodic_cleanup().await {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    log::error!("periodic cleanup error: {}", e);
+                    None
+                }
             };
 
-            let _guard = this.stream_access_lock.read().await;
-
-            let mut rows = this.pool.fetch_many(q);
+            let mut rows = pool.fetch_many(q);
             while let Some(item) = rows.next().await {
                 match item {
                     Ok(Either::Right(row)) => {
@@ -89,62 +77,6 @@ impl Database {
         };
 
         Box::pin(Box::pin(stream).track(name))
-    }
-
-    async fn try_periodic_cleanup(&self) -> Result<(), sqlx::Error> {
-        if self.stream_access_lock.try_write().is_err() {
-            debug!("skipping periodic cleanup because a long running stream is active");
-            return Ok(());
-        }
-
-        let _cleanup_write_guard = self.cleanup_lock.write().await;
-
-        self.do_periodic_cleanup().await?;
-
-        Ok(())
-    }
-
-    pub async fn periodic_cleanup(
-        &self,
-        n: usize,
-    ) -> Result<Option<RwLockReadGuard<()>>, sqlx::Error> {
-        if self.stream_access_lock.try_write().is_err() {
-            debug!("skipping periodic cleanup because a long running stream is active");
-            return Ok(None);
-        }
-
-        self.cleanup_row_counter.fetch_add(n, Ordering::Relaxed);
-
-        {
-            let _cleanup_write_guard = self.cleanup_lock.write().await;
-
-            let rows = self.cleanup_row_counter.load(Ordering::Relaxed);
-            let is_in_deadtime = self
-                .cleanup_last_cleanup
-                .read()
-                .await
-                .is_some_and(|t| t.elapsed() <= self.cleanup_deadtime);
-
-            if rows > self.cleanup_row_threshold && !is_in_deadtime {
-                self.do_periodic_cleanup().await?;
-            }
-        }
-
-        Ok(Some(self.cleanup_lock.read().await))
-    }
-
-    async fn do_periodic_cleanup(&self) -> Result<(), sqlx::Error> {
-        debug!("triggered periodic cleanup");
-        let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
-            .fetch_one(&self.pool)
-            .await?;
-        debug!("cleanup result: {result:?}");
-
-        self.cleanup_row_counter.store(0, Ordering::SeqCst);
-        let mut guard = self.cleanup_last_cleanup.write().await;
-        *guard = Some(tokio::time::Instant::now());
-
-        Ok(())
     }
 
     pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, sqlx::Error> {
@@ -193,7 +125,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -241,7 +173,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -292,7 +224,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -354,7 +286,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -450,7 +382,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -503,7 +435,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -550,7 +482,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -600,7 +532,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -743,7 +675,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
             if chunk.is_empty() {
                 continue;
             }
@@ -936,7 +868,7 @@ impl Database {
                     }
                 ).collect();
 
-                let _cleanup_guard = match s.periodic_cleanup(chunk.len()).await {
+                let _cleanup_guard = match s.cleaner.periodic_cleanup(chunk.len()).await {
                     Ok(guard) => guard,
                     Err(e) => return match shutting_down {
                         true => ExtFlow::Shutdown(Err(e)),
