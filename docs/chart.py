@@ -49,55 +49,52 @@ class CompleteLineReader:
                 break  # Stop iteration on EOFError
             if not line:
                 break
-            if line.endswith("\n"):
+            if line.endswith("}\n"):
                 yield line
 
     def read(self):
         return "".join(list(self.__iter__()))
 
 
-def create_figure_from_file(log_file, mode="progress", chunksize=1000000):
+def create_figure_from_file(log_file, mode="progress"):
     """
     mode: 'progress' or 'delay'
       - In progress mode: plots 'position' over time for both sink and stream.
       - In delay mode: plots 'delay_ns' over time for sinks only.
     """
-    dfs = []  # list to accumulate DataFrame chunks
     with create_safe_text_reader(log_file) as f:
         filtered_reader = CompleteLineReader(f)
         try:
-            # Use Pandas to read newline-delimited JSON in chunks.
-            chunk_iter = pd.read_json(filtered_reader, lines=True, chunksize=chunksize)
+            # Use Pandas to read newline-delimited JSON.
+            df = pd.read_json(filtered_reader, lines=True)
         except ValueError as e:
             print(f"Error initializing JSON reader for {log_file}: {e}")
             return {}
-        for chunk in chunk_iter:
-            # Convert timestamp to datetime using inferred format.
-            chunk["dt"] = pd.to_datetime(
-                chunk["timestamp"], utc=True, errors="coerce"
-            )
-            # Drop rows with unparseable dates.
-            chunk = chunk[chunk["dt"].notna()]
-            if mode == "progress":
-                # Keep sink and stream.
-                chunk = chunk[chunk["type"].isin(["sink", "stream"])].copy()
-                if chunk.empty:
-                    continue
-                # Create a label combining id and type.
-                chunk["label"] = chunk["id"].astype(str) + " (" + chunk["type"] + ")"
-            else:  # delay mode
-                # Keep only sink entries with delay_ns.
-                chunk = chunk[(chunk["type"] == "sink") & (chunk["delay_ns"].notna())].copy()
-                if chunk.empty:
-                    continue
-                # Label by sink id.
-                chunk["delay_s"] = chunk["delay_ns"] / 1e9
-                chunk["label"] = "Sink " + chunk["id"].astype(str)
-            dfs.append(chunk)
-    if not dfs:
-        return {}  # Return an empty dict (no figure) if no data was collected.
-    df = pd.concat(dfs, ignore_index=True)
+
+        # Convert timestamp to datetime using inferred format.
+        df["dt"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+        # Drop rows with unparseable dates.
+        df = df[df["dt"].notna()]
+        if mode == "progress":
+            # Keep sink and stream.
+            df = df[df["type"].isin(["sink", "stream"])].copy()
+            if df.empty:
+                return {}
+            # Create a label combining id and type.
+            df["label"] = df["id"].astype(str) + " (" + df["type"] + ")"
+        else:  # delay mode
+            # Keep only sink entries with delay_ns.
+            df = df[(df["type"] == "sink") & (df["delay_ns"].notna())].copy()
+            if df.empty:
+                return {}
+            # Label by sink id.
+            df["delay_s"] = df["delay_ns"] / 1e9
+            df["label"] = "Sink " + df["id"].astype(str)
+
     df.sort_values("dt", inplace=True)
+
+    # Create a sorted list of unique labels, ignoring case.
+    unique_labels = sorted(df["label"].unique(), key=lambda x: x.lower())
 
     if mode == "progress":
         fig = px.line(
@@ -105,6 +102,7 @@ def create_figure_from_file(log_file, mode="progress", chunksize=1000000):
             x="dt",
             y="position",
             color="label",
+            category_orders={"label": unique_labels},
             title=f"Interactive Log Chart - {os.path.basename(log_file)} (Progress Mode)",
         )
         yaxis_title = "Position"
@@ -114,6 +112,7 @@ def create_figure_from_file(log_file, mode="progress", chunksize=1000000):
             x="dt",
             y="delay_s",
             color="label",
+            category_orders={"label": unique_labels},
             title=f"Interactive Log Chart - {os.path.basename(log_file)} (Delay Mode)",
         )
         yaxis_title = "Delay (s)"
