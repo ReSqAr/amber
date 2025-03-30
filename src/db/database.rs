@@ -28,7 +28,7 @@ pub struct Database {
     cleanup_lock: Arc<RwLock<()>>,
 }
 
-const DEFAULT_CLEANUP_ROW_THRESHOLD: usize = 1000;
+const DEFAULT_CLEANUP_ROW_THRESHOLD: usize = 10000;
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
 
