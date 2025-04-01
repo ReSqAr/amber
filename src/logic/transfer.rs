@@ -168,7 +168,8 @@ async fn execute_rclone(
         destination,
         callback,
     )
-    .await?;
+    .await
+    .inspect_err(|e| log::error!("transfer: rclone failed: {e}"))?;
 
     let final_count = count.load(Ordering::Relaxed);
     let duration = start_time.elapsed();
@@ -189,7 +190,9 @@ pub async fn transfer<T: TransferItem>(
     let mut transfer_obs = BaseObserver::without_id("transfer");
 
     let transfer_path = local.staging_id_path(transfer_id);
-    fs::create_dir_all(&transfer_path).await?;
+    fs::create_dir_all(&transfer_path)
+        .await
+        .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
 
     let paths = paths
@@ -251,18 +254,24 @@ pub async fn transfer<T: TransferItem>(
                 prep_obs.observe_position(log::Level::Trace, prep_count);
                 async move {
                     if let Ok(ref item) = t {
-                        tx.send(item.clone()).await.map_err(|err| {
-                            InternalError::Stream(format!(
-                                "failed to send to rclone.files writer: {err}"
-                            ))
-                        })?;
+                        tx.send(item.clone())
+                            .await
+                            .inspect_err(|e| log::error!("transfer: tx.send failed: {e}"))
+                            .map_err(|err| {
+                                InternalError::Stream(format!(
+                                    "failed to send to rclone.files writer: {err}"
+                                ))
+                            })?;
                     }
                     t
                 }
             })
             .boxed()
             .try_forward_into::<_, _, _, _, InternalError>(|s| source.prepare_transfer(s))
-            .await?;
+            .await
+            .inspect_err(|e| {
+                log::error!("transfer: try_forward_into -> prepare_transfer failed: {e}")
+            })?;
 
         writing_task.await??;
 
@@ -294,7 +303,10 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let stream = stream.map(move |path| CopiedTransferItem { path, transfer_id });
-    let count = destination.finalise_transfer(stream).await?;
+    let count = destination
+        .finalise_transfer(stream)
+        .await
+        .inspect_err(|e| log::error!("transfer: destination.finalise_transfer failed: {e}"))?;
 
     rclone_handle.await??;
 

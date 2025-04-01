@@ -69,7 +69,9 @@ pub(crate) async fn add_files(
         })
     };
 
-    fs::create_dir_all(&repository.staging_path()).await?;
+    fs::create_dir_all(&repository.staging_path())
+        .await
+        .inspect_err(|e| log::error!("add_files: create_dir_all failed: {e}"))?;
     let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
 
     let mut scan_count = 0;
@@ -97,51 +99,59 @@ pub(crate) async fn add_files(
         let file_tx = file_tx.clone();
         let blob_tx = blob_tx.clone();
         let mat_tx = mat_tx.clone();
-        let stream = tokio_stream::StreamExt::map(
-            stream,
-            |file_result: Result<VirtualFile, InternalError>| {
-                let file_tx = file_tx.clone();
-                let blob_tx = blob_tx.clone();
-                let mat_tx = mat_tx.clone();
-                let local_repository_clone = repository.clone();
-                let blob_locks_clone = blob_locks.clone();
-                async move {
-                    let path = local_repository_clone.root().join(file_result?.path);
-                    let Blobify { blob_id, blob_size } = blobify::blobify(
-                        &local_repository_clone,
-                        &path,
-                        skip_deduplication,
-                        blob_locks_clone,
-                    )
-                    .await?;
+        let stream =
+            tokio_stream::StreamExt::map(
+                stream,
+                |file_result: Result<VirtualFile, InternalError>| {
+                    let file_tx = file_tx.clone();
+                    let blob_tx = blob_tx.clone();
+                    let mat_tx = mat_tx.clone();
+                    let local_repository_clone = repository.clone();
+                    let blob_locks_clone = blob_locks.clone();
+                    async move {
+                        let path = local_repository_clone.root().join(file_result?.path);
+                        let Blobify { blob_id, blob_size } = blobify::blobify(
+                            &local_repository_clone,
+                            &path,
+                            skip_deduplication,
+                            blob_locks_clone,
+                        )
+                        .await
+                        .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
 
-                    let valid_from = chrono::Utc::now();
-                    let file = InsertFile {
-                        path: path.rel().to_string_lossy().to_string(),
-                        blob_id: Some(blob_id.clone()),
-                        valid_from,
-                    };
-                    let blob = InsertBlob {
-                        repo_id: local_repository_clone.current().await?.id,
-                        blob_id: blob_id.clone(),
-                        blob_size: blob_size as i64,
-                        has_blob: true,
-                        path: None,
-                        valid_from,
-                    };
-                    let mat = InsertMaterialisation {
-                        path: path.rel().to_string_lossy().to_string(),
-                        blob_id: Some(blob_id.clone()),
-                        valid_from,
-                    };
+                        let valid_from = chrono::Utc::now();
+                        let file = InsertFile {
+                            path: path.rel().to_string_lossy().to_string(),
+                            blob_id: Some(blob_id.clone()),
+                            valid_from,
+                        };
+                        let blob = InsertBlob {
+                            repo_id: local_repository_clone.current().await?.id,
+                            blob_id: blob_id.clone(),
+                            blob_size: blob_size as i64,
+                            has_blob: true,
+                            path: None,
+                            valid_from,
+                        };
+                        let mat = InsertMaterialisation {
+                            path: path.rel().to_string_lossy().to_string(),
+                            blob_id: Some(blob_id.clone()),
+                            valid_from,
+                        };
 
-                    file_tx.send(file).await?;
-                    blob_tx.send(blob).await?;
-                    mat_tx.send(mat).await?;
-                    Ok::<RepoPath, InternalError>(path)
-                }
-            },
-        );
+                        file_tx.send(file).await.inspect_err(|e| {
+                            log::error!("add_files: send on file_tx failed: {e}")
+                        })?;
+                        blob_tx.send(blob).await.inspect_err(|e| {
+                            log::error!("add_files: send on blob_tx failed: {e}")
+                        })?;
+                        mat_tx.send(mat).await.inspect_err(|e| {
+                            log::error!("add_files: send on mat_tx failed: {e}")
+                        })?;
+                        Ok::<RepoPath, InternalError>(path)
+                    }
+                },
+            );
 
         // allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(
@@ -151,7 +161,8 @@ pub(crate) async fn add_files(
 
         pin_mut!(stream);
         while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
-            let path = maybe_path?;
+            let path =
+                maybe_path.inspect_err(|e| log::error!("add_files: main task failed: {e}"))?;
             BaseObserver::with_id("add", path.rel().display().to_string())
                 .observe_termination(log::Level::Info, "added");
 

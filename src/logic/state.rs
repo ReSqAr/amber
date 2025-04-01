@@ -185,7 +185,9 @@ pub async fn state(
     let mut vfs_obs = BaseObserver::without_id("vfs:refresh");
     vfs_obs.observe_state(log::Level::Debug, "refreshing virtual filesystem...");
     let start_time = tokio::time::Instant::now();
-    vfs.refresh().await?;
+    vfs.refresh()
+        .await
+        .inspect_err(|e| log::error!("state: vfs refresh failed: {e}"))?;
     let duration = start_time.elapsed();
     vfs_obs.observe_termination(
         log::Level::Debug,
@@ -210,7 +212,8 @@ pub async fn state(
         config,
         vfs.buffer_size(BufferType::WalkerChannelSize),
     )
-    .await?;
+    .await
+    .inspect_err(|e| log::error!("state: walk failed: {e}"))?;
 
     // connects the observation channel with the DB and receives the results via the db output stream
     let db_output_stream = vfs.add_observations(obs_rx).await;
@@ -387,7 +390,9 @@ pub async fn state(
             checker_handle,
         ) {
             Ok(((), (), (), ())) => {
-                close(tx_clone, vfs_clone, last_seen_id).await?;
+                close(tx_clone, vfs_clone, last_seen_id)
+                    .await
+                    .inspect_err(|e| log::error!("state: close failed: {e}"))?;
 
                 Ok(())
             }
