@@ -35,7 +35,12 @@ pub(crate) async fn add_files(
     );
     let db_file_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move { local_repository.add_files(file_rx).await })
+        tokio::spawn(async move {
+            local_repository
+                .add_files(file_rx)
+                .await
+                .inspect_err(|e| log::error!("add_files: add_files task failed: {e}"))
+        })
     };
     let (blob_tx, blob_rx) = flightdeck::tracked::mpsc_channel(
         "add_files::blob",
@@ -43,7 +48,12 @@ pub(crate) async fn add_files(
     );
     let db_blob_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move { local_repository.add_blobs(blob_rx).await })
+        tokio::spawn(async move {
+            local_repository
+                .add_blobs(blob_rx)
+                .await
+                .inspect_err(|e| log::error!("add_files: add_blobs task failed: {e}"))
+        })
     };
     let (mat_tx, mat_rx) = flightdeck::tracked::mpsc_channel(
         "add_files::mat",
@@ -51,7 +61,12 @@ pub(crate) async fn add_files(
     );
     let db_mat_handle = {
         let local_repository = repository.clone();
-        tokio::spawn(async move { local_repository.add_materialisation(mat_rx).await })
+        tokio::spawn(async move {
+            local_repository
+                .add_materialisation(mat_rx)
+                .await
+                .inspect_err(|e| log::error!("add_files: add_materialisation task failed: {e}"))
+        })
     };
 
     fs::create_dir_all(&repository.staging_path()).await?;

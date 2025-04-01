@@ -31,33 +31,26 @@ impl Cleaner {
         }
     }
 
-    pub(crate) async fn try_periodic_cleanup(
-        &self,
-    ) -> Result<RwLockReadGuard<()>, sqlx::Error> {
+    pub(crate) async fn try_periodic_cleanup(&self) -> RwLockReadGuard<()> {
         match self.long_running_stream_lock.try_write() {
             Ok(_g) => {
                 let _cleanup_write_guard = self.cleanup_in_progress_lock.write().await;
-                self.do_periodic_cleanup().await?;
+                self.do_periodic_cleanup().await;
             }
             Err(_) => {
                 log::debug!("skipping periodic cleanup because a long running stream is active");
             }
         };
 
-        Ok(self.long_running_stream_lock.read().await)
+        self.long_running_stream_lock.read().await
     }
 
-    pub(crate) async fn periodic_cleanup(
-        &self,
-        n: usize,
-    ) -> Result<Option<RwLockReadGuard<()>>, sqlx::Error> {
-        self.row_counter.fetch_add(n, Ordering::Relaxed);
-
+    pub(crate) async fn periodic_cleanup(&self, n: usize) -> Option<RwLockReadGuard<()>> {
         let _guard = match self.long_running_stream_lock.try_write() {
             Ok(g) => g,
             Err(_) => {
                 log::debug!("skipping periodic cleanup because a long running stream is active");
-                return Ok(None);
+                return None;
             }
         };
 
@@ -72,24 +65,27 @@ impl Cleaner {
                 .is_some_and(|t| t.elapsed() <= self.deadtime);
 
             if rows > self.row_threshold && !is_in_deadtime {
-                self.do_periodic_cleanup().await?;
+                self.do_periodic_cleanup().await;
             }
         }
 
-        Ok(Some(self.cleanup_in_progress_lock.read().await))
+        self.row_counter.fetch_add(n, Ordering::Relaxed);
+
+        Some(self.cleanup_in_progress_lock.read().await)
     }
 
-    async fn do_periodic_cleanup(&self) -> Result<(), sqlx::Error> {
+    async fn do_periodic_cleanup(&self) {
         log::debug!("triggered periodic cleanup");
         let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
             .fetch_one(&self.pool)
-            .await?;
-        log::debug!("cleanup result: {result:?}");
+            .await;
+        match result {
+            Ok(r) => log::warn!("cleanup result: {r:?}"),
+            Err(e) => log::error!("DB cleanup failed: {e:?}"),
+        }
 
         self.row_counter.store(0, Ordering::SeqCst);
         let mut guard = self.last_cleanup.write().await;
         *guard = Some(tokio::time::Instant::now());
-
-        Ok(())
     }
 }

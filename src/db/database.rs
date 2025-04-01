@@ -38,9 +38,10 @@ impl Database {
     pub async fn clean(&self) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM transfers;")
             .execute(&self.pool)
-            .await?;
+            .await
+            .inspect_err(|e| log::error!("Database::clean failed: {e}"))?;
 
-        let _ = self.cleaner.try_periodic_cleanup().await?;
+        let _ = self.cleaner.try_periodic_cleanup().await;
 
         Ok(())
     }
@@ -56,13 +57,7 @@ impl Database {
         let pool = self.pool.clone();
         let cleaner = self.cleaner.clone();
         let stream = try_stream! {
-            let _long_running_stream_guard = match cleaner.try_periodic_cleanup().await {
-                Ok(g) => Some(g),
-                Err(e) => {
-                    log::error!("periodic cleanup error: {}", e);
-                    None
-                }
-            };
+            let _long_running_stream_guard = cleaner.try_periodic_cleanup().await;
 
             let mut rows = pool.fetch_many(q);
             while let Some(item) = rows.next().await {
@@ -87,7 +82,8 @@ impl Database {
         )
         .bind(potential_new_repository_id)
         .fetch_optional(&self.pool)
-        .await?
+        .await
+        .inspect_err(|e| log::error!("Database::get_or_create_current_repository failed: {e}"))?
         {
             return Ok(repo);
         }
@@ -111,7 +107,8 @@ impl Database {
             )
             .bind(repo_id)
             .fetch_optional(&self.pool)
-            .await?
+            .await
+            .inspect_err(|e| log::error!("Database::lookup_current_repository_name failed: {e}"))?
             .map(|n| n.name),
         )
     }
@@ -125,7 +122,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -152,7 +149,10 @@ impl Database {
                     .bind(file.valid_from);
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::add_files failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -173,7 +173,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -203,7 +203,10 @@ impl Database {
                     .bind(blob.valid_from);
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::add_blobs failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -224,7 +227,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -265,7 +268,10 @@ impl Database {
                     .bind(blob.valid_from);
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::observe_blobs failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -286,7 +292,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -313,7 +319,10 @@ impl Database {
                     .bind(repository_name.valid_from);
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::add_repository_names failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -382,7 +391,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -414,7 +423,10 @@ impl Database {
                     .bind(repo.last_name_index)
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::merge_repositories failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -435,7 +447,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -461,7 +473,10 @@ impl Database {
                     .bind(file.valid_from)
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::merge_files failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -482,7 +497,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -511,7 +526,10 @@ impl Database {
                     .bind(file.valid_from)
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::merge_blobs failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -532,7 +550,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -558,7 +576,10 @@ impl Database {
                     .bind(file.valid_from)
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::merge_repository_names failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -675,7 +696,7 @@ impl Database {
         let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
 
         while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await?;
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
             if chunk.is_empty() {
                 continue;
             }
@@ -700,7 +721,10 @@ impl Database {
                     .bind(mat.valid_from);
             }
 
-            let result = query.execute(&self.pool).await?;
+            let result = query
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| log::error!("Database::add_materialisations failed: {e}"))?;
             total_inserted += result.rows_affected();
             total_attempted += chunk.len() as u64;
         }
@@ -726,7 +750,10 @@ impl Database {
 
     pub async fn truncate_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
         let query = "DELETE FROM virtual_filesystem;";
-        sqlx::query(query).execute(&self.pool).await?;
+        sqlx::query(query)
+            .execute(&self.pool)
+            .await
+            .inspect_err(|e| log::error!("Database::truncate_virtual_filesystem failed: {e}"))?;
         Ok(())
     }
 
@@ -802,7 +829,10 @@ impl Database {
                    OR FALSE IS DISTINCT FROM vfs.local_has_target_blob
                 );";
 
-        let result = sqlx::query(query).execute(&self.pool).await?;
+        let result = sqlx::query(query)
+            .execute(&self.pool)
+            .await
+            .inspect_err(|e| log::error!("Database::refresh_virtual_filesystem failed: {e}"))?;
         debug!(
             "refresh_virtual_filesystem: rows affected={}",
             result.rows_affected()
@@ -820,7 +850,8 @@ impl Database {
         let result = sqlx::query(query)
             .bind(last_seen_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .inspect_err(|e| log::error!("Database::cleanup_virtual_filesystem failed: {e}"))?;
         debug!(
             "cleanup_virtual_filesystem: rows affected={}",
             result.rows_affected()
@@ -857,6 +888,7 @@ impl Database {
         input_stream.ready_chunks(self.max_variable_number / 7).then(move |chunk: Vec<Flow<Observation>>| {
             let s = s.clone();
             Box::pin(async move {
+                let _cleanup_guard = s.cleaner.periodic_cleanup(chunk.len()).await;
 
                 let shutting_down = chunk.iter().any(
                     |message| matches!(message, Flow::Shutdown)
@@ -867,14 +899,6 @@ impl Database {
                         Flow::Shutdown => None,
                     }
                 ).collect();
-
-                let _cleanup_guard = match s.cleaner.periodic_cleanup(chunk.len()).await {
-                    Ok(guard) => guard,
-                    Err(e) => return match shutting_down {
-                        true => ExtFlow::Shutdown(Err(e)),
-                        false => ExtFlow::Data(Err(e))
-                    }
-                };
 
                 if observations.is_empty() { // SQL is otherwise not valid
                     return match shutting_down {
@@ -1006,7 +1030,8 @@ impl Database {
             .bind(&connection.connection_type)
             .bind(&connection.parameter)
             .execute(&self.pool)
-            .await?;
+            .await
+            .inspect_err(|e| log::error!("Database::add_connection failed: {e}"))?;
         Ok(())
     }
 

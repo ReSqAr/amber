@@ -13,7 +13,7 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Erro
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .log_slow_statements(log::LevelFilter::Debug, std::time::Duration::from_secs(30))
-        .busy_timeout(std::time::Duration::from_secs(120))
+        .busy_timeout(std::time::Duration::from_secs(1800))
         .pragma("cache_size", "-1048576")
         .pragma("temp_store", "MEMORY")
         .pragma("synchronous", "NORMAL")

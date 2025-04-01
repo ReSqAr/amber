@@ -115,7 +115,7 @@ pub async fn walk(
     let mut walk_builder = WalkBuilder::new(&root);
     let walk_builder = walk_builder
         .standard_filters(true)
-        .hidden(false)
+        .hidden(true)
         .follow_links(false)
         .same_file_system(true)
         .max_depth(None)
