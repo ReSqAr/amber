@@ -96,6 +96,7 @@ impl Handler for SshSession {
         } else {
             Ok(Auth::Reject {
                 proceed_with_methods: None,
+                partial_success: false,
             })
         }
     }
