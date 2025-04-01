@@ -80,7 +80,7 @@ impl Cleaner {
             .fetch_one(&self.pool)
             .await;
         match result {
-            Ok(r) => log::warn!("cleanup result: {r:?}"),
+            Ok(r) => log::debug!("cleanup result: {r:?}"),
             Err(e) => log::error!("DB cleanup failed: {e:?}"),
         }
 
