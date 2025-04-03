@@ -97,12 +97,18 @@ pub async fn check_rclone() -> Result<(), InternalError> {
     }
 }
 
+#[derive(Default)]
+pub struct RCloneConfig {
+    pub(crate) transfers: Option<usize>,
+}
+
 pub async fn run_rclone<F>(
     operation: Operation,
     temp_path: &Path,
     file_list_path: &Path,
     source: impl RCloneTarget,
     destination: impl RCloneTarget,
+    config: RCloneConfig,
     mut callback: F,
 ) -> Result<(), InternalError>
 where
@@ -147,6 +153,9 @@ where
     command.arg(operation.to_rclone_arg());
     if let Some(config_path) = config_path {
         command.arg("--config").arg(&config_path);
+    }
+    if let Some(transfers) = config.transfers {
+        command.arg(format!("--transfers={transfers}"));
     }
     command
         .arg("--files-from")
@@ -433,6 +442,7 @@ mod tests {
             &file_list_path,
             source_target,
             dest_target,
+            RCloneConfig { transfers: Some(1) },
             callback,
         )
         .await?;

@@ -10,7 +10,9 @@ use crate::repository::traits::{
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
+use crate::utils::rclone::{
+    Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
+};
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -75,6 +77,7 @@ async fn execute_rclone(
     destination: impl RCloneTarget,
     rclone_files_path: &Path,
     expected_count: u64,
+    config: RCloneConfig,
     tx: UnboundedSender<String>,
 ) -> Result<u64, InternalError> {
     let count = Arc::new(AtomicU64::new(0));
@@ -166,6 +169,7 @@ async fn execute_rclone(
         rclone_files_path,
         source,
         destination,
+        config,
         callback,
     )
     .await
@@ -184,6 +188,7 @@ pub async fn transfer<T: TransferItem>(
     destination: &(impl Metadata + Receiver<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
     connection: EstablishedConnection,
     paths: Vec<RepoPath>,
+    config: RCloneConfig,
 ) -> Result<u64, InternalError> {
     let transfer_id: u32 = rand::rng().random();
 
@@ -297,6 +302,7 @@ pub async fn transfer<T: TransferItem>(
             rclone_destination,
             rclone_files.abs(),
             expected_count,
+            config,
             tx,
         )
         .await

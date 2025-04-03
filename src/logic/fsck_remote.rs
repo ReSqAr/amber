@@ -9,7 +9,9 @@ use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::rclone::{Operation, RCloneTarget, RcloneEvent, RcloneStats, run_rclone};
+use crate::utils::rclone::{
+    Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
+};
 use crate::utils::units;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -280,6 +282,7 @@ async fn execute_rclone(
         rclone_files_path,
         source,
         destination,
+        RCloneConfig::default(),
         callback,
     )
     .await;

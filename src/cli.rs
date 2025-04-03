@@ -52,6 +52,8 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pulled (default: all paths)")]
         paths: Vec<PathBuf>,
+        #[arg(long, help = "rclone's parallelism")]
+        rclone_transfers: Option<usize>,
     },
     /// Push local files to a remote repository
     Push {
@@ -59,6 +61,8 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pushed (default: all paths)")]
         paths: Vec<PathBuf>,
+        #[arg(long, help = "rclone's parallelism")]
+        rclone_transfers: Option<usize>,
     },
     /// List missing files in the repository
     Missing {
@@ -184,11 +188,13 @@ pub async fn run_cli(
         Commands::Pull {
             connection_name,
             paths,
-        } => commands::pull::pull(cli.path, connection_name, paths, output).await,
+            rclone_transfers,
+        } => commands::pull::pull(cli.path, connection_name, paths, output, rclone_transfers).await,
         Commands::Push {
             connection_name,
             paths,
-        } => commands::push::push(cli.path, connection_name, paths, output).await,
+            rclone_transfers,
+        } => commands::push::push(cli.path, connection_name, paths, output, rclone_transfers).await,
         Commands::Fsck { connection_name } => {
             commands::fsck::fsck(cli.path, connection_name, output).await
         }
