@@ -230,6 +230,7 @@ async fn execute_rclone(
             RcloneEvent::Error(err) => {
                 obs.observe_state(log::Level::Error, err);
             }
+            RcloneEvent::UnchangedSkipping(_) => {}
             RcloneEvent::Copied(_) => {}
             RcloneEvent::Stats(RcloneStats {
                 bytes,

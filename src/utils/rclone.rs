@@ -56,6 +56,7 @@ pub enum RcloneEvent {
     Error(String),
     Stats(RcloneStats),
     Copied(String),
+    UnchangedSkipping(String),
     Ok(String),
     Fail(String),
     #[allow(dead_code)]
@@ -144,11 +145,6 @@ where
     let source_arg = source.to_rclone_arg();
     let dest_arg = destination.to_rclone_arg();
 
-    let log_level = match operation {
-        Operation::Copy => "INFO",
-        Operation::Check => "DEBUG",
-    };
-
     let mut command = Command::new("rclone");
     command.arg(operation.to_rclone_arg());
     if let Some(config_path) = config_path {
@@ -164,7 +160,7 @@ where
         .arg("--stats")
         .arg("1s")
         .arg("--log-level")
-        .arg(log_level)
+        .arg("DEBUG")
         .arg(&source_arg)
         .arg(&dest_arg)
         .stdout(std::process::Stdio::piped())
@@ -263,6 +259,16 @@ fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
                 } else {
                     RcloneEvent::UnknownMessage(line.into())
                 }
+            } else if json_log
+                .msg
+                .to_lowercase()
+                .starts_with("unchanged skipping")
+            {
+                if let Some(object) = json_log.object {
+                    RcloneEvent::UnchangedSkipping(object)
+                } else {
+                    RcloneEvent::UnknownMessage(line.into())
+                }
             } else if "OK" == json_log.msg {
                 if let Some(object) = json_log.object {
                     RcloneEvent::Ok(object)
@@ -353,6 +359,16 @@ mod tests {
         let event = parse_rclone_line("stdout", json_line);
         match event {
             RcloneEvent::Copied(object) => assert_eq!(object, "file2.txt"),
+            _ => panic!("Expected RcloneEvent::Copied, got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_rclone_line_unchanged_skipping() {
+        let json_line = r#"{"level": "info", "msg": "Unchanged skipping", "object": "file2.txt"}"#;
+        let event = parse_rclone_line("stdout", json_line);
+        match event {
+            RcloneEvent::UnchangedSkipping(object) => assert_eq!(object, "file2.txt"),
             _ => panic!("Expected RcloneEvent::Copied, got {:?}", event),
         }
     }

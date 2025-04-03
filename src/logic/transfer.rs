@@ -102,7 +102,7 @@ async fn execute_rclone(
             RcloneEvent::Error(err) => {
                 obs.observe_state(log::Level::Error, err);
             }
-            RcloneEvent::Copied(name) => {
+            RcloneEvent::Copied(name) | RcloneEvent::UnchangedSkipping(name) => {
                 let mut f = files
                     .remove(&name)
                     .unwrap_or_else(|| Observer::with_id("rclone:file", name.clone()));
