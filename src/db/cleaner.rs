@@ -1,4 +1,6 @@
 use crate::db::models::WalCheckpoint;
+use crate::flightdeck::observation::Value;
+use crate::flightdeck::observer::Observer;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -76,12 +78,37 @@ impl Cleaner {
 
     async fn do_periodic_cleanup(&self) {
         log::debug!("triggered periodic cleanup");
+        let mut obs = Observer::without_id("wal_checkpoint");
+        let start_time = tokio::time::Instant::now();
+        obs.observe_state(log::Level::Debug, "executing...");
+
         let result = sqlx::query_as::<_, WalCheckpoint>("PRAGMA wal_checkpoint(TRUNCATE);")
             .fetch_one(&self.pool)
             .await;
+
+        let duration = start_time.elapsed();
         match result {
-            Ok(r) => log::debug!("cleanup result: {r:?}"),
-            Err(e) => log::error!("DB cleanup failed: {e:?}"),
+            Ok(r) => {
+                obs.observe_termination_ext(
+                    log::Level::Debug,
+                    "complete",
+                    [
+                        ("duration_ns".into(), Value::U64(duration.as_nanos() as u64)),
+                        ("result".into(), Value::String(format!("{r:?}"))),
+                    ],
+                );
+            }
+            Err(e) => {
+                log::error!("DB cleanup failed: {e:?}");
+                obs.observe_termination_ext(
+                    log::Level::Debug,
+                    "failed",
+                    [
+                        ("duration_ns".into(), Value::U64(duration.as_nanos() as u64)),
+                        ("error".into(), Value::String(format!("{e}"))),
+                    ],
+                );
+            }
         }
 
         self.row_counter.store(0, Ordering::SeqCst);
