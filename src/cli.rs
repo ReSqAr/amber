@@ -52,10 +52,10 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pulled (default: all paths)")]
         paths: Vec<PathBuf>,
-        #[arg(long, help = "rclone's transfer parallelism")]
-        rclone_transfers: Option<usize>,
-        #[arg(long, help = "rclone's check parallelism")]
-        rclone_checkers: Option<usize>,
+        #[arg(long, default_value_t = 30, help = "rclone's transfer parallelism")]
+        rclone_transfers: usize,
+        #[arg(long, default_value_t = 30, help = "rclone's check parallelism")]
+        rclone_checkers: usize,
     },
     /// Push local files to a remote repository
     Push {
@@ -63,10 +63,10 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pushed (default: all paths)")]
         paths: Vec<PathBuf>,
-        #[arg(long, help = "rclone's transfer parallelism")]
-        rclone_transfers: Option<usize>,
-        #[arg(long, help = "rclone's check parallelism")]
-        rclone_checkers: Option<usize>,
+        #[arg(long, default_value_t = 30, help = "rclone's transfer parallelism")]
+        rclone_transfers: usize,
+        #[arg(long, default_value_t = 30, help = "rclone's check parallelism")]
+        rclone_checkers: usize,
     },
     /// List missing files in the repository
     Missing {
@@ -97,8 +97,8 @@ pub enum Commands {
     Fsck {
         #[arg(help = "Fsck a remote (default: local)")]
         connection_name: Option<String>,
-        #[arg(long, help = "rclone's check parallelism")]
-        rclone_checkers: Option<usize>,
+        #[arg(long, default_value_t = 30, help = "rclone's check parallelism")]
+        rclone_checkers: usize,
     },
     /// Manage remote connections
     Remote {

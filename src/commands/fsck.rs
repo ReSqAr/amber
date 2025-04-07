@@ -15,14 +15,14 @@ pub async fn fsck(
     maybe_root: Option<PathBuf>,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
-    rclone_checkers: Option<usize>,
+    rclone_checkers: usize,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
 
     let config = RCloneConfig {
         transfers: None,
-        checkers: rclone_checkers,
+        checkers: Some(rclone_checkers),
     };
 
     let wrapped = async {
