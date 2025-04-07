@@ -1,3 +1,4 @@
+
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
@@ -123,7 +124,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
             },
         )))
         .style(Style::Template {
-            in_progress: "{prefix}{spinner:.green} {msg} ({pos}/{len})".into(),
+            in_progress: "{prefix}{spinner:.green} ETA: {eta} ({pos}/{len})".into(),
             done: "{prefix}✓ {msg}".into(),
         })
         .infallible_build()
