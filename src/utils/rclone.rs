@@ -101,6 +101,7 @@ pub async fn check_rclone() -> Result<(), InternalError> {
 #[derive(Default)]
 pub struct RCloneConfig {
     pub(crate) transfers: Option<usize>,
+    pub(crate) checkers: Option<usize>,
 }
 
 pub async fn run_rclone<F>(
@@ -152,6 +153,9 @@ where
     }
     if let Some(transfers) = config.transfers {
         command.arg(format!("--transfers={transfers}"));
+    }
+    if let Some(checkers) = config.checkers {
+        command.arg(format!("--checkers={checkers}"));
     }
     command
         .arg("--files-from")
@@ -458,7 +462,10 @@ mod tests {
             &file_list_path,
             source_target,
             dest_target,
-            RCloneConfig { transfers: Some(1) },
+            RCloneConfig {
+                transfers: Some(1),
+                checkers: Some(1),
+            },
             callback,
         )
         .await?;

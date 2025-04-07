@@ -21,6 +21,7 @@ pub async fn push(
     paths: Vec<PathBuf>,
     output: flightdeck::output::Output,
     rclone_transfers: Option<usize>,
+    rclone_checkers: Option<usize>,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
@@ -32,6 +33,7 @@ pub async fn push(
 
     let config = RCloneConfig {
         transfers: rclone_transfers,
+        checkers: rclone_checkers,
     };
 
     let wrapped = async {

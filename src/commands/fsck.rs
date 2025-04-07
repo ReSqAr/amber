@@ -1,4 +1,3 @@
-
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
@@ -9,14 +8,22 @@ use crate::repository::local::LocalRepository;
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
+use crate::utils::rclone::RCloneConfig;
 use std::path::PathBuf;
+
 pub async fn fsck(
     maybe_root: Option<PathBuf>,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
+    rclone_checkers: Option<usize>,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root).await?;
     let log_path = local.log_path().abs().clone();
+
+    let config = RCloneConfig {
+        transfers: None,
+        checkers: rclone_checkers,
+    };
 
     let wrapped = async {
         if let Some(connection_name) = connection_name {
@@ -31,7 +38,7 @@ pub async fn fsck(
                 }
 
                 WrappedRepository::RClone(remote) => {
-                    fsck_remote::fsck_remote(&local, &remote, &connection).await?;
+                    fsck_remote::fsck_remote(&local, &remote, &connection, config).await?;
                 }
             };
         } else {

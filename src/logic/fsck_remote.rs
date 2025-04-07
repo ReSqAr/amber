@@ -30,6 +30,7 @@ pub(crate) async fn fsck_remote(
     local: &(impl Config + Local + Adder + Sync + Send + Clone + 'static),
     remote: &(impl Metadata + Availability + RcloneTargetPath),
     connection: &EstablishedConnection,
+    config: RCloneConfig,
 ) -> Result<(), InternalError> {
     let staging_id: u32 = rand::rng().random();
     let fsck_path = local.staging_id_path(staging_id);
@@ -139,6 +140,7 @@ pub(crate) async fn fsck_remote(
         rclone_files.abs(),
         expected_count,
         tx,
+        config,
     )
     .await?;
 
@@ -195,6 +197,7 @@ async fn execute_rclone(
     rclone_files_path: &Path,
     expected_count: u64,
     listener: mpsc::UnboundedSender<RCloneResult>,
+    config: RCloneConfig,
 ) -> Result<u64, InternalError> {
     let count = Arc::new(AtomicU64::new(0));
     let failed_count = Arc::new(AtomicU64::new(0));
@@ -283,7 +286,7 @@ async fn execute_rclone(
         rclone_files_path,
         source,
         destination,
-        RCloneConfig::default(),
+        config,
         callback,
     )
     .await;

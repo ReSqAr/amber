@@ -52,8 +52,10 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pulled (default: all paths)")]
         paths: Vec<PathBuf>,
-        #[arg(long, help = "rclone's parallelism")]
+        #[arg(long, help = "rclone's transfer parallelism")]
         rclone_transfers: Option<usize>,
+        #[arg(long, help = "rclone's check parallelism")]
+        rclone_checkers: Option<usize>,
     },
     /// Push local files to a remote repository
     Push {
@@ -61,8 +63,10 @@ pub enum Commands {
         connection_name: String,
         #[arg(help = "Paths to be pushed (default: all paths)")]
         paths: Vec<PathBuf>,
-        #[arg(long, help = "rclone's parallelism")]
+        #[arg(long, help = "rclone's transfer parallelism")]
         rclone_transfers: Option<usize>,
+        #[arg(long, help = "rclone's check parallelism")]
+        rclone_checkers: Option<usize>,
     },
     /// List missing files in the repository
     Missing {
@@ -93,6 +97,8 @@ pub enum Commands {
     Fsck {
         #[arg(help = "Fsck a remote (default: local)")]
         connection_name: Option<String>,
+        #[arg(long, help = "rclone's check parallelism")]
+        rclone_checkers: Option<usize>,
     },
     /// Manage remote connections
     Remote {
@@ -189,15 +195,38 @@ pub async fn run_cli(
             connection_name,
             paths,
             rclone_transfers,
-        } => commands::pull::pull(cli.path, connection_name, paths, output, rclone_transfers).await,
+            rclone_checkers,
+        } => {
+            commands::pull::pull(
+                cli.path,
+                connection_name,
+                paths,
+                output,
+                rclone_transfers,
+                rclone_checkers,
+            )
+            .await
+        }
         Commands::Push {
             connection_name,
             paths,
             rclone_transfers,
-        } => commands::push::push(cli.path, connection_name, paths, output, rclone_transfers).await,
-        Commands::Fsck { connection_name } => {
-            commands::fsck::fsck(cli.path, connection_name, output).await
+            rclone_checkers,
+        } => {
+            commands::push::push(
+                cli.path,
+                connection_name,
+                paths,
+                output,
+                rclone_transfers,
+                rclone_checkers,
+            )
+            .await
         }
+        Commands::Fsck {
+            connection_name,
+            rclone_checkers,
+        } => commands::fsck::fsck(cli.path, connection_name, output, rclone_checkers).await,
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
                 name,
