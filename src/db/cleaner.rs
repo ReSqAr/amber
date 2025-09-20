@@ -33,7 +33,7 @@ impl Cleaner {
         }
     }
 
-    pub(crate) async fn try_periodic_cleanup(&self) -> RwLockReadGuard<()> {
+    pub(crate) async fn try_periodic_cleanup(&self) -> RwLockReadGuard<'_, ()> {
         match self.long_running_stream_lock.try_write() {
             Ok(_g) => {
                 let _cleanup_write_guard = self.cleanup_in_progress_lock.write().await;
@@ -47,7 +47,7 @@ impl Cleaner {
         self.long_running_stream_lock.read().await
     }
 
-    pub(crate) async fn periodic_cleanup(&self, n: usize) -> Option<RwLockReadGuard<()>> {
+    pub(crate) async fn periodic_cleanup(&self, n: usize) -> Option<RwLockReadGuard<'_, ()>> {
         let _guard = match self.long_running_stream_lock.try_write() {
             Ok(g) => g,
             Err(_) => {
