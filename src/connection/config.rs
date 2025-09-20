@@ -15,6 +15,7 @@ pub enum Config {
 }
 
 impl Config {
+    #[allow(clippy::result_large_err)]
     pub(crate) fn parse(
         connection_type: ConnectionType,
         parameter: String,

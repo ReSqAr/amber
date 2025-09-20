@@ -15,6 +15,7 @@ impl RepoPath {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn from_current<P: AsRef<Path>>(
         file_path: P,
         root: &RepoPath,

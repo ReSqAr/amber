@@ -17,6 +17,7 @@ pub struct Observer<T: Observable> {
 }
 
 impl<T: Observable> Drop for Observer<T> {
+    #[allow(clippy::collapsible_if)]
     fn drop(&mut self) {
         if let Some((level, observation)) = self.default_termination_observation.clone() {
             if !self.inner.is_in_terminal_state() {

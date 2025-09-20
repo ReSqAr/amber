@@ -22,6 +22,7 @@ pub struct Item {
     pub expected_blob_id: Option<String>,
 }
 
+#[allow(clippy::collapsible_if)]
 async fn assimilate_blob(
     local: &impl Local,
     repo_id: String,

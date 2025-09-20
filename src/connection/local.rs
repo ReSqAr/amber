@@ -9,6 +9,7 @@ pub struct LocalConfig {
 }
 
 impl LocalConfig {
+    #[allow(clippy::result_large_err)]
     pub(crate) fn from_parameter(parameter: String) -> Result<Self, InternalError> {
         Ok(Self { root: parameter })
     }

@@ -125,11 +125,7 @@ impl FooterLayoutItem {
     }
 
     fn update_bar(&self, bar: &indicatif::ProgressBar) {
-        let hidden_count = if self.visible_count < self.total_count {
-            self.total_count - self.visible_count
-        } else {
-            0
-        };
+        let hidden_count = self.total_count.saturating_sub(self.visible_count);
         let msg = format!("[{} hidden]", hidden_count);
         bar.set_message(msg);
     }
@@ -372,6 +368,7 @@ impl ProgressBarPipe {
     /// The insertion strategy: find the index of `type_key` in `builders`,
     /// gather the last visible bar among all type keys up to that index,
     /// and call `insert_after`; if none is found, just `add`.
+    #[allow(clippy::collapsible_if)]
     async fn attach_to_multi_progress(
         &self,
         key: &Key,

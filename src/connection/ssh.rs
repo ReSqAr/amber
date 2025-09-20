@@ -34,6 +34,7 @@ pub struct SshConfig {
 }
 
 impl SshConfig {
+    #[allow(clippy::result_large_err)]
     pub(crate) fn from_parameter(parameter: String) -> Result<Self, InternalError> {
         let (user_and_password, remainder) =
             parameter.split_once('@').ok_or_else(|| AppError::Parse {

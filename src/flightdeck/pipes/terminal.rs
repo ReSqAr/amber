@@ -80,6 +80,7 @@ impl TerminalPipe {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn lookup_key(data: &[Data], key: &str) -> Option<String> {
     data.iter()
         .filter_map(|data| {
