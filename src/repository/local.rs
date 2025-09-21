@@ -101,7 +101,7 @@ impl LocalRepository {
         files::cleanup_staging(&staging_path).await?;
         debug!("deleted staging {}", staging_path.display());
 
-        let db_path = repository_path.join("db.sqlite");
+        let db_path = repository_path.join("db.duckdb");
         let pool = establish_connection(db_path.to_str().unwrap())
             .await
             .expect("failed to establish connection");
@@ -147,10 +147,14 @@ impl LocalRepository {
         utils::fs::capability_check(&repository_path).await?;
 
         let blobs_path = repository_path.join("blobs");
-        fs::create_dir_all(blobs_path.as_path()).await?;
+        fs::create_dir_all(blobs_path.as_path())
+            .await
+            .inspect_err(|e| log::error!("failed to create blobs dir: {}", e))?;
 
-        let db_path = repository_path.join("db.sqlite");
-        let pool = establish_connection(db_path.to_str().unwrap()).await?;
+        let db_path = repository_path.join("db.duckdb");
+        let pool = establish_connection(db_path.to_str().unwrap())
+            .await
+            .inspect_err(|e| log::error!("failed to establish connection: {}", e))?;
         run_migrations(&pool).await?;
 
         let db = Database::new(pool.clone());
@@ -158,14 +162,15 @@ impl LocalRepository {
         let repo = db
             .get_or_create_current_repository()
             .await
-            .expect("failed to create repo id");
+            .inspect_err(|e| log::error!("failed to create repo id: {}", e))?;
 
         db.add_repository_names(stream::iter([models::InsertRepositoryName {
             repo_id: repo.repo_id.clone(),
             name: name.clone(),
             valid_from: chrono::Utc::now(),
         }]))
-        .await?;
+        .await
+        .inspect_err(|e| log::error!("failed to add repository name: {}", e))?;
 
         Self::new(Some(root)).await
     }

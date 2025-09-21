@@ -1,14 +1,13 @@
 use chrono::prelude::{DateTime, Utc};
-use sqlx::Type;
-use sqlx::sqlite::SqliteRow;
-use sqlx::{FromRow, Row};
+use duckdb::ToSql;
+use duckdb::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef};
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct CurrentRepository {
     pub repo_id: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct Repository {
     pub repo_id: String,
     pub last_file_index: i32,
@@ -16,7 +15,7 @@ pub struct Repository {
     pub last_name_index: i32,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub uuid: String,
     pub path: String,
@@ -31,7 +30,7 @@ pub struct InsertFile {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct Blob {
     pub uuid: String,
     pub repo_id: String,
@@ -60,7 +59,7 @@ pub struct ObservedBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct RepositoryName {
     pub uuid: String,
     pub repo_id: String,
@@ -82,14 +81,14 @@ pub struct InsertMaterialisation {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct Materialisation {
     #[allow(dead_code)]
     pub path: String,
     pub blob_id: Option<String>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
@@ -104,25 +103,7 @@ pub struct BlobAssociatedToFiles {
     pub repositories_with_blob: Vec<String>,
 }
 
-impl<'r> FromRow<'r, SqliteRow> for BlobAssociatedToFiles {
-    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
-        let blob_id: String = row.try_get("blob_id")?;
-        let paths_json: String = row.try_get("paths")?;
-        let paths: Vec<String> = serde_json::from_str(&paths_json)
-            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        let repo_names_json: String = row.try_get("repositories_with_blob")?;
-        let repositories_with_blob: Vec<String> = serde_json::from_str(&repo_names_json)
-            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        Ok(BlobAssociatedToFiles {
-            blob_id,
-            paths,
-            repositories_with_blob,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum VirtualFileState {
     New,
     Ok,
@@ -132,13 +113,43 @@ pub enum VirtualFileState {
     NeedsCheck,
 }
 
+impl ToSql for VirtualFileState {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, duckdb::Error> {
+        let s = match self {
+            VirtualFileState::New => "new",
+            VirtualFileState::Ok => "ok",
+            VirtualFileState::OkMaterialisationMissing => "ok_materialisation_missing",
+            VirtualFileState::Altered => "altered",
+            VirtualFileState::Outdated => "outdated",
+            VirtualFileState::NeedsCheck => "needs_check",
+        };
+        Ok(ToSqlOutput::Owned(Value::Text(s.to_string())))
+    }
+}
+
+impl FromSql for VirtualFileState {
+    fn column_result(v: ValueRef<'_>) -> FromSqlResult<Self> {
+        match v.as_str()? {
+            "new" => Ok(VirtualFileState::New),
+            "ok" => Ok(VirtualFileState::Ok),
+            "ok_materialisation_missing" => Ok(VirtualFileState::OkMaterialisationMissing),
+            "altered" => Ok(VirtualFileState::Altered),
+            "outdated" => Ok(VirtualFileState::Outdated),
+            "needs_check" => Ok(VirtualFileState::NeedsCheck),
+            other => Err(FromSqlError::Other(
+                format!("unknown VirtualFileState: {other}").into(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Observation {
     FileSeen(FileSeen),
     FileCheck(FileCheck),
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct FileSeen {
     pub path: String,
     pub seen_id: i64,
@@ -147,14 +158,14 @@ pub struct FileSeen {
     pub size: i64,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct FileCheck {
     pub path: String,
     pub check_dttm: i64,
     pub hash: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct VirtualFile {
     pub path: String,
     pub materialisation_last_blob_id: Option<String>,
@@ -162,36 +173,59 @@ pub struct VirtualFile {
     pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct MissingFile {
     pub path: String,
     pub target_blob_id: String,
     pub local_has_target_blob: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ConnectionType {
     Local,
     Ssh,
     RClone,
 }
 
-#[derive(Debug, FromRow, Clone)]
+impl ToSql for ConnectionType {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, duckdb::Error> {
+        let s = match self {
+            ConnectionType::Local => "local",
+            ConnectionType::Ssh => "ssh",
+            ConnectionType::RClone => "rclone",
+        };
+        Ok(ToSqlOutput::Owned(Value::Text(s.to_string())))
+    }
+}
+
+impl FromSql for ConnectionType {
+    fn column_result(v: ValueRef<'_>) -> FromSqlResult<Self> {
+        match v.as_str()? {
+            "local" => Ok(ConnectionType::Local),
+            "ssh" => Ok(ConnectionType::Ssh),
+            "rclone" => Ok(ConnectionType::RClone),
+            other => Err(FromSqlError::Other(
+                format!("unknown ConnectionType: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Connection {
     pub name: String,
     pub connection_type: ConnectionType,
     pub parameter: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct BlobTransferItem {
     pub transfer_id: u32,
     pub blob_id: String,
     pub path: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct FileTransferItem {
     pub transfer_id: u32,
     pub blob_id: String,
@@ -199,18 +233,8 @@ pub struct FileTransferItem {
     pub path: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct CopiedTransferItem {
     pub transfer_id: u32,
     pub path: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct WalCheckpoint {
-    #[allow(dead_code)]
-    pub busy: i64,
-    #[allow(dead_code)]
-    pub log: i64,
-    #[allow(dead_code)]
-    pub checkpointed: i64,
 }

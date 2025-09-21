@@ -1,5 +1,5 @@
 -- view: valid_files
-CREATE VIEW valid_files AS
+CREATE VIEW IF NOT EXISTS valid_files AS
 SELECT f.id, f.uuid, f.path, f.blob_id, f.valid_from
 FROM files f
 WHERE f.blob_id IS NULL OR EXISTS (
@@ -8,16 +8,17 @@ WHERE f.blob_id IS NULL OR EXISTS (
 );
 
 -- view: valid_materialisations
-CREATE VIEW valid_materialisations AS
+CREATE VIEW IF NOT EXISTS valid_materialisations AS
 SELECT m.id, m.path, m.blob_id, m.valid_from
 FROM materialisations m
 WHERE EXISTS (
     SELECT 1 FROM valid_files f
-    WHERE f.path = m.path AND f.blob_id IS m.blob_id
+    WHERE f.path = m.path
+      AND f.blob_id IS NOT DISTINCT FROM m.blob_id
 );
 
 -- view: latest_filesystem_files
-CREATE VIEW latest_filesystem_files AS
+CREATE VIEW IF NOT EXISTS latest_filesystem_files AS
 WITH versioned_files AS (
     SELECT
         path,
@@ -42,7 +43,7 @@ FROM latest_file_version
 WHERE blob_id IS NOT NULL;
 
 -- view: latest_available_blobs
-CREATE VIEW latest_available_blobs AS
+CREATE VIEW IF NOT EXISTS latest_available_blobs AS
 WITH versioned_blobs AS (
     SELECT
         repo_id,
@@ -76,7 +77,7 @@ FROM latest_blob_version
 WHERE has_blob = 1;
 
 -- view: latest_repository_names
-CREATE VIEW latest_repository_names AS
+CREATE VIEW IF NOT EXISTS latest_repository_names AS
 WITH versioned_repository_names AS (
     SELECT
         repo_id,
@@ -101,7 +102,7 @@ SELECT
 FROM latest_repository_names_version;
 
 -- view: latest_materialisations
-CREATE VIEW latest_materialisations AS
+CREATE VIEW IF NOT EXISTS latest_materialisations AS
 WITH versioned_materialisations AS (
     SELECT
         path,

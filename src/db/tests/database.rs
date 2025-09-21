@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::database::Database;
+    use crate::db::database::{Database, Pool};
     use crate::db::migrations::run_migrations;
 
     use crate::db::models::{
@@ -13,16 +13,10 @@ mod tests {
     use chrono::Utc;
     use futures::StreamExt;
     use futures::stream;
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
     use uuid::Uuid;
 
     async fn setup_test_db() -> Database {
-        let pool: SqlitePool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("failed to create pool");
-
+        let pool = Pool::new(":memory:").expect("Failed to open in-memory database");
         run_migrations(&pool)
             .await
             .expect("failed to run migrations");
