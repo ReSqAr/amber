@@ -30,5 +30,6 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, DBEr
         .acquire_timeout(std::time::Duration::from_secs(600))
         .acquire_slow_threshold(std::time::Duration::from_secs(450))
         .connect_with(options)
-        .await.map_err(DBError::from)
+        .await
+        .map_err(DBError::from)
 }
