@@ -1,4 +1,5 @@
 use crate::db::database::DBOutputStream;
+use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, Observation,
     VirtualFile,
@@ -61,26 +62,23 @@ pub trait Availability {
 }
 
 pub trait Adder {
-    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send;
 
-    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
 
-    fn observe_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    fn observe_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::ObservedBlob> + Unpin + Send;
 
-    fn add_repository_names<S>(
-        &self,
-        s: S,
-    ) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    fn add_repository_names<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertRepositoryName> + Unpin + Send;
 
-    fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, sqlx::Error>> + Send
+    fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
 
@@ -121,9 +119,9 @@ pub trait Syncer<T: SyncerParams> {
 }
 
 pub trait VirtualFilesystem {
-    async fn reset(&self) -> Result<(), sqlx::Error>;
-    async fn refresh(&self) -> Result<(), sqlx::Error>;
-    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
+    async fn reset(&self) -> Result<(), DBError>;
+    async fn refresh(&self) -> Result<(), DBError>;
+    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), DBError>> + Send;
 
     fn select_missing_files(
         &self,
@@ -133,7 +131,7 @@ pub trait VirtualFilesystem {
     async fn add_observations(
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static;
+    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static;
 }
 
 pub trait ConnectionManager {

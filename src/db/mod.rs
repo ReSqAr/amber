@@ -1,14 +1,16 @@
 pub(crate) mod cleaner;
 pub(crate) mod database;
+pub(crate) mod error;
 pub(crate) mod migrations;
 pub(crate) mod models;
 pub(crate) mod tests;
 
+use crate::db::error::DBError;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{ConnectOptions, Error, SqlitePool};
+use sqlx::{ConnectOptions, SqlitePool};
 use std::str::FromStr;
 
-pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Error> {
+pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, DBError> {
     let options = SqliteConnectOptions::from_str(database_url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
@@ -28,5 +30,5 @@ pub async fn establish_connection(database_url: &str) -> Result<SqlitePool, Erro
         .acquire_timeout(std::time::Duration::from_secs(600))
         .acquire_slow_threshold(std::time::Duration::from_secs(450))
         .connect_with(options)
-        .await
+        .await.map_err(DBError::from)
 }

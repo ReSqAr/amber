@@ -1,3 +1,4 @@
+use crate::db::error::DBError;
 use crate::utils::walker;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
@@ -47,10 +48,8 @@ pub enum InternalError {
     Tonic(#[from] tonic::transport::Error),
     #[error("grpc error: {0}")]
     Grpc(String),
-    #[error("sqlx error: {0}")]
-    Sqlx(#[from] sqlx::Error),
-    #[error("DB migration error: {0}")]
-    Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("db error: {0}")]
+    DBError(#[from] DBError),
     #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
     #[error("stream error: {0}")]

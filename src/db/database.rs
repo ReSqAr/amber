@@ -1,4 +1,5 @@
 use crate::db::cleaner::Cleaner;
+use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
@@ -23,7 +24,7 @@ pub struct Database {
     cleaner: Cleaner,
 }
 
-pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, sqlx::Error>>;
+pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
 impl Database {
     pub fn new(pool: SqlitePool) -> Self {
@@ -35,7 +36,7 @@ impl Database {
         }
     }
 
-    pub async fn clean(&self) -> Result<(), sqlx::Error> {
+    pub async fn clean(&self) -> Result<(), DBError> {
         sqlx::query("DELETE FROM transfers;")
             .execute(&self.pool)
             .await
@@ -74,7 +75,7 @@ impl Database {
         Box::pin(Box::pin(stream).track(name))
     }
 
-    pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, sqlx::Error> {
+    pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, DBError> {
         let potential_new_repository_id = Uuid::new_v4().to_string();
         if let Some(repo) = sqlx::query_as::<_, CurrentRepository>(
             "INSERT OR IGNORE INTO current_repository (id, repo_id) VALUES (1, ?)
@@ -90,12 +91,13 @@ impl Database {
         sqlx::query_as::<_, CurrentRepository>("SELECT id, repo_id FROM current_repository LIMIT 1")
             .fetch_one(&self.pool)
             .await
+            .map_err(DBError::from)
     }
 
     pub async fn lookup_current_repository_name(
         &self,
         repo_id: String,
-    ) -> Result<Option<String>, sqlx::Error> {
+    ) -> Result<Option<String>, DBError> {
         #[derive(Debug, FromRow)]
         struct Name {
             name: String,
@@ -113,7 +115,7 @@ impl Database {
         )
     }
 
-    pub async fn add_files<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    pub async fn add_files<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = InsertFile> + Unpin,
     {
@@ -164,7 +166,7 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    pub async fn add_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = InsertBlob> + Unpin,
     {
@@ -218,7 +220,7 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = ObservedBlob> + Unpin,
     {
@@ -283,7 +285,7 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_repository_names<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    pub async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = InsertRepositoryName> + Unpin,
     {
@@ -382,7 +384,7 @@ impl Database {
         )
     }
 
-    pub async fn merge_repositories<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn merge_repositories<S>(&self, s: S) -> Result<(), DBError>
     where
         S: Stream<Item = Repository> + Unpin + Send,
     {
@@ -438,7 +440,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_files<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn merge_files<S>(&self, s: S) -> Result<(), DBError>
     where
         S: Stream<Item = File> + Unpin + Send,
     {
@@ -488,7 +490,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_blobs<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn merge_blobs<S>(&self, s: S) -> Result<(), DBError>
     where
         S: Stream<Item = Blob> + Unpin + Send,
     {
@@ -541,7 +543,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_repository_names<S>(&self, s: S) -> Result<(), sqlx::Error>
+    pub async fn merge_repository_names<S>(&self, s: S) -> Result<(), DBError>
     where
         S: Stream<Item = RepositoryName> + Unpin + Send,
     {
@@ -591,7 +593,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn lookup_repository(&self, repo_id: String) -> Result<Repository, sqlx::Error> {
+    pub async fn lookup_repository(&self, repo_id: String) -> Result<Repository, DBError> {
         sqlx::query_as::<_, Repository>(
             "
                 SELECT COALESCE(r.repo_id, ?) as repo_id,
@@ -607,9 +609,10 @@ impl Database {
         .bind(&repo_id)
         .fetch_one(&self.pool)
         .await
+        .map_err(DBError::from)
     }
 
-    pub async fn update_last_indices(&self) -> Result<Repository, sqlx::Error> {
+    pub async fn update_last_indices(&self) -> Result<Repository, DBError> {
         sqlx::query_as::<_, Repository>(
             "
             INSERT INTO repositories (repo_id, last_file_index, last_blob_index, last_name_index)
@@ -628,13 +631,13 @@ impl Database {
         )
         .fetch_one(&self.pool)
         .await
+        .map_err(DBError::from)
     }
 
     pub(crate) fn available_blobs(
         &self,
         repo_id: String,
-    ) -> impl Stream<Item = Result<AvailableBlob, sqlx::Error>> + Unpin + Send + Sized + 'static
-    {
+    ) -> impl Stream<Item = Result<AvailableBlob, DBError>> + Unpin + Send + Sized + 'static {
         self.stream(
             "Database::available_blobs",
             query(
@@ -650,7 +653,7 @@ impl Database {
     pub(crate) fn missing_blobs(
         &self,
         repo_id: String,
-    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, sqlx::Error>> + Unpin + Send + Sized + 'static
+    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, DBError>> + Unpin + Send + Sized + 'static
     {
         self.stream(
             "Database::missing_blobs",
@@ -687,7 +690,7 @@ impl Database {
         )
     }
 
-    pub async fn add_materialisations<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    pub async fn add_materialisations<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = InsertMaterialisation> + Unpin,
     {
@@ -739,16 +742,17 @@ impl Database {
     pub async fn lookup_last_materialisation(
         &self,
         path: String,
-    ) -> Result<Option<Materialisation>, sqlx::Error> {
+    ) -> Result<Option<Materialisation>, DBError> {
         sqlx::query_as::<_, Materialisation>(
             "SELECT path, blob_id FROM latest_materialisations WHERE path = ?;",
         )
         .bind(path)
         .fetch_optional(&self.pool)
         .await
+        .map_err(DBError::from)
     }
 
-    pub async fn truncate_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
+    pub async fn truncate_virtual_filesystem(&self) -> Result<(), DBError> {
         let query = "DELETE FROM virtual_filesystem;";
         sqlx::query(query)
             .execute(&self.pool)
@@ -757,7 +761,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn refresh_virtual_filesystem(&self) -> Result<(), sqlx::Error> {
+    pub async fn refresh_virtual_filesystem(&self) -> Result<(), DBError> {
         let query = "
             INSERT OR REPLACE INTO virtual_filesystem (
                 path,
@@ -841,7 +845,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), sqlx::Error> {
+    pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), DBError> {
         let query = "
         DELETE FROM virtual_filesystem
         WHERE fs_last_seen_id IS DISTINCT FROM ? AND target_blob_id IS NULL AND materialisation_last_blob_id IS NULL;
@@ -882,7 +886,7 @@ impl Database {
     pub async fn add_virtual_filesystem_observations(
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
+    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static
     {
         let s = self.clone();
         input_stream.ready_chunks(self.max_variable_number / 7).then(move |chunk: Vec<Flow<Observation>>| {
@@ -1010,7 +1014,7 @@ impl Database {
                 }
 
 
-                let result = query.fetch_all(&s.pool).await;
+                let result = query.fetch_all(&s.pool).await.map_err(DBError::from);
                 match shutting_down {
                     true => ExtFlow::Shutdown(result),
                     false => ExtFlow::Data(result)
@@ -1019,7 +1023,7 @@ impl Database {
         }).track("Database::add_virtual_filesystem_observations")
     }
 
-    pub async fn add_connection(&self, connection: &Connection) -> Result<(), sqlx::Error> {
+    pub async fn add_connection(&self, connection: &Connection) -> Result<(), DBError> {
         let query = "
             INSERT INTO connections (name, connection_type, parameter)
             VALUES (?, ?, ?)
@@ -1035,7 +1039,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn connection_by_name(&self, name: &str) -> Result<Option<Connection>, sqlx::Error> {
+    pub async fn connection_by_name(&self, name: &str) -> Result<Option<Connection>, DBError> {
         let query = "
             SELECT name, connection_type, parameter
             FROM connections
@@ -1046,9 +1050,10 @@ impl Database {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
+            .map_err(DBError::from)
     }
 
-    pub async fn list_all_connections(&self) -> Result<Vec<Connection>, sqlx::Error> {
+    pub async fn list_all_connections(&self) -> Result<Vec<Connection>, DBError> {
         let query = "
             SELECT name, connection_type, parameter
             FROM connections
@@ -1057,6 +1062,7 @@ impl Database {
         sqlx::query_as::<_, Connection>(query)
             .fetch_all(&self.pool)
             .await
+            .map_err(DBError::from)
     }
 
     pub(crate) async fn populate_missing_blobs_for_transfer(
@@ -1152,8 +1158,8 @@ impl Database {
                 }
 
                 stream::iter(match query.fetch_all(&pool).await {
-                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<BlobTransferItem, sqlx::Error>>>(),
-                    Err(e) => vec!(Err(e)),
+                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<BlobTransferItem, DBError>>>(),
+                    Err(e) => vec!(Err(DBError::from(e))),
                 })
             })
         }).flatten().track("Database::select_blobs_transfer").boxed()
@@ -1254,8 +1260,8 @@ impl Database {
                 }
 
                 stream::iter(match query.fetch_all(&pool).await {
-                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<FileTransferItem, sqlx::Error>>>(),
-                    Err(e) => vec!(Err(e)),
+                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<Result<FileTransferItem, DBError>>>(),
+                    Err(e) => vec!(Err(DBError::from(e))),
                 })
             })
         }).flatten().track("Database::select_files_transfer").boxed()

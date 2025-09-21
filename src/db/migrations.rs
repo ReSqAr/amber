@@ -1,6 +1,6 @@
+use crate::db::error::DBError;
 use sqlx::SqlitePool;
-use sqlx::migrate::MigrateError;
 
-pub async fn run_migrations(pool: &SqlitePool) -> Result<(), MigrateError> {
-    sqlx::migrate!("./migrations").run(pool).await
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DBError> {
+    sqlx::migrate!("./migrations").run(pool).await.map_err(DBError::from)
 }

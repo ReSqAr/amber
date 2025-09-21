@@ -4,9 +4,10 @@ mod tests {
     use crate::db::migrations::run_migrations;
 
     use crate::db::models::{
-        AvailableBlob, Blob, Connection, ConnectionType, CopiedTransferItem, File, InsertBlob,
-        InsertFile, InsertMaterialisation, InsertRepositoryName, ObservedBlob, Repository,
-        RepositoryName,
+        AvailableBlob, Blob, BlobTransferItem, Connection, ConnectionType, CopiedTransferItem,
+        File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
+        InsertRepositoryName, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
+        VirtualFileState,
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
@@ -890,5 +891,763 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 0, "Expected transfers to be cleaned");
+    }
+
+    #[tokio::test]
+    async fn populate_missing_blobs_is_pull_only() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        db.add_files(stream::iter([InsertFile {
+            path: "file.txt".into(),
+            blob_id: Some("abcdef123456".into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        let blob_id = "abcdef123456";
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "abcdef123456".into(),
+            blob_size: 12,
+            has_blob: true,
+            path: Some(if blob_id.len() > 6 {
+                format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+            } else {
+                blob_id.to_string()
+            }),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add remote");
+
+        let mut stream_a = db
+            .populate_missing_blobs_for_transfer(1, "remote_repo".into(), vec![])
+            .await;
+        let mut items_a: Vec<BlobTransferItem> = vec![];
+        while let Some(it) = stream_a.next().await {
+            items_a.push(it.expect("populate A"));
+        }
+        assert!(
+            !items_a.is_empty(),
+            "expected at least one transfer (pull semantics)"
+        );
+
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let _local_repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo")
+            .repo_id;
+
+        db.add_files(stream::iter([InsertFile {
+            path: "file.txt".into(),
+            blob_id: Some("abcdef123456".into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        // local has it available
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: _local_repo.clone(),
+            blob_id: "abcdef123456".into(),
+            blob_size: 12,
+            has_blob: true,
+            path: None,
+            valid_from: now,
+        }]))
+        .await
+        .expect("add local");
+
+        let mut stream_b = db
+            .populate_missing_blobs_for_transfer(2, "remote_repo".into(), vec![])
+            .await;
+        let mut items_b: Vec<BlobTransferItem> = vec![];
+        while let Some(it) = stream_b.next().await {
+            items_b.push(it.expect("populate B"));
+        }
+        assert!(
+            items_b.is_empty(),
+            "expected no items (function is pull-only)"
+        );
+    }
+
+    #[tokio::test]
+    async fn populate_missing_files_is_pull_only_and_respects_path_selector() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let local_repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo")
+            .repo_id;
+
+        db.add_files(stream::iter([
+            InsertFile {
+                path: "dir1/a.txt".into(),
+                blob_id: Some("aaa111".into()),
+                valid_from: now,
+            },
+            InsertFile {
+                path: "dir2/b.txt".into(),
+                blob_id: Some("bbb222".into()),
+                valid_from: now,
+            },
+        ]))
+        .await
+        .expect("add_files");
+
+        let blob_id = "bbb222";
+        let blob_id1 = "aaa111";
+        db.add_blobs(stream::iter([
+            InsertBlob {
+                repo_id: "remote_repo".into(),
+                blob_id: "aaa111".into(),
+                blob_size: 10,
+                has_blob: true,
+                path: Some(if blob_id1.len() > 6 {
+                    format!("{}/{}/{}", &blob_id1[0..2], &blob_id1[2..4], &blob_id1[4..])
+                } else {
+                    blob_id1.to_string()
+                }),
+                valid_from: now,
+            },
+            InsertBlob {
+                repo_id: "remote_repo".into(),
+                blob_id: "bbb222".into(),
+                blob_size: 20,
+                has_blob: true,
+                path: Some(if blob_id.len() > 6 {
+                    format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+                } else {
+                    blob_id.to_string()
+                }),
+                valid_from: now,
+            },
+        ]))
+        .await
+        .expect("add remote blobs");
+
+        let mut s_all = db
+            .populate_missing_files_for_transfer(
+                7,
+                local_repo.clone(),
+                "remote_repo".into(),
+                vec![],
+            )
+            .await;
+        let mut all: Vec<FileTransferItem> = vec![];
+        while let Some(it) = s_all.next().await {
+            all.push(it.expect("populate all"));
+        }
+        assert_eq!(all.len(), 2, "expected both files to be proposed in pull");
+
+        let mut s_sel = db
+            .populate_missing_files_for_transfer(
+                8,
+                local_repo.clone(),
+                "remote_repo".into(),
+                vec!["dir1".into()],
+            )
+            .await;
+        let mut only_dir1: Vec<FileTransferItem> = vec![];
+        while let Some(it) = s_sel.next().await {
+            only_dir1.push(it.expect("populate dir1"));
+        }
+        assert_eq!(only_dir1.len(), 1, "selector should filter to one file");
+        assert_eq!(only_dir1[0].path, "dir1/a.txt");
+    }
+
+    #[tokio::test]
+    async fn remote_assimilation_makes_missing_empty() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        db.add_files(stream::iter([InsertFile {
+            path: "test.txt".into(),
+            blob_id: Some("1234567890".into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        let blob_id = "1234567890";
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "1234567890".into(),
+            blob_size: 50,
+            has_blob: true,
+            path: Some(if blob_id.len() > 6 {
+                format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+            } else {
+                blob_id.to_string()
+            }),
+            valid_from: now,
+        }]))
+        .await
+        .expect("assimilate remote");
+
+        let mut miss_stream = db.missing_blobs("remote_repo".into());
+        let mut miss_items = vec![];
+        while let Some(it) = miss_stream.next().await {
+            miss_items.push(it.expect("missing"));
+        }
+        assert!(
+            miss_items.is_empty(),
+            "after assimilation, remote should have no missing blobs"
+        );
+    }
+
+    #[tokio::test]
+    async fn hashed_path_roundtrip_consistency() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+
+        db.add_files(stream::iter([InsertFile {
+            path: "x/y/z.txt".into(),
+            blob_id: Some("cafebabedeadbeef".into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        let blob_id = "cafebabedeadbeef";
+        let hp = if blob_id.len() > 6 {
+            format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+        } else {
+            blob_id.to_string()
+        };
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: "remote_repo".into(),
+            blob_id: "cafebabedeadbeef".into(),
+            blob_size: 1234,
+            has_blob: true,
+            path: Some(hp.clone()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add remote availability");
+
+        let mut avail = db.available_blobs("remote_repo".into());
+        let mut seen = vec![];
+        while let Some(it) = avail.next().await {
+            seen.push(it.expect("available"));
+        }
+        assert!(
+            seen.iter().any(|b| b.blob_id == "cafebabedeadbeef"),
+            "remote should report the assimilated blob as available"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_marks_missing_then_clears_only_after_materialise_and_seen_id_matches() {
+        use chrono::Utc;
+        use futures::{StreamExt, stream};
+
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let scan_id: i64 = 7;
+
+        let repo_id = db.get_or_create_current_repository().await.unwrap().repo_id;
+        let blob_id = "1234567890abcdef";
+
+        db.add_files(stream::iter([InsertFile {
+            path: "test.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: repo_id.clone(),
+            blob_id: blob_id.into(),
+            blob_size: 42,
+            has_blob: true,
+            path: Some({
+                fn hashed(id: &str) -> String {
+                    if id.len() > 6 {
+                        format!("{}/{}/{}", &id[0..2], &id[2..4], &id[4..])
+                    } else {
+                        id.to_string()
+                    }
+                }
+                hashed(blob_id)
+            }),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+
+        db.refresh_virtual_filesystem().await.unwrap();
+
+        let mut s1 = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+        let mut missing1 = vec![];
+        while let Some(r) = s1.next().await {
+            missing1.push(r.unwrap());
+        }
+        assert_eq!(missing1.len(), 1);
+        assert_eq!(missing1[0].path, "test.txt");
+        assert_eq!(missing1[0].target_blob_id, blob_id);
+        assert!(missing1[0].local_has_target_blob);
+
+        db.add_materialisations(stream::iter([InsertMaterialisation {
+            path: "test.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+        db.refresh_virtual_filesystem().await.unwrap();
+
+        let mut s2 = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+        let mut missing2 = vec![];
+        while let Some(r) = s2.next().await {
+            missing2.push(r.unwrap());
+        }
+        assert_eq!(
+            missing2.len(),
+            1,
+            "materialisation alone does not clear the queue"
+        );
+
+        let obs = vec![Flow::Data(Observation::FileSeen(FileSeen {
+            path: "test.txt".into(),
+            seen_id: scan_id,
+            seen_dttm: now.timestamp(),
+            last_modified_dttm: now.timestamp(),
+            size: 42,
+        }))];
+        let mut out = db
+            .add_virtual_filesystem_observations(stream::iter(obs))
+            .await;
+        while let Some(_batch) = out.next().await { /* drive it */ }
+
+        let mut s3 = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+        let mut missing3 = vec![];
+        while let Some(r) = s3.next().await {
+            missing3.push(r.unwrap());
+        }
+        assert!(
+            missing3.is_empty(),
+            "clears only after fs_last_seen_id == scan_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_assimilation_eliminates_missing() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let remote_repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo")
+            .repo_id;
+
+        let blob_id = "feedfacecafebeef";
+        db.add_files(stream::iter([InsertFile {
+            path: "hello.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: remote_repo.clone(),
+            blob_id: blob_id.into(),
+            blob_size: 123,
+            has_blob: true,
+            path: Some(if blob_id.len() > 6 {
+                format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+            } else {
+                blob_id.to_string()
+            }),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_blobs");
+
+        let mut missing = db.missing_blobs(remote_repo.clone());
+        let mut miss_items = vec![];
+        while let Some(it) = missing.next().await {
+            miss_items.push(it.expect("missing_blobs"));
+        }
+        assert!(
+            miss_items.is_empty(),
+            "with both file mapping and available blob, remote has no missing blobs"
+        );
+
+        let mut avail = db.available_blobs(remote_repo.clone());
+        let mut avail_items: Vec<AvailableBlob> = vec![];
+        while let Some(it) = avail.next().await {
+            avail_items.push(it.expect("available_blobs"));
+        }
+        assert!(
+            avail_items.iter().any(|b| b.blob_id == blob_id),
+            "assimilated blob should be reported as available"
+        );
+    }
+
+    #[tokio::test]
+    async fn vfs_state_transitions_ok_materialisation_missing_to_ok() {
+        let db = setup_test_db().await;
+        let now = Utc::now();
+        let remote_repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo")
+            .repo_id;
+
+        let blob_id = "aa11bb22cc33";
+
+        db.add_files(stream::iter([InsertFile {
+            path: "state.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: remote_repo.clone(),
+            blob_id: blob_id.into(),
+            blob_size: 77,
+            has_blob: true,
+            path: Some(if blob_id.len() > 6 {
+                format!("{}/{}/{}", &blob_id[0..2], &blob_id[2..4], &blob_id[4..])
+            } else {
+                blob_id.to_string()
+            }),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_blobs");
+
+        db.refresh_virtual_filesystem().await.expect("refresh");
+        let checks = vec![
+            Observation::FileSeen(FileSeen {
+                path: "state.txt".into(),
+                seen_id: 1,
+                seen_dttm: now.timestamp(),
+                last_modified_dttm: now.timestamp(),
+                size: 77,
+            }),
+            Observation::FileCheck(FileCheck {
+                path: "state.txt".into(),
+                check_dttm: now.timestamp(),
+                hash: blob_id.into(),
+            }),
+        ];
+
+        let mut out = db
+            .add_virtual_filesystem_observations(stream::iter(checks).map(Flow::Data))
+            .await;
+        let mut state1: Option<VirtualFileState> = None;
+        while let Some(batch) = out.next().await {
+            match batch {
+                ExtFlow::Data(Ok(v)) | ExtFlow::Shutdown(Ok(v)) => {
+                    for vf in v {
+                        if vf.path == "state.txt" {
+                            state1 = Some(vf.state);
+                        }
+                    }
+                }
+                ExtFlow::Data(Err(e)) | ExtFlow::Shutdown(Err(e)) => {
+                    panic!("obs failed: {e}");
+                }
+            }
+        }
+        assert_eq!(
+            state1,
+            Some(VirtualFileState::OkMaterialisationMissing),
+            "before recording materialisation, state should be ok_materialisation_missing"
+        );
+
+        db.add_materialisations(stream::iter([InsertMaterialisation {
+            path: "state.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_materialisations");
+
+        db.refresh_virtual_filesystem().await.expect("refresh 2");
+
+        let checks2 = vec![
+            Observation::FileSeen(FileSeen {
+                path: "state.txt".into(),
+                seen_id: 2,
+                seen_dttm: now.timestamp(),
+                last_modified_dttm: now.timestamp(),
+                size: 77,
+            }),
+            Observation::FileCheck(FileCheck {
+                path: "state.txt".into(),
+                check_dttm: now.timestamp(),
+                hash: blob_id.into(),
+            }),
+        ];
+
+        let mut out2 = db
+            .add_virtual_filesystem_observations(stream::iter(checks2).map(Flow::Data))
+            .await;
+        let mut state2: Option<VirtualFileState> = None;
+        while let Some(batch) = out2.next().await {
+            match batch {
+                ExtFlow::Data(Ok(v)) | ExtFlow::Shutdown(Ok(v)) => {
+                    for vf in v {
+                        if vf.path == "state.txt" {
+                            state2 = Some(vf.state);
+                        }
+                    }
+                }
+                ExtFlow::Data(Err(e)) | ExtFlow::Shutdown(Err(e)) => {
+                    panic!("obs failed: {e}");
+                }
+            }
+        }
+        assert_eq!(
+            state2,
+            Some(VirtualFileState::Ok),
+            "after recording materialisation, state should be ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_then_blob_produces_materialise_candidate() {
+        let db: Database = setup_test_db().await;
+        let now = Utc::now();
+        let blob_id = "abcdeffedcba1234";
+
+        let hashed_blob_path = |id: &str| format!("{}/{}/{}", &id[0..2], &id[2..4], &id[4..]);
+
+        let collect_missing = |scan_id: i64| {
+            let db = &db;
+            async move {
+                let mut s = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+                let mut v: Vec<MissingFile> = vec![];
+                while let Some(r) = s.next().await {
+                    v.push(r.expect("select_missing_files_on_virtual_filesystem"));
+                }
+                v
+            }
+        };
+
+        db.add_files(stream::iter([InsertFile {
+            path: "test.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        db.refresh_virtual_filesystem().await.expect("refresh vfs");
+        let miss0 = collect_missing(0).await;
+        assert!(miss0.is_empty(), "no candidate until the blob exists");
+
+        let repo_id = db.get_or_create_current_repository().await.unwrap().repo_id;
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id,
+            blob_id: blob_id.into(),
+            blob_size: 42,
+            has_blob: true,
+            path: Some(hashed_blob_path(blob_id)),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_blobs");
+
+        db.refresh_virtual_filesystem()
+            .await
+            .expect("refresh vfs 2");
+        let miss1 = collect_missing(0).await;
+        assert_eq!(
+            miss1.len(),
+            1,
+            "exactly one file should require materialisation now"
+        );
+        assert_eq!(miss1[0].path, "test.txt");
+        assert_eq!(miss1[0].target_blob_id, blob_id);
+    }
+
+    #[tokio::test]
+    async fn blob_then_file_produces_materialise_candidate() {
+        let db: Database = setup_test_db().await;
+        let now = Utc::now();
+        let blob_id = "0123456789abcdef";
+
+        let hashed_blob_path = |id: &str| format!("{}/{}/{}", &id[0..2], &id[2..4], &id[4..]);
+        let collect_missing = |scan_id: i64| {
+            let db = &db;
+            async move {
+                let mut s = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+                let mut v = vec![];
+                while let Some(r) = s.next().await {
+                    v.push(r.expect("select_missing_files"));
+                }
+                v
+            }
+        };
+
+        let repo_id = db.get_or_create_current_repository().await.unwrap().repo_id;
+
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id,
+            blob_id: blob_id.into(),
+            blob_size: 77,
+            has_blob: true,
+            path: Some(hashed_blob_path(blob_id)),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_blobs");
+
+        db.add_files(stream::iter([InsertFile {
+            path: "hello.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        db.refresh_virtual_filesystem().await.expect("refresh vfs");
+        let miss = collect_missing(0).await;
+        assert_eq!(miss.len(), 1, "should require materialisation");
+        assert_eq!(miss[0].path, "hello.txt");
+        assert_eq!(miss[0].target_blob_id, blob_id);
+    }
+
+    #[tokio::test]
+    async fn available_from_other_repo_still_requires_materialisation() {
+        let db: Database = setup_test_db().await;
+        let now = Utc::now();
+        let blob_id = "feedfacecafebeef";
+
+        let hashed_blob_path = |id: &str| format!("{}/{}/{}", &id[0..2], &id[2..4], &id[4..]);
+        let collect_missing = |scan_id: i64| {
+            let db = &db;
+            async move {
+                let mut s = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+                let mut v = vec![];
+                while let Some(r) = s.next().await {
+                    v.push(r.expect("select_missing_files"));
+                }
+                v
+            }
+        };
+
+        db.add_files(stream::iter([InsertFile {
+            path: "cross.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_files");
+
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id: "some-other-repo-id".to_string(),
+            blob_id: blob_id.into(),
+            blob_size: 9001,
+            has_blob: true,
+            path: Some(hashed_blob_path(blob_id)),
+            valid_from: now,
+        }]))
+        .await
+        .expect("add_blobs");
+
+        db.refresh_virtual_filesystem().await.expect("refresh vfs");
+        let miss = collect_missing(0).await;
+        assert_eq!(
+            miss.len(),
+            1,
+            "materialisation is still needed even if availability is from another repo"
+        );
+        assert_eq!(miss[0].path, "cross.txt");
+        assert_eq!(miss[0].target_blob_id, blob_id);
+        assert!(
+            !miss[0].local_has_target_blob,
+            "should reflect lack of local availability in the current repo"
+        );
+    }
+
+    #[tokio::test]
+    async fn clears_only_after_materialise_and_seen_id_matches() {
+        let db: Database = setup_test_db().await;
+        let now = Utc::now();
+        let scan_id: i64 = 42;
+        let blob_id = "aa11bb22cc33";
+
+        let hashed_blob_path = |id: &str| format!("{}/{}/{}", &id[0..2], &id[2..4], &id[4..]);
+        let collect_missing = |scan_id: i64| {
+            let db = &db;
+            async move {
+                let mut s = db.select_missing_files_on_virtual_filesystem(scan_id).await;
+                let mut v = vec![];
+                while let Some(r) = s.next().await {
+                    v.push(r.expect("select_missing_files"));
+                }
+                v
+            }
+        };
+
+        let repo_id = db.get_or_create_current_repository().await.unwrap().repo_id;
+        db.add_files(stream::iter([InsertFile {
+            path: "state.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+        db.add_blobs(stream::iter([InsertBlob {
+            repo_id,
+            blob_id: blob_id.into(),
+            blob_size: 64,
+            has_blob: true,
+            path: Some(hashed_blob_path(blob_id)),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+
+        db.refresh_virtual_filesystem().await.unwrap();
+        let miss1 = collect_missing(scan_id).await;
+        assert_eq!(miss1.len(), 1, "initially needs materialisation");
+
+        db.add_materialisations(stream::iter([InsertMaterialisation {
+            path: "state.txt".into(),
+            blob_id: Some(blob_id.into()),
+            valid_from: now,
+        }]))
+        .await
+        .unwrap();
+        db.refresh_virtual_filesystem().await.unwrap();
+
+        let miss2 = collect_missing(scan_id).await;
+        assert_eq!(miss2.len(), 1, "materialisation alone doesn't clear");
+
+        let mut out = db
+            .add_virtual_filesystem_observations(stream::iter([
+                Flow::Data(Observation::FileSeen(FileSeen {
+                    path: "state.txt".into(),
+                    seen_id: scan_id,
+                    seen_dttm: now.timestamp(),
+                    last_modified_dttm: now.timestamp(),
+                    size: 64,
+                })),
+                Flow::Data(Observation::FileCheck(FileCheck {
+                    path: "state.txt".into(),
+                    check_dttm: now.timestamp(),
+                    hash: blob_id.into(),
+                })),
+            ]))
+            .await;
+        while let Some(_batch) = out.next().await { /* drain */ }
+
+        let miss3 = collect_missing(scan_id).await;
+        assert!(miss3.is_empty(), "clears after FileSeen matches scan id");
     }
 }

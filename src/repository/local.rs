@@ -1,5 +1,6 @@
 use crate::connection::EstablishedConnection;
 use crate::db::database::{DBOutputStream, Database};
+use crate::db::error::DBError;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
@@ -279,35 +280,35 @@ impl Availability for LocalRepository {
 }
 
 impl Adder for LocalRepository {
-    async fn add_files<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    async fn add_files<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = models::InsertFile> + Unpin + Send,
     {
         self.db.add_files(s).await
     }
 
-    async fn add_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    async fn add_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
     }
 
-    async fn observe_blobs<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = ObservedBlob> + Unpin + Send,
     {
         self.db.observe_blobs(s).await
     }
 
-    async fn add_repository_names<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = models::InsertRepositoryName> + Unpin + Send,
     {
         self.db.add_repository_names(s).await
     }
 
-    async fn add_materialisation<S>(&self, s: S) -> Result<u64, sqlx::Error>
+    async fn add_materialisation<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = models::InsertMaterialisation> + Unpin + Send,
     {
@@ -439,15 +440,15 @@ impl Syncer<RepositoryName> for LocalRepository {
 }
 
 impl VirtualFilesystem for LocalRepository {
-    async fn reset(&self) -> Result<(), sqlx::Error> {
+    async fn reset(&self) -> Result<(), DBError> {
         self.db.truncate_virtual_filesystem().await
     }
 
-    async fn refresh(&self) -> Result<(), sqlx::Error> {
+    async fn refresh(&self) -> Result<(), DBError> {
         self.db.refresh_virtual_filesystem().await
     }
 
-    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
+    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), DBError>> + Send {
         self.db.cleanup_virtual_filesystem(last_seen_id)
     }
 
@@ -462,7 +463,7 @@ impl VirtualFilesystem for LocalRepository {
     async fn add_observations(
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, sqlx::Error>>> + Unpin + Send + 'static
+    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static
     {
         self.db
             .add_virtual_filesystem_observations(input_stream)
