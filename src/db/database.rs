@@ -8,6 +8,7 @@ use crate::db::models::{
 };
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::stream::BoundedWaitChunksExt;
 use async_stream::try_stream;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
@@ -23,6 +24,8 @@ pub struct Database {
     max_variable_number: usize,
     cleaner: Cleaner,
 }
+
+const TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(5);
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
@@ -67,7 +70,10 @@ impl Database {
                         yield T::from_row(&row)?;
                     }
                     Ok(Either::Left(_)) => continue,
-                    Err(e) => Err(e)?,
+                    Err(e) => {
+                        log::error!("Database::stream failed: {e}");
+                        Err(e)?
+                    },
                 }
             }
         };
@@ -117,11 +123,13 @@ impl Database {
 
     pub async fn add_files<S>(&self, s: S) -> Result<u64, DBError>
     where
-        S: Stream<Item = InsertFile> + Unpin,
+        S: Stream<Item = InsertFile> + Send + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -168,11 +176,13 @@ impl Database {
 
     pub async fn add_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
-        S: Stream<Item = InsertBlob> + Unpin,
+        S: Stream<Item = InsertBlob> + Send + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -222,11 +232,13 @@ impl Database {
 
     pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
-        S: Stream<Item = ObservedBlob> + Unpin,
+        S: Stream<Item = ObservedBlob> + Send + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 5);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 5, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -287,11 +299,13 @@ impl Database {
 
     pub async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
     where
-        S: Stream<Item = InsertRepositoryName> + Unpin,
+        S: Stream<Item = InsertRepositoryName> + Send + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -390,7 +404,9 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 3, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -446,7 +462,9 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -496,7 +514,9 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 7);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -549,7 +569,9 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 4);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -692,11 +714,13 @@ impl Database {
 
     pub async fn add_materialisations<S>(&self, s: S) -> Result<u64, DBError>
     where
-        S: Stream<Item = InsertMaterialisation> + Unpin,
+        S: Stream<Item = InsertMaterialisation> + Send + Unpin,
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s.ready_chunks(self.max_variable_number / 3);
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 3, TIMEOUT)
+            .boxed();
 
         while let Some(chunk) = chunk_stream.next().await {
             let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
@@ -889,7 +913,7 @@ impl Database {
     ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static
     {
         let s = self.clone();
-        input_stream.ready_chunks(self.max_variable_number / 7).then(move |chunk: Vec<Flow<Observation>>| {
+        input_stream.bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT).then(move |chunk: Vec<Flow<Observation>>| {
             let s = s.clone();
             Box::pin(async move {
                 let _cleanup_guard = s.cleaner.periodic_cleanup(chunk.len()).await;
@@ -1020,7 +1044,7 @@ impl Database {
                     false => ExtFlow::Data(result)
                 }
             })
-        }).track("Database::add_virtual_filesystem_observations")
+        }).boxed().track("Database::add_virtual_filesystem_observations")
     }
 
     pub async fn add_connection(&self, connection: &Connection) -> Result<(), DBError> {
@@ -1131,7 +1155,7 @@ impl Database {
         input_stream: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
     ) -> DBOutputStream<'static, BlobTransferItem> {
         let pool = self.pool.clone();
-        input_stream.ready_chunks(self.max_variable_number / 2).then(move |chunk: Vec<CopiedTransferItem>| {
+        input_stream.bounded_wait_chunks(self.max_variable_number / 2, TIMEOUT).then(move |chunk: Vec<CopiedTransferItem>| {
             let pool = pool.clone();
             Box::pin(async move {
                 if chunk.is_empty() { // SQL is otherwise not valid
@@ -1162,7 +1186,7 @@ impl Database {
                     Err(e) => vec!(Err(DBError::from(e))),
                 })
             })
-        }).flatten().track("Database::select_blobs_transfer").boxed()
+        }).flatten().boxed().track("Database::select_blobs_transfer").boxed()
     }
 
     pub(crate) async fn populate_missing_files_for_transfer(
@@ -1233,7 +1257,7 @@ impl Database {
         input_stream: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
     ) -> DBOutputStream<'static, FileTransferItem> {
         let pool = self.pool.clone();
-        input_stream.ready_chunks(self.max_variable_number / 2).then(move |chunk: Vec<CopiedTransferItem>| {
+        input_stream.bounded_wait_chunks(self.max_variable_number / 2, TIMEOUT).then(move |chunk: Vec<CopiedTransferItem>| {
             let pool = pool.clone();
             Box::pin(async move {
                 if chunk.is_empty() { // SQL is otherwise not valid
@@ -1264,6 +1288,6 @@ impl Database {
                     Err(e) => vec!(Err(DBError::from(e))),
                 })
             })
-        }).flatten().track("Database::select_files_transfer").boxed()
+        }).flatten().boxed().track("Database::select_files_transfer").boxed()
     }
 }

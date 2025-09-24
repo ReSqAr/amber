@@ -13,6 +13,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
     Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
 };
+use crate::utils::stream::BoundedWaitChunksExt;
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -20,13 +21,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
+use tokio::{fs, time};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+
+const TIMEOUT: time::Duration = time::Duration::from_millis(5);
 
 #[derive(Debug)]
 enum Direction {
@@ -52,7 +55,7 @@ fn write_rclone_files_clone<T: TransferItem>(
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream = rx.ready_chunks(writer_buffer_size);
+        let mut chunked_stream = rx.bounded_wait_chunks(writer_buffer_size, TIMEOUT).boxed();
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
                 acc.push_str(&(item.path() + "\n"));

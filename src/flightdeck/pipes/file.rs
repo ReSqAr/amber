@@ -2,7 +2,7 @@ use crate::flightdeck::observation::Observation;
 use crate::flightdeck::observation::Value;
 use async_compression::tokio::write::GzipEncoder;
 use chrono::SecondsFormat;
-use sqlx::types::JsonValue;
+use serde_json::value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub struct FilePipe {
@@ -31,22 +31,22 @@ impl FilePipe {
 
         let mut log_object = serde_json::Map::new();
 
-        log_object.insert("level".to_string(), JsonValue::String(level.to_string()));
+        log_object.insert("level".to_string(), value::Value::String(level.to_string()));
 
-        log_object.insert("type".to_string(), JsonValue::String(obs.type_key));
+        log_object.insert("type".to_string(), value::Value::String(obs.type_key));
 
-        if let Some(id_value) = obs.id.map(JsonValue::String) {
+        if let Some(id_value) = obs.id.map(value::Value::String) {
             log_object.insert("id".to_string(), id_value);
         }
 
         let timestamp = obs.timestamp.to_rfc3339_opts(SecondsFormat::Millis, true);
-        log_object.insert("timestamp".to_string(), JsonValue::String(timestamp));
+        log_object.insert("timestamp".to_string(), value::Value::String(timestamp));
 
         for data in obs.data {
             let value = match data.value {
-                Value::String(s) => JsonValue::String(s),
-                Value::U64(u) => JsonValue::Number(serde_json::Number::from(u)),
-                Value::Bool(b) => JsonValue::Bool(b),
+                Value::String(s) => value::Value::String(s),
+                Value::U64(u) => value::Value::Number(serde_json::Number::from(u)),
+                Value::Bool(b) => value::Value::Bool(b),
             };
             log_object.insert(data.key, value);
         }
