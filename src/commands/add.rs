@@ -10,11 +10,12 @@ use crate::utils::errors::InternalError;
 use std::path::PathBuf;
 pub async fn add(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     skip_deduplication: bool,
     verbose: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root).await?;
+    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {

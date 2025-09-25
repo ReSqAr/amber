@@ -175,7 +175,8 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     })?;
 
                     let shutdown =
-                        ssh::start_ssh_server(&repo_instance.path, port, password).await?;
+                        ssh::start_ssh_server(&repo_instance.path, ".amb".into(), port, password)
+                            .await?;
                     if let Some(s) = ssh_connection.insert(repo, shutdown) {
                         s.await
                     }

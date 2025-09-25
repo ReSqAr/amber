@@ -31,22 +31,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::{fs, task};
 
-const REPO_FOLDER_NAME: &str = ".amb";
-
 #[derive(Clone)]
 pub(crate) struct LocalRepository {
     root: PathBuf,
+    app_folder: PathBuf,
     repo_id: String,
     db: Database,
     _lock: Arc<std::fs::File>,
 }
 
 /// Recursively searches parent directories for the folder to determine the repository root.
-async fn find_repository_root(start_path: &Path) -> Result<PathBuf, InternalError> {
+async fn find_repository_root(
+    start_path: &Path,
+    app_folder: &Path,
+) -> Result<PathBuf, InternalError> {
     let mut current = start_path.canonicalize()?;
 
     loop {
-        let inv_path = current.join(REPO_FOLDER_NAME);
+        let inv_path = current.join(app_folder);
         if fs::metadata(&inv_path)
             .await
             .map(|m| m.is_dir())
@@ -78,14 +80,17 @@ async fn acquire_exclusive_lock<P: AsRef<Path>>(path: P) -> Result<std::fs::File
 }
 
 impl LocalRepository {
-    pub async fn new(maybe_root: Option<PathBuf>) -> Result<Self, InternalError> {
+    pub async fn new(
+        maybe_root: Option<PathBuf>,
+        app_folder: PathBuf,
+    ) -> Result<Self, InternalError> {
         let root = if let Some(root) = maybe_root {
             root
         } else {
-            find_repository_root(&std::env::current_dir()?).await?
+            find_repository_root(&std::env::current_dir()?, &app_folder).await?
         };
 
-        let repository_path = root.join(REPO_FOLDER_NAME);
+        let repository_path = root.join(&app_folder);
         if !fs::metadata(&repository_path)
             .await
             .map(|m| m.is_dir())
@@ -122,18 +127,23 @@ impl LocalRepository {
         Ok(Self {
             root: root.canonicalize()?,
             repo_id: repo.repo_id,
+            app_folder,
             db,
             _lock: Arc::new(lock),
         })
     }
 
-    pub async fn create(maybe_root: Option<PathBuf>, name: String) -> Result<Self, InternalError> {
+    pub async fn create(
+        maybe_root: Option<PathBuf>,
+        app_folder: PathBuf,
+        name: String,
+    ) -> Result<Self, InternalError> {
         let root = if let Some(path) = maybe_root {
             path
         } else {
             fs::canonicalize(".").await?
         };
-        let repository_path = root.join(REPO_FOLDER_NAME);
+        let repository_path = root.join(&app_folder);
         if fs::metadata(&repository_path)
             .await
             .map(|m| m.is_dir())
@@ -167,11 +177,15 @@ impl LocalRepository {
         }]))
         .await?;
 
-        Self::new(Some(root)).await
+        Self::new(Some(root), app_folder).await
     }
 
     pub(crate) fn db(&self) -> &Database {
         &self.db
+    }
+
+    pub(crate) fn app_folder(&self) -> &Path {
+        self.app_folder.as_path()
     }
 }
 
@@ -181,7 +195,7 @@ impl Local for LocalRepository {
     }
 
     fn repository_path(&self) -> RepoPath {
-        self.root().join(REPO_FOLDER_NAME)
+        self.root().join(&self.app_folder)
     }
 
     fn blobs_path(&self) -> RepoPath {

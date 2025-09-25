@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 
 pub(crate) async fn rm(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     files: Vec<PathBuf>,
     soft: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root).await?;
+    let local = LocalRepository::new(maybe_root, app_folder).await?;
     let root_path = local.root().abs().clone();
     let log_path = local.log_path().abs().clone();
 
@@ -75,11 +76,12 @@ fn rm_root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuil
 
 pub(crate) async fn mv(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     source: PathBuf,
     destination: PathBuf,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root).await?;
+    let local = LocalRepository::new(maybe_root, app_folder).await?;
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {

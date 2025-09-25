@@ -590,6 +590,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
 pub async fn start_ssh_server(
     repo_path: &Path,
+    app_folder: PathBuf,
     ssh_port: u16,
     password: String,
 ) -> anyhow::Result<Pin<Box<dyn Future<Output = ()>>>, anyhow::Error> {
@@ -618,6 +619,7 @@ pub async fn start_ssh_server(
 
         if let Err(e) = serve::serve_on_port(
             Some(repo_path_clone),
+            app_folder,
             Output::Override(writer),
             port,
             auth_key_clone,

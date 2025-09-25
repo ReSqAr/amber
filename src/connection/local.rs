@@ -2,6 +2,7 @@ use crate::repository::local::LocalRepository;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone::{ConfigSection, RCloneTarget};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct LocalConfig {
@@ -17,9 +18,12 @@ impl LocalConfig {
         LocalTarget { path: remote_path }
     }
 
-    pub(crate) async fn connect(&self) -> Result<WrappedRepository, InternalError> {
+    pub(crate) async fn connect(
+        &self,
+        app_folder: PathBuf,
+    ) -> Result<WrappedRepository, InternalError> {
         let LocalConfig { root } = self;
-        let repository = LocalRepository::new(Some(root.clone().into())).await?;
+        let repository = LocalRepository::new(Some(root.clone().into()), app_folder).await?;
         Ok(WrappedRepository::Local(repository))
     }
 }

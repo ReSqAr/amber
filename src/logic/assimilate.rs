@@ -124,7 +124,9 @@ mod tests {
         let repo_path = dir.path().join("repo");
         fs::create_dir_all(&repo_path).await?;
 
-        let local = LocalRepository::create(Some(repo_path.clone()), "test_repo".into()).await?;
+        let local =
+            LocalRepository::create(Some(repo_path.clone()), ".amb".into(), "test_repo".into())
+                .await?;
 
         let file_path = repo_path.join("hello.txt");
         let mut file = fs::File::create(&file_path).await?;

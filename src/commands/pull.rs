@@ -17,13 +17,14 @@ use std::path::PathBuf;
 
 pub async fn pull(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     connection_name: String,
     paths: Vec<PathBuf>,
     output: flightdeck::output::Output,
     rclone_transfers: usize,
     rclone_checkers: usize,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root).await?;
+    let local = LocalRepository::new(maybe_root, app_folder).await?;
     let log_path = local.log_path().abs().clone();
     let root = local.root();
     let paths = paths

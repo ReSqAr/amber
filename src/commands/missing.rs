@@ -13,10 +13,11 @@ use tokio_stream::StreamExt;
 
 pub async fn missing(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root).await?;
+    let local = LocalRepository::new(maybe_root, app_folder).await?;
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {

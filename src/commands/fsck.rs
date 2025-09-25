@@ -13,11 +13,12 @@ use std::path::PathBuf;
 
 pub async fn fsck(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
     rclone_checkers: usize,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root).await?;
+    let local = LocalRepository::new(maybe_root, app_folder).await?;
     let log_path = local.log_path().abs().clone();
 
     let config = RCloneConfig {

@@ -28,6 +28,7 @@ pub fn generate_auth_key() -> String {
 
 pub async fn serve(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let auth_key = generate_auth_key();
@@ -51,17 +52,26 @@ pub async fn serve(
         debug!("initiating graceful shutdown");
     };
 
-    serve_on_port(maybe_root, output, port, auth_key, shutdown_signal).await
+    serve_on_port(
+        maybe_root,
+        app_folder,
+        output,
+        port,
+        auth_key,
+        shutdown_signal,
+    )
+    .await
 }
 
 pub async fn serve_on_port(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     output: crate::flightdeck::output::Output,
     port: u16,
     auth_key: String,
     shutdown_signal: impl Future<Output = ()>,
 ) -> Result<(), InternalError> {
-    let local_repository = match LocalRepository::new(maybe_root).await {
+    let local_repository = match LocalRepository::new(maybe_root, app_folder).await {
         Ok(local_repository) => local_repository,
         Err(e) => {
             let error = ServeResult::Error(ServeError {

@@ -10,13 +10,14 @@ use std::path::PathBuf;
 
 pub async fn init_repository(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     name: String,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let wrapped = async {
         let mut init_obs = BaseObserver::without_id("init");
 
-        let local = LocalRepository::create(maybe_root, name.clone()).await?;
+        let local = LocalRepository::create(maybe_root, app_folder, name.clone()).await?;
 
         let msg = format!(
             "initialised repository {} in {}",

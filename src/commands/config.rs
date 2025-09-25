@@ -7,10 +7,11 @@ use std::path::PathBuf;
 
 pub async fn set_name(
     maybe_root: Option<PathBuf>,
+    app_folder: PathBuf,
     name: String,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root).await?;
+    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
 
     let meta = local_repository.current().await?;
 
