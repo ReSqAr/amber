@@ -83,13 +83,6 @@ pub struct InsertMaterialisation {
 }
 
 #[derive(Debug, FromRow, Clone)]
-pub struct Materialisation {
-    #[allow(dead_code)]
-    pub path: String,
-    pub blob_id: Option<String>,
-}
-
-#[derive(Debug, FromRow, Clone)]
 pub struct AvailableBlob {
     pub repo_id: String,
     pub blob_id: String,
@@ -213,4 +206,39 @@ pub struct WalCheckpoint {
     pub log: i64,
     #[allow(dead_code)]
     pub checkpointed: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum MvType {
+    File,
+    Dir,
+    Unknown,
+}
+
+#[derive(Debug, FromRow, Clone)]
+pub struct MoveInstr {
+    pub src_path: String,
+    pub dst_path: String,
+    pub blob_id: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Type, Clone, Copy, Hash)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+pub enum MoveViolationCode {
+    SourceNotFound,
+    DestinationExistsDb,
+    SourceEqualsDestination,
+}
+
+#[derive(Debug, FromRow, Clone)]
+pub struct MoveViolation {
+    pub code: MoveViolationCode,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum MoveEvent {
+    Violation(MoveViolation),
+    Instruction(MoveInstr),
 }

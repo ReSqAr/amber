@@ -4,8 +4,8 @@ use crate::db::error::DBError;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
-    File, FileTransferItem, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
-    VirtualFile,
+    File, FileTransferItem, MissingFile, MoveEvent, MvType, Observation, ObservedBlob, Repository,
+    RepositoryName, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -21,6 +21,7 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
+use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
 use log::debug;
@@ -141,7 +142,9 @@ impl LocalRepository {
         let root = if let Some(path) = maybe_root {
             path
         } else {
-            fs::canonicalize(".").await?
+            fs::canonicalize(".")
+                .await
+                .inspect_err(|e| log::error!("failed to canonicalize root: {e}"))?
         };
         let repository_path = root.join(&app_folder);
         if fs::metadata(&repository_path)
@@ -152,16 +155,26 @@ impl LocalRepository {
             return Err(AppError::RepositoryAlreadyInitialised().into());
         };
 
-        fs::create_dir(repository_path.as_path()).await?;
+        fs::create_dir(repository_path.as_path())
+            .await
+            .inspect_err(|e| log::error!("unable to create path {repository_path:?}: {e}"))?;
 
-        utils::fs::capability_check(&repository_path).await?;
+        utils::fs::capability_check(&repository_path)
+            .await
+            .inspect_err(|e| log::error!("capability check failed: {e}"))?;
 
         let blobs_path = repository_path.join("blobs");
-        fs::create_dir_all(blobs_path.as_path()).await?;
+        fs::create_dir_all(blobs_path.as_path())
+            .await
+            .inspect_err(|e| log::error!("failed to create blobs path {blobs_path:?}: {e}"))?;
 
         let db_path = repository_path.join("db.sqlite");
-        let pool = establish_connection(db_path.to_str().unwrap()).await?;
-        run_migrations(&pool).await?;
+        let pool = establish_connection(db_path.to_str().unwrap())
+            .await
+            .inspect_err(|e| log::error!("unable to establish a database connection: {e}"))?;
+        run_migrations(&pool)
+            .await
+            .inspect_err(|e| log::error!("unable to run database migration: {e}"))?;
 
         let db = Database::new(pool.clone());
 
@@ -261,6 +274,7 @@ impl Config for LocalRepository {
             BufferType::FsckMaterialiseBufferParallelism => 20,
             BufferType::FsckRcloneFilesWriterChannelSize => 10000,
             BufferType::FsckRcloneFilesStreamChunkSize => 1000,
+            BufferType::FsMvParallelism => 10,
         }
     }
 }
@@ -327,19 +341,6 @@ impl Adder for LocalRepository {
         S: Stream<Item = models::InsertMaterialisation> + Unpin + Send,
     {
         self.db.add_materialisations(s).await
-    }
-
-    async fn lookup_last_materialisation(
-        &self,
-        path: &RepoPath,
-    ) -> Result<Option<String>, InternalError> {
-        let result = self
-            .db
-            .lookup_last_materialisation(path.rel().to_string_lossy().to_string())
-            .await
-            .map_err(InternalError::from)?;
-
-        Ok(result.and_then(|b| b.blob_id))
     }
 }
 
@@ -481,6 +482,18 @@ impl VirtualFilesystem for LocalRepository {
     {
         self.db
             .add_virtual_filesystem_observations(input_stream)
+            .await
+    }
+
+    async fn move_files(
+        &self,
+        src_raw: String,
+        dst_raw: String,
+        mv_type_hint: MvType,
+        now: DateTime<Utc>,
+    ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static {
+        self.db
+            .move_files(src_raw, dst_raw, mv_type_hint, now)
             .await
     }
 }

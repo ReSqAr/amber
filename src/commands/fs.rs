@@ -85,16 +85,8 @@ pub(crate) async fn mv(
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        let mut obs = BaseObserver::without_id("fs:mv");
+        fs::mv(&local, &source, &destination).await?;
 
-        fs::mv(&local, source.clone(), destination.clone()).await?;
-
-        let msg = format!(
-            "moved {} to {}",
-            source.to_string_lossy(),
-            destination.to_string_lossy()
-        );
-        obs.observe_termination(log::Level::Info, msg);
         Ok(())
     };
 

@@ -3,13 +3,14 @@ use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
-    InsertMaterialisation, InsertRepositoryName, Materialisation, MissingFile, Observation,
-    ObservedBlob, Repository, RepositoryName, VirtualFile,
+    InsertMaterialisation, InsertRepositoryName, MissingFile, MoveEvent, MoveInstr, MoveViolation,
+    MvType, Observation, ObservedBlob, Repository, RepositoryName, VirtualFile,
 };
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::stream::BoundedWaitChunksExt;
 use async_stream::try_stream;
+use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
 use log::debug;
@@ -78,7 +79,7 @@ impl Database {
             }
         };
 
-        Box::pin(Box::pin(stream).track(name))
+        stream.boxed().track(name).boxed()
     }
 
     pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, DBError> {
@@ -763,19 +764,6 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn lookup_last_materialisation(
-        &self,
-        path: String,
-    ) -> Result<Option<Materialisation>, DBError> {
-        sqlx::query_as::<_, Materialisation>(
-            "SELECT path, blob_id FROM latest_materialisations WHERE path = ?;",
-        )
-        .bind(path)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(DBError::from)
-    }
-
     pub async fn truncate_virtual_filesystem(&self) -> Result<(), DBError> {
         let query = "DELETE FROM virtual_filesystem;";
         sqlx::query(query)
@@ -893,8 +881,8 @@ impl Database {
         last_seen_id: i64,
     ) -> DBOutputStream<'static, MissingFile> {
         self.stream("Database::select_missing_files_on_virtual_filesystem",
-            query(
-                "
+                    query(
+                        "
                     SELECT
                         path,
                         target_blob_id,
@@ -902,8 +890,8 @@ impl Database {
                     FROM virtual_filesystem
                     WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND target_blob_id IS NOT NULL
                 ;",
-            )
-                .bind(last_seen_id),
+                    )
+                        .bind(last_seen_id),
         )
     }
 
@@ -1096,8 +1084,8 @@ impl Database {
         paths: Vec<String>,
     ) -> DBOutputStream<'static, BlobTransferItem> {
         self.stream("Database::populate_missing_blobs_for_transfer",
-            query(
-                "
+                    query(
+                        "
             INSERT INTO transfers (transfer_id, blob_id, blob_size, path)
             WITH
                 local_blobs AS (
@@ -1143,10 +1131,10 @@ impl Database {
             FROM missing_blob_ids m
             INNER JOIN remote_blobs rb ON m.blob_id = rb.blob_id
             RETURNING transfer_id, blob_id, path;",
-            )
-                .bind(remote_repo_id)
-                .bind(serde_json::to_string(&paths).unwrap())
-                .bind(transfer_id)
+                    )
+                        .bind(remote_repo_id)
+                        .bind(serde_json::to_string(&paths).unwrap())
+                        .bind(transfer_id),
         )
     }
 
@@ -1159,7 +1147,7 @@ impl Database {
             let pool = pool.clone();
             Box::pin(async move {
                 if chunk.is_empty() { // SQL is otherwise not valid
-                    return stream::iter(vec![])
+                    return stream::iter(vec![]);
                 }
 
                 let placeholders = chunk
@@ -1261,7 +1249,7 @@ impl Database {
             let pool = pool.clone();
             Box::pin(async move {
                 if chunk.is_empty() { // SQL is otherwise not valid
-                    return stream::iter(vec![])
+                    return stream::iter(vec![]);
                 }
 
                 let placeholders = chunk
@@ -1289,5 +1277,156 @@ impl Database {
                 })
             })
         }).flatten().boxed().track("Database::select_files_transfer").boxed()
+    }
+
+    /// Streams either:
+    /// - MoveEvent::Violation(...) rows (if the move would collide in DB), or
+    /// - MoveEvent::Instruction(...) rows (after the DB append-only move),
+    /// and returns normal errors only on actual DB/SQL failures.
+    ///
+    /// Steps:
+    /// 1) CREATE TEMP map table
+    /// 2) POPULATE map from latest_filesystem_files (DB decides dir/file when Unknown)
+    /// 3) VIOLATIONS query → if any rows, stream them and **stop** (no DB mutation)
+    /// 4) INSERT … UNION ALL (tombstones + new rows)
+    /// 5) SELECT instructions and stream them
+    pub async fn move_files<'a>(
+        &self,
+        src_raw: String,
+        dst_raw: String,
+        mv_type_hint: MvType,
+        now: DateTime<Utc>,
+    ) -> DBOutputStream<'a, MoveEvent> {
+        #[inline]
+        fn normalize_path(mut p: String) -> String {
+            while p.ends_with('/') && p.len() > 1 {
+                p.pop();
+            }
+            p
+        }
+        #[inline]
+        fn trim_trailing_slash(mut s: String) -> String {
+            while s.ends_with('/') && s.len() > 1 {
+                s.pop();
+            }
+            s
+        }
+
+        // `dirname/` → normalize to `dirname` and treat as Dir (hint only; DB still decides if Unknown)
+        let (src_norm, mv_type_final) = {
+            let trailing_dir = src_raw.ends_with('/');
+            let s = normalize_path(src_raw.to_string());
+            if trailing_dir {
+                (trim_trailing_slash(s), MvType::Dir)
+            } else {
+                (s, mv_type_hint)
+            }
+        };
+        let dst_norm = normalize_path(dst_raw.to_string());
+        let now_str = now.to_rfc3339();
+
+        let pool = self.pool.clone();
+        let cleaner = self.cleaner.clone();
+
+        let s = try_stream! {
+            // keep your periodic cleanup guard behavior
+            let _guard = cleaner.try_periodic_cleanup().await;
+
+            // 1) TEMP TABLE
+            sqlx::query("DROP TABLE IF EXISTS temp_mv_map;")
+                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 1) drop table: {e}")).map_err(DBError::from)?;
+            sqlx::query("CREATE TABLE temp_mv_map (src_path TEXT PRIMARY KEY, dst_path TEXT NOT NULL, blob_id TEXT NOT NULL);")
+                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 1) create table: {e}")).map_err(DBError::from)?;
+
+            // 2) POPULATE (named params for readability; bind in order of appearance)
+            sqlx::query(r#"
+INSERT INTO temp_mv_map (src_path, dst_path, blob_id)
+WITH is_dir(v) AS (
+  SELECT
+    CASE
+      WHEN $1 = 'dir'  THEN 1
+      WHEN $1 = 'file' THEN 0
+      WHEN EXISTS (SELECT 1 FROM latest_filesystem_files WHERE path = $2) THEN 0
+      ELSE 1
+    END
+)
+SELECT
+  f.path AS src_path,
+  CASE
+    WHEN (SELECT v FROM is_dir)=1
+      THEN $3 || '/' || substr(f.path, length($2) + 2)
+    ELSE $3
+  END AS dst_path,
+  f.blob_id
+FROM latest_filesystem_files AS f, is_dir
+WHERE
+  ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
+  OR
+  ((SELECT v FROM is_dir)=0 AND f.path = $2);
+"#)
+                .bind(mv_type_final)
+                .bind(&src_norm)
+                .bind(&dst_norm)
+                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}")).map_err(DBError::from)?;
+
+            // 3) VIOLATIONS — stream them back (as data). If any → STOP (no DB mutation).
+            let mut vio_rows = pool.fetch_many(sqlx::query_as::<_, MoveViolation>(r#"
+  SELECT 'source_not_found' AS code, '' AS detail
+  WHERE NOT EXISTS (SELECT 1 FROM temp_mv_map)
+UNION ALL
+  SELECT 'destination_exists_db' AS code, m.dst_path AS detail
+  FROM temp_mv_map AS m
+  JOIN latest_filesystem_files AS d ON d.path = m.dst_path
+UNION ALL
+  SELECT 'source_equals_destination' AS code, '' AS detail
+  WHERE EXISTS (SELECT 1 FROM temp_mv_map WHERE src_path = dst_path)
+;"#));
+
+            let mut had_violation = false;
+            while let Some(item) = vio_rows.next().await {
+                match item {
+                    Ok(Either::Right(v)) => {
+                        had_violation = true;
+                        yield MoveEvent::Violation(MoveViolation::from_row(&v)?);
+                    }
+                    Ok(Either::Left(_)) => continue,
+                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::move_files: 3) load violations: {e}"))?,
+                }
+            }
+            if had_violation {
+                // stop streaming here; no DB mutation when violations exist
+                return;
+            }
+
+            // 4) INSERT (tombstones + new rows) — single statement
+            sqlx::query(r#"
+INSERT INTO files (uuid, path, blob_id, valid_from)
+SELECT lower(hex(randomblob(16))), src_path, NULL, $1
+FROM temp_mv_map
+UNION ALL
+SELECT lower(hex(randomblob(16))), dst_path, blob_id, $1
+FROM temp_mv_map;
+"#)
+                .bind(&now_str)
+                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 4) insert files: {e}")).map_err(DBError::from)?;
+
+            // 5) STREAM INSTRUCTIONS (as MoveEvent::Instruction)
+            let mut instr_rows = pool.fetch_many(sqlx::query_as::<_, MoveInstr>(
+                "SELECT src_path, dst_path, blob_id FROM temp_mv_map;"
+            ));
+            while let Some(item) = instr_rows.next().await {
+                match item {
+                    Ok(Either::Right(instr)) => yield MoveEvent::Instruction(MoveInstr::from_row(&instr)?),
+                    Ok(Either::Left(_)) => continue,
+                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::move_files: 5) stream instructions: {e}"))?,
+                }
+            }
+
+            // 6) CLEANUP
+            sqlx::query("DROP TABLE IF EXISTS temp_mv_map;")
+                .execute(&pool).await.map_err(DBError::from).inspect_err(|e| log::error!("db::move_files: 6) cleanup: {e}"))?;
+        };
+
+        s.boxed().track("move_files").boxed()
     }
 }

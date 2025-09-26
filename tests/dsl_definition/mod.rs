@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use std::collections::HashMap;
+use std::sync::Once;
 use tempfile::tempdir;
 use types::{CommandLine, RepoInstance, TestEnv};
 
@@ -12,9 +13,18 @@ mod ssh;
 mod types;
 mod writer;
 
+static INIT: Once = Once::new();
+fn init_logger() {
+    INIT.call_once(|| {
+        env_logger::init();
+    });
+}
+
 /// Run the DSL script. This function creates a temporary $ROOT directory,
 /// then processes each DSL line.
 pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
+    init_logger();
+
     // Create a temporary root directory.
     let tmp_dir = tempdir()?;
     let root = tmp_dir.path().to_path_buf();
@@ -44,9 +54,36 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                         }
                     });
                     // Call run_cli_command, passing in the global root for $ROOT substitution.
-                    last_command_output =
-                        amber::run_amber_cli_command(&sub_command, &repo_instance.path, &root)
-                            .await?;
+                    last_command_output = amber::run_amber_cli_command(
+                        &sub_command,
+                        &repo_instance.path,
+                        &root,
+                        None,
+                    )
+                    .await?;
+                }
+                CommandLine::AmberCommandFailure {
+                    repo,
+                    sub_command,
+                    expected_failure,
+                } => {
+                    let repo_instance = env.repos.entry(repo.clone()).or_insert_with(|| {
+                        let repo_path = root.join(&repo);
+                        std::fs::create_dir_all(&repo_path)
+                            .expect("failed to create repository folder");
+                        RepoInstance {
+                            id: repo.clone(),
+                            path: repo_path,
+                        }
+                    });
+                    // Call run_cli_command, passing in the global root for $ROOT substitution.
+                    last_command_output = amber::run_amber_cli_command(
+                        &sub_command,
+                        &repo_instance.path,
+                        &root,
+                        Some(expected_failure),
+                    )
+                    .await?;
                 }
                 CommandLine::RandomFile {
                     repo,

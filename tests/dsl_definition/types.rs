@@ -8,6 +8,11 @@ pub(crate) enum CommandLine {
         repo: String,
         sub_command: Vec<String>,
     },
+    AmberCommandFailure {
+        repo: String,
+        sub_command: Vec<String>,
+        expected_failure: String,
+    },
     RandomFile {
         repo: String,
         filename: String,

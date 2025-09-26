@@ -291,52 +291,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookup_last_materialisation() {
-        let db = setup_test_db().await;
-        let now = Utc::now();
-
-        let mat_blob = InsertBlob {
-            repo_id: "somewhere".into(),
-            blob_id: "mat_blob".into(),
-            blob_size: 50,
-            has_blob: true,
-            path: None,
-            valid_from: now,
-        };
-        db.add_blobs(stream::iter([mat_blob]))
-            .await
-            .expect("failed");
-
-        let mat_file = InsertFile {
-            path: "mat_file.txt".into(),
-            blob_id: Some("mat_blob".into()),
-            valid_from: now,
-        };
-        db.add_files(stream::iter([mat_file]))
-            .await
-            .expect("failed");
-
-        let mat = InsertMaterialisation {
-            path: "mat_file.txt".into(),
-            blob_id: Some("mat_blob".into()),
-            valid_from: now,
-        };
-        db.add_materialisations(stream::iter([mat]))
-            .await
-            .expect("failed to add materialisation");
-
-        let lookup = db
-            .lookup_last_materialisation("mat_file.txt".into())
-            .await
-            .expect("lookup failed");
-        assert_eq!(
-            lookup.unwrap().blob_id,
-            Some("mat_blob".into()),
-            "Materialisation should match"
-        );
-    }
-
-    #[tokio::test]
     async fn test_virtual_filesystem_operations() {
         let db = setup_test_db().await;
         db.truncate_virtual_filesystem()

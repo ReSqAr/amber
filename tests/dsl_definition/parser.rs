@@ -71,9 +71,22 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
             let command = tokens[1].as_str();
             match command {
                 "amber" => {
-                    // All tokens from index 1 onward form the sub-command.
+                    // All tokens from index 1 onward form the command.
                     let sub_command = tokens[1..].iter().map(|s| s.to_string()).collect();
                     Some(CommandLine::AmberCommand { repo, sub_command })
+                }
+                "expect" => {
+                    // Format is: expect <expected failure> amber <sub cmds>
+                    if tokens.len() < 4 {
+                        panic!("Invalid expect command: {}", line);
+                    }
+                    let expected_failure = tokens[2].to_string();
+                    let sub_command = tokens[3..].iter().map(|s| s.to_string()).collect();
+                    Some(CommandLine::AmberCommandFailure {
+                        repo,
+                        sub_command,
+                        expected_failure,
+                    })
                 }
                 "random_file" => {
                     if tokens.len() != 4 {

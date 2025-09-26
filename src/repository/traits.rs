@@ -1,12 +1,13 @@
 use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, Observation,
-    VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, MoveEvent,
+    MvType, Observation, VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::path::RepoPath;
+use chrono::{DateTime, Utc};
 use futures::Stream;
 use std::future::Future;
 
@@ -47,6 +48,7 @@ pub enum BufferType {
     FsckMaterialiseBufferParallelism,
     FsckRcloneFilesWriterChannelSize,
     FsckRcloneFilesStreamChunkSize,
+    FsMvParallelism,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;
@@ -81,11 +83,6 @@ pub trait Adder {
     fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
-
-    async fn lookup_last_materialisation(
-        &self,
-        path: &RepoPath,
-    ) -> Result<Option<String>, InternalError>;
 }
 
 #[derive(Debug)]
@@ -132,6 +129,14 @@ pub trait VirtualFilesystem {
         &self,
         input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
     ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static;
+
+    async fn move_files(
+        &self,
+        src_raw: String,
+        dst_raw: String,
+        mv_type_hint: MvType,
+        now: DateTime<Utc>,
+    ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static;
 }
 
 pub trait ConnectionManager {
