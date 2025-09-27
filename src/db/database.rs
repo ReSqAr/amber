@@ -1279,17 +1279,6 @@ impl Database {
         }).flatten().boxed().track("Database::select_files_transfer").boxed()
     }
 
-    /// Streams either:
-    /// - MoveEvent::Violation(...) rows (if the move would collide in DB), or
-    /// - MoveEvent::Instruction(...) rows (after the DB append-only move),
-    /// and returns normal errors only on actual DB/SQL failures.
-    ///
-    /// Steps:
-    /// 1) CREATE TEMP map table
-    /// 2) POPULATE map from latest_filesystem_files (DB decides dir/file when Unknown)
-    /// 3) VIOLATIONS query → if any rows, stream them and **stop** (no DB mutation)
-    /// 4) INSERT … UNION ALL (tombstones + new rows)
-    /// 5) SELECT instructions and stream them
     pub async fn move_files<'a>(
         &self,
         src_raw: String,
