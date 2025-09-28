@@ -14,12 +14,12 @@ use log::{debug, error};
 use tokio::task::JoinHandle;
 use utils::fs::are_hardlinked;
 
-fn current_timestamp() -> i64 {
+fn current_timestamp_ns() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-        .as_secs() as i64
+        .as_nanos() as i64
 }
 
 async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation, InternalError> {
@@ -45,7 +45,7 @@ async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation,
 
     Ok(Observation::FileCheck(FileCheck {
         path: vf.path.clone(),
-        check_dttm: current_timestamp(),
+        check_dttm: current_timestamp_ns(),
         hash,
     }))
 }
@@ -180,7 +180,7 @@ pub async fn state(
     InternalError,
 > {
     let root = vfs.root();
-    let last_seen_id = current_timestamp();
+    let last_seen_id = current_timestamp_ns();
 
     let mut vfs_obs = BaseObserver::without_id("vfs:refresh");
     vfs_obs.observe_state(log::Level::Debug, "refreshing virtual filesystem...");
@@ -227,13 +227,13 @@ pub async fn state(
                 Ok(FileObservation {
                     rel_path,
                     size,
-                    last_modified,
+                    last_modified_ns,
                 }) => {
                     let observation = Observation::FileSeen(FileSeen {
                         path: rel_path.to_string_lossy().to_string(),
                         seen_id: last_seen_id,
-                        seen_dttm: current_timestamp(),
-                        last_modified_dttm: last_modified,
+                        seen_dttm: current_timestamp_ns(),
+                        last_modified_dttm: last_modified_ns,
                         size,
                     });
 

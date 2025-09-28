@@ -35,7 +35,7 @@ pub enum Error {
 pub struct FileObservation {
     pub rel_path: PathBuf,
     pub size: i64,
-    pub last_modified: i64,
+    pub last_modified_ns: i64,
 }
 
 fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObservation, Error>> {
@@ -88,7 +88,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     Some(Ok(FileObservation {
         rel_path,
         size: size as i64,
-        last_modified,
+        last_modified_ns: last_modified * 1_000_000_000,
     }))
 }
 
