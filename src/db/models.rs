@@ -155,6 +155,7 @@ pub struct VirtualFile {
     pub target_blob_id: Option<String>,
     pub state: VirtualFileState,
 }
+
 #[derive(Debug, FromRow, Clone)]
 pub struct MissingFile {
     pub path: String,

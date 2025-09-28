@@ -9,6 +9,7 @@ impl<T> From<T> for Flow<T> {
     }
 }
 
+#[derive(Debug)]
 pub enum ExtFlow<T> {
     Data(T),
     Shutdown(T),
