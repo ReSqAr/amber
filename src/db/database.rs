@@ -1390,10 +1390,18 @@ UNION ALL
             // 4) INSERT (tombstones + new rows) — single statement
             sqlx::query(r#"
 INSERT INTO files (uuid, path, blob_id, valid_from)
-SELECT lower(hex(randomblob(16))), src_path, NULL, $1
+SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
+    src_path,
+    NULL,
+    $1
 FROM temp_mv_map
 UNION ALL
-SELECT lower(hex(randomblob(16))), dst_path, blob_id, $1
+SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
+    dst_path,
+    blob_id,
+    $1
 FROM temp_mv_map;
 "#)
                 .bind(&now_str)
