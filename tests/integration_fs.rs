@@ -37,6 +37,28 @@ async fn integration_test_mv() -> anyhow::Result<(), anyhow::Error> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_test_mv_detect_changed_file() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a remove_file test.txt
+        @a write_file test.txt "overwritten"
+        @a amber mv test.txt test.moved
+
+        # then
+        @a amber status
+        assert_output_contains "altered test.moved"
+        @a assert_exists test.moved "overwritten"
+        @a assert_does_not_exist test.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_mv_dir_to_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
