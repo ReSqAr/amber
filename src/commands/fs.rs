@@ -1,6 +1,6 @@
 use crate::flightdeck;
 use crate::flightdeck::base::{
-    BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
+    BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::fs;
@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 pub(crate) async fn rm(
     maybe_root: Option<PathBuf>,
     app_folder: PathBuf,
-    files: Vec<PathBuf>,
-    soft: bool,
+    paths: Vec<PathBuf>,
+    hard: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(maybe_root, app_folder).await?;
@@ -21,20 +21,8 @@ pub(crate) async fn rm(
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        let mut obs = BaseObserver::without_id("fs:rm");
+        fs::rm(&local, paths, hard).await?;
 
-        let result = fs::rm(&local, files, soft).await?;
-
-        let msg = format!("deleted {} files", result.deleted);
-        let msg = if result.not_found > 0 {
-            format!(
-                "skipped {} already deleted files, {}",
-                result.not_found, msg
-            )
-        } else {
-            msg
-        };
-        obs.observe_termination(log::Level::Info, msg);
         Ok(())
     };
 

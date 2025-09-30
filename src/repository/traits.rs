@@ -2,7 +2,7 @@ use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, MoveEvent,
-    MvType, Observation, VirtualFile,
+    Observation, PathType, RmEvent, VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -49,6 +49,7 @@ pub enum BufferType {
     FsckRcloneFilesWriterChannelSize,
     FsckRcloneFilesStreamChunkSize,
     FsMvParallelism,
+    FsRmParallelism,
 }
 pub trait Config {
     fn buffer_size(&self, buffer: BufferType) -> usize;
@@ -134,9 +135,15 @@ pub trait VirtualFilesystem {
         &self,
         src_raw: String,
         dst_raw: String,
-        mv_type_hint: MvType,
+        mv_type_hint: PathType,
         now: DateTime<Utc>,
     ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static;
+
+    async fn remove_files(
+        &self,
+        files_with_hint: Vec<(String, PathType)>,
+        now: DateTime<Utc>,
+    ) -> impl Stream<Item = Result<RmEvent, DBError>> + Unpin + Send + 'static;
 }
 
 pub trait ConnectionManager {

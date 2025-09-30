@@ -34,6 +34,8 @@ pub enum AppError {
     DestinationIsAFolder(String),
     #[error("move encountered errors")]
     MvErrors,
+    #[error("remove encountered errors")]
+    RmErrors,
     #[error("filesystem does not support hardlinks (error: {0})")]
     HardlinksNotSupported(String),
     #[error("rclone is required but: {0}")]

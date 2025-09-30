@@ -403,8 +403,8 @@ async fn integration_test_rm() -> anyhow::Result<(), anyhow::Error> {
         @a amber add
 
         # action
-        @a amber rm test.txt
-        assert_output_contains "deleted test.txt"
+        @a amber rm --hard test.txt
+        assert_output_contains "removed test.txt"
 
         # then
         @a assert_does_not_exist test.txt
@@ -422,8 +422,8 @@ async fn integration_test_rm_soft() -> anyhow::Result<(), anyhow::Error> {
         @a amber add
 
         # action
-        @a amber rm --soft test.txt
-        assert_output_contains "deleted [soft] test.txt"
+        @a amber rm test.txt
+        assert_output_contains "removed [soft] test.txt"
 
         # then
         @a assert_exists test.txt
@@ -441,8 +441,198 @@ async fn integration_test_rm_not_existing_file() -> anyhow::Result<(), anyhow::E
         @a amber init a
 
         # action
-        @a amber rm does-not-exist
-        assert_output_contains "already deleted"
+        @a expect "remove encountered errors" amber rm --hard does-not-exist
+        assert_output_contains "source not found does-not-exist"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_dir_prefix() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file d/a.txt "A"
+        @a write_file d/b.txt "B"
+        @a amber add
+
+
+
+        # action
+        @a amber rm --hard d
+
+        # then
+        @a assert_does_not_exist d/a.txt
+        @a assert_does_not_exist d/b.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_db_only_file() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file ghost.txt "G"
+        @a amber add
+
+        @a remove_file ghost.txt
+        @a amber status
+
+        # action
+        @a amber rm --hard ghost.txt
+        assert_output_contains "removed (not materialised) ghost.txt"
+
+        # then
+        @a assert_does_not_exist ghost.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_trailing_slash_dir_hint() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/x.txt "X"
+        @a write_file dir/y.txt "Y"
+        @a amber add
+
+        # action
+        @a amber rm --hard dir/
+        assert_output_contains "removed 2 files (2 on disk)"
+
+        # then
+        @a assert_does_not_exist dir/x.txt
+        @a assert_does_not_exist dir/y.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_trailing_slash_dir_hint_in_db() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/x.txt "X"
+        @a write_file dir/y.txt "Y"
+        @a amber add
+
+        @a remove_file dir/x.txt
+        @a remove_file dir/y.txt
+
+        # action
+        @a amber rm --hard dir/
+        assert_output_contains "removed 2 files (0 on disk)"
+
+        # then
+        @a assert_does_not_exist dir/x.txt
+        @a assert_does_not_exist dir/y.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_trailing_slash_dir_hint_in_db_conflict_file()
+-> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file actual_file "F"
+        @a amber add
+
+        # action
+        @a expect "remove encountered errors" amber rm --hard actual_file/
+        assert_output_contains "source not found actual_file"
+
+        # then
+        @a assert_exists actual_file "F"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_multi_input_partial_success() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file keep.txt "K"
+        @a write_file del.txt "D"
+        @a amber add
+
+        # action
+        @a expect "remove encountered errors" amber rm --hard del.txt does-not-exist
+        assert_output_contains "source not found does-not-exist"
+
+        # then
+        @a assert_exists del.txt
+        @a assert_exists keep.txt "K"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_overlapping_inputs_dir_and_child() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file d/x.txt "X"
+        @a amber add
+
+        # action
+        @a amber rm --hard d d/x.txt
+
+        # then
+        @a assert_does_not_exist d/x.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_soft_dir() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file d/a.txt "A"
+        @a write_file d/b.txt "B"
+        @a amber add
+
+        @a amber rm d
+        assert_output_contains "removed [soft] d/a.txt"
+        assert_output_contains "removed [soft] d/b.txt"
+
+        # files still on disk but untracked now
+        @a assert_exists d/a.txt "A"
+        @a assert_exists d/b.txt "B"
+        @a amber status
+        assert_output_contains "new d/a.txt"
+        assert_output_contains "new d/b.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_push_sync_propagation() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file f.txt "F"
+        @a amber add
+
+        @b amber init b
+        @a amber remote add b local $ROOT/b
+
+        @a amber push b
+        @b amber sync
+        assert_equal a b
+
+        # remove on A, propagate
+        @a amber rm --hard f.txt
+        @a amber push b
+        @b amber sync
+
+        @b assert_does_not_exist f.txt
+        assert_equal a b
     "#;
     dsl_definition::run_dsl_script(script).await
 }

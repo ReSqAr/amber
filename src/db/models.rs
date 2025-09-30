@@ -211,7 +211,7 @@ pub struct WalCheckpoint {
 
 #[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
-pub enum MvType {
+pub enum PathType {
     File,
     Dir,
     Unknown,
@@ -242,4 +242,28 @@ pub struct MoveViolation {
 pub enum MoveEvent {
     Violation(MoveViolation),
     Instruction(MoveInstr),
+}
+
+#[derive(Debug, PartialEq, Eq, Type, Clone, Copy, Hash)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+pub enum RmViolationCode {
+    SourceNotFound,
+}
+
+#[derive(Debug, FromRow, Clone)]
+pub struct RmViolation {
+    pub code: RmViolationCode,
+    pub detail: String,
+}
+
+#[derive(Debug, FromRow, Clone)]
+pub struct RmInstr {
+    pub path: String,
+    pub blob_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum RmEvent {
+    Violation(RmViolation),
+    Instruction(RmInstr),
 }

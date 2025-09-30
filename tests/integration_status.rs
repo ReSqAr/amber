@@ -130,7 +130,7 @@ async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
         @b amber status
 
         # action 3
-        @a amber remove test-a.txt test-b.txt
+        @a amber remove --hard test-a.txt test-b.txt
         @a amber sync b
         @b amber sync
 

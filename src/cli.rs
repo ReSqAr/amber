@@ -85,12 +85,8 @@ pub enum Commands {
     Remove {
         #[arg(help = "Files to be removed")]
         files: Vec<PathBuf>,
-        #[arg(
-            long,
-            default_value_t = false,
-            help = "Keep the file but remove the file from the repository"
-        )]
-        soft: bool,
+        #[arg(long, default_value_t = false, help = "Also remove the file from disk")]
+        hard: bool,
     },
     /// Move a tracked file within the repository
     #[command(alias = "mv")]
@@ -196,8 +192,8 @@ pub async fn run_cli(
             )
             .await
         }
-        Commands::Remove { files, soft } => {
-            commands::fs::rm(cli.path, cli.app_folder, files, soft, output).await
+        Commands::Remove { files, hard } => {
+            commands::fs::rm(cli.path, cli.app_folder, files, hard, output).await
         }
         Commands::Move {
             source,

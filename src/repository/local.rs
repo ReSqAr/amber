@@ -4,8 +4,8 @@ use crate::db::error::DBError;
 use crate::db::migrations::run_migrations;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
-    File, FileTransferItem, MissingFile, MoveEvent, MvType, Observation, ObservedBlob, Repository,
-    RepositoryName, VirtualFile,
+    File, FileTransferItem, MissingFile, MoveEvent, Observation, ObservedBlob, PathType,
+    Repository, RepositoryName, RmEvent, VirtualFile,
 };
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
@@ -275,6 +275,7 @@ impl Config for LocalRepository {
             BufferType::FsckRcloneFilesWriterChannelSize => 10000,
             BufferType::FsckRcloneFilesStreamChunkSize => 1000,
             BufferType::FsMvParallelism => 10,
+            BufferType::FsRmParallelism => 10,
         }
     }
 }
@@ -489,12 +490,20 @@ impl VirtualFilesystem for LocalRepository {
         &self,
         src_raw: String,
         dst_raw: String,
-        mv_type_hint: MvType,
+        mv_type_hint: PathType,
         now: DateTime<Utc>,
     ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static {
         self.db
             .move_files(src_raw, dst_raw, mv_type_hint, now)
             .await
+    }
+
+    async fn remove_files(
+        &self,
+        files_with_hint: Vec<(String, PathType)>,
+        now: DateTime<Utc>,
+    ) -> impl Stream<Item = Result<RmEvent, DBError>> + Unpin + Send + 'static {
+        self.db.remove_files(files_with_hint, now).await
     }
 }
 

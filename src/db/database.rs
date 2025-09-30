@@ -4,7 +4,8 @@ use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
     InsertMaterialisation, InsertRepositoryName, MissingFile, MoveEvent, MoveInstr, MoveViolation,
-    MvType, Observation, ObservedBlob, Repository, RepositoryName, VirtualFile,
+    Observation, ObservedBlob, PathType, Repository, RepositoryName, RmEvent, RmInstr, RmViolation,
+    RmViolationCode, VirtualFile,
 };
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -1283,44 +1284,16 @@ impl Database {
         &self,
         src_raw: String,
         dst_raw: String,
-        mv_type_hint: MvType,
+        mv_type_hint: PathType,
         now: DateTime<Utc>,
     ) -> DBOutputStream<'a, MoveEvent> {
-        #[inline]
-        fn normalize_path(mut p: String) -> String {
-            while p.ends_with('/') && p.len() > 1 {
-                p.pop();
-            }
-            p
-        }
-        #[inline]
-        fn trim_trailing_slash(mut s: String) -> String {
-            while s.ends_with('/') && s.len() > 1 {
-                s.pop();
-            }
-            s
-        }
-
-        // `dirname/` → normalize to `dirname` and treat as Dir (hint only; DB still decides if Unknown)
-        let (src_norm, mv_type_final) = {
-            let trailing_dir = src_raw.ends_with('/');
-            let s = normalize_path(src_raw.to_string());
-            if trailing_dir {
-                (trim_trailing_slash(s), MvType::Dir)
-            } else {
-                (s, mv_type_hint)
-            }
-        };
+        let src_norm = trim_trailing_slash(normalize_path(src_raw.to_string()));
         let dst_norm = normalize_path(dst_raw.to_string());
         let now_str = now.to_rfc3339();
 
         let pool = self.pool.clone();
-        let cleaner = self.cleaner.clone();
 
         let s = try_stream! {
-            // keep your periodic cleanup guard behavior
-            let _guard = cleaner.try_periodic_cleanup().await;
-
             // 1) TEMP TABLE
             sqlx::query("DROP TABLE IF EXISTS temp_mv_map;")
                 .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 1) drop table: {e}")).map_err(DBError::from)?;
@@ -1353,7 +1326,7 @@ WHERE
   OR
   ((SELECT v FROM is_dir)=0 AND f.path = $2);
 "#)
-                .bind(mv_type_final)
+                .bind(mv_type_hint)
                 .bind(&src_norm)
                 .bind(&dst_norm)
                 .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}")).map_err(DBError::from)?;
@@ -1426,4 +1399,117 @@ FROM temp_mv_map;
 
         s.boxed().track("move_files").boxed()
     }
+
+    pub async fn remove_files<'a>(
+        &self,
+        paths_with_hint: Vec<(String, PathType)>,
+        now: DateTime<Utc>,
+    ) -> DBOutputStream<'a, RmEvent> {
+        let norm_paths_with_hint: Vec<_> = paths_with_hint
+            .iter()
+            .map(|(p, h)| {
+                (
+                    trim_trailing_slash(normalize_path(p.to_string())),
+                    h.clone(),
+                )
+            })
+            .collect();
+        let now_str = now.to_rfc3339();
+
+        let pool = self.pool.clone();
+
+        let s = try_stream! {
+            // 1) TEMP TABLE
+            sqlx::query("DROP TABLE IF EXISTS temp_rm_set;")
+                .execute(&pool).await.inspect_err(|e| log::error!("db::remove_files: 1) drop table: {e}")).map_err(DBError::from)?;
+            sqlx::query("CREATE TABLE temp_rm_set (path TEXT PRIMARY KEY, blob_id TEXT NOT NULL);")
+                .execute(&pool).await.inspect_err(|e| log::error!("db::remove_files: 1) create table: {e}")).map_err(DBError::from)?;
+
+            // 2) POPULATE
+            let mut violations = Vec::new();
+            for (path, hint) in norm_paths_with_hint {
+                let result = sqlx::query(r#"
+INSERT OR REPLACE INTO temp_rm_set (path, blob_id)
+WITH is_dir(v) AS (
+  SELECT
+    CASE
+      WHEN $1 = 'dir'  THEN 1
+      WHEN $1 = 'file' THEN 0
+      WHEN EXISTS (SELECT 1 FROM latest_filesystem_files WHERE path = $2) THEN 0
+      ELSE 1
+    END
+)
+SELECT
+  f.path,
+  f.blob_id
+FROM latest_filesystem_files AS f, is_dir
+WHERE
+  ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
+  OR
+  ((SELECT v FROM is_dir)=0 AND f.path = $2);
+"#)
+                .bind(hint)
+                .bind(&path)
+                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}")).map_err(DBError::from)?;
+                if result.rows_affected() == 0 {
+                    violations.push(RmEvent::Violation(RmViolation{code: RmViolationCode::SourceNotFound, detail: path}))
+                }
+            }
+
+
+            let had_violation = violations.len() > 0;
+            for violation in violations.drain(0..violations.len())  {
+                yield violation;
+            }
+            if had_violation {
+                // stop streaming here; no DB mutation when violations exist
+                return;
+            }
+
+
+
+            // 3) INSERT tombstones (append-only)
+            sqlx::query(r#"
+INSERT INTO files (uuid, path, blob_id, valid_from)
+SELECT lower(hex(randomblob(16))), path, NULL, $1
+FROM temp_rm_set;
+"#)
+                .bind(&now_str)
+                .execute(&pool).await.map_err(DBError::from)?;
+
+            // 4) STREAM instructions (path, blob_id)
+            let mut instr_rows = pool.fetch_many(sqlx::query_as::<_, RmInstr>(
+                "SELECT path, blob_id FROM temp_rm_set;"
+            ));
+            while let Some(item) = instr_rows.next().await {
+                match item {
+                    Ok(Either::Right(instr)) => yield RmEvent::Instruction(RmInstr::from_row(&instr)?),
+                    Ok(Either::Left(_))      => continue,
+                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::remove_files: 4) stream instructions: {e}"))?,
+                }
+            }
+
+            // 5) CLEANUP
+            sqlx::query("DROP TABLE IF EXISTS temp_rm_set;")
+                .execute(&pool).await.map_err(DBError::from).inspect_err(|e| log::error!("db::remove_files: 5) cleanup: {e}"))?;
+
+        };
+
+        s.boxed().track("remove_files").boxed()
+    }
+}
+
+#[inline]
+fn normalize_path(mut p: String) -> String {
+    while p.ends_with('/') && p.len() > 1 {
+        p.pop();
+    }
+    p
+}
+#[inline]
+fn trim_trailing_slash(mut s: String) -> String {
+    while s.ends_with('/') && s.len() > 1 {
+        s.pop();
+    }
+    s
 }
