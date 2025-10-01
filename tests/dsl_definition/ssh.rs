@@ -221,7 +221,6 @@ struct SftpSession {
     read_dirs: HashMap<String, Option<Vec<File>>>,
 }
 
-#[async_trait::async_trait]
 impl russh_sftp::server::Handler for SftpSession {
     type Error = StatusCode;
 
@@ -233,7 +232,7 @@ impl russh_sftp::server::Handler for SftpSession {
         &mut self,
         version: u32,
         _extensions: HashMap<String, String>,
-    ) -> anyhow::Result<Version, Self::Error> {
+    ) -> Result<Version, Self::Error> {
         if self.version.is_some() {
             eprintln!("duplicate SSH_FXP_VERSION packet");
             return Err(StatusCode::ConnectionLost);
@@ -249,7 +248,7 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         pflags: OpenFlags,
         _attrs: FileAttributes,
-    ) -> anyhow::Result<Handle, Self::Error> {
+    ) -> Result<Handle, Self::Error> {
         let file_path = self.repo_path.join(path.clone());
         // If the client wants to write/create the file, then do so.
         if pflags.contains(OpenFlags::CREATE) || pflags.contains(OpenFlags::WRITE) {
@@ -270,7 +269,7 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Handle { id, handle: path })
     }
 
-    async fn close(&mut self, id: u32, _handle: String) -> anyhow::Result<Status, Self::Error> {
+    async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
         Ok(Status {
             id,
             status_code: StatusCode::Ok,
@@ -285,7 +284,7 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
         offset: u64,
         len: u32,
-    ) -> anyhow::Result<Data, Self::Error> {
+    ) -> Result<Data, Self::Error> {
         let file_path = self.repo_path.join(handle.clone());
 
         if !file_path.exists() || !file_path.is_file() {
@@ -324,7 +323,7 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
         offset: u64,
         data: Vec<u8>,
-    ) -> anyhow::Result<Status, Self::Error> {
+    ) -> Result<Status, Self::Error> {
         let file_path = self.repo_path.join(handle.clone());
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -351,7 +350,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
         _attrs: FileAttributes,
-    ) -> anyhow::Result<Status, Self::Error> {
+    ) -> Result<Status, Self::Error> {
         // Build the full filesystem path.
         let file_path = self.repo_path.join(path);
         // Check that the file or directory exists.
@@ -370,7 +369,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
-    async fn opendir(&mut self, id: u32, path: String) -> anyhow::Result<Handle, Self::Error> {
+    async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         let dir_path = self.repo_path.join(path.clone());
 
         if !dir_path.exists() || !dir_path.is_dir() {
@@ -430,7 +429,7 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Handle { id, handle: path })
     }
 
-    async fn readdir(&mut self, id: u32, handle: String) -> anyhow::Result<Name, Self::Error> {
+    async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         if let Some(dir_entry_opt) = self.read_dirs.get_mut(&handle) {
             return if let Some(files) = dir_entry_opt.take() {
                 Ok(Name { id, files })
@@ -447,7 +446,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
         _attrs: FileAttributes,
-    ) -> anyhow::Result<Status, Self::Error> {
+    ) -> Result<Status, Self::Error> {
         let dir_path = self.repo_path.join(path);
         match tokio::fs::create_dir(&dir_path).await {
             Ok(()) => Ok(Status {
@@ -463,7 +462,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
-    async fn realpath(&mut self, id: u32, path: String) -> anyhow::Result<Name, Self::Error> {
+    async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         let clean_path = if path.is_empty() || path == "." {
             "/".to_string()
         } else {
@@ -511,7 +510,7 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
-    async fn stat(&mut self, id: u32, path: String) -> anyhow::Result<Attrs, Self::Error> {
+    async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let file_path = self.repo_path.join(path);
 
         if !file_path.exists() {
@@ -556,7 +555,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         oldpath: String,
         newpath: String,
-    ) -> anyhow::Result<Status, Self::Error> {
+    ) -> Result<Status, Self::Error> {
         let old_full = self.repo_path.join(oldpath);
         let new_full = self.repo_path.join(newpath);
 
