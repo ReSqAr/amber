@@ -8,6 +8,7 @@ use crate::repository::traits::{Adder, BufferType, Config, Local, VirtualFilesys
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
+use crate::utils::sha256;
 use chrono::Utc;
 use futures::{StreamExt, TryStreamExt, stream};
 use futures_core::stream::BoxStream;
@@ -87,25 +88,33 @@ pub(crate) async fn rm(
                             let mut o = BaseObserver::with_id("fs:rm:file", &instr.path);
 
                             let p = root.join(&instr.path);
-                            let exists_as_file =
-                                fs::metadata(&p).await.map(|m| m.is_file()).unwrap_or(false);
+                            let metadata = fs::metadata(&p).await.ok();
+                            let is_file = metadata.as_ref().is_some_and(|m| m.is_file());
 
-                            if exists_as_file {
+                            if is_file {
                                 if hard {
-                                    if let Err(e) = fs::remove_file(&p).await {
-                                        error_count.fetch_add(1, Ordering::Relaxed);
+                                    let hash = sha256::compute_sha256_and_size(&p).await?;
+                                    if hash.hash == instr.target_blob_id {
+                                        if let Err(e) = fs::remove_file(&p).await {
+                                            error_count.fetch_add(1, Ordering::Relaxed);
+                                            o.observe_termination(
+                                                log::Level::Error,
+                                                format!("remove failed: {e}"),
+                                            );
+                                            return Ok(stream::iter([]).boxed());
+                                        }
+                                        o.observe_termination(log::Level::Info, "removed");
+                                        materialised_count.fetch_add(1, Ordering::Relaxed);
+                                    } else {
                                         o.observe_termination(
-                                            log::Level::Error,
-                                            format!("remove failed: {e}"),
+                                            log::Level::Warn,
+                                            "kept modified file",
                                         );
-                                        return Ok(stream::iter([]).boxed());
                                     }
-                                    o.observe_termination(log::Level::Info, "removed");
                                 } else {
                                     unblobify::unblobify(local, &p).await?;
                                     o.observe_termination(log::Level::Info, "removed [soft]");
                                 }
-                                materialised_count.fetch_add(1, Ordering::Relaxed);
 
                                 Ok(stream::iter([Ok(InsertMaterialisation {
                                     path: instr.path,

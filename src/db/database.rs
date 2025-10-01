@@ -1405,6 +1405,11 @@ FROM temp_mv_map;
         paths_with_hint: Vec<(String, PathType)>,
         now: DateTime<Utc>,
     ) -> DBOutputStream<'a, RmEvent> {
+        // 0) Update VFS
+        if let Err(e) = self.refresh_virtual_filesystem().await {
+            return stream::iter(Err(e)).boxed();
+        }
+
         let norm_paths_with_hint: Vec<_> = paths_with_hint
             .iter()
             .map(|(p, h)| {
@@ -1417,19 +1422,26 @@ FROM temp_mv_map;
         let now_str = now.to_rfc3339();
 
         let pool = self.pool.clone();
-
         let s = try_stream! {
             // 1) TEMP TABLE
             sqlx::query("DROP TABLE IF EXISTS temp_rm_set;")
                 .execute(&pool).await.inspect_err(|e| log::error!("db::remove_files: 1) drop table: {e}")).map_err(DBError::from)?;
-            sqlx::query("CREATE TABLE temp_rm_set (path TEXT PRIMARY KEY, blob_id TEXT NOT NULL);")
-                .execute(&pool).await.inspect_err(|e| log::error!("db::remove_files: 1) create table: {e}")).map_err(DBError::from)?;
+            sqlx::query(
+                "CREATE TABLE temp_rm_set (
+                    path TEXT PRIMARY KEY,
+                    target_blob_id STRING NOT NULL
+                );",
+            )
+            .execute(&pool)
+            .await
+            .inspect_err(|e| log::error!("db::remove_files: 1) create table: {e}"))
+            .map_err(DBError::from)?;
 
             // 2) POPULATE
             let mut violations = Vec::new();
             for (path, hint) in norm_paths_with_hint {
                 let result = sqlx::query(r#"
-INSERT OR REPLACE INTO temp_rm_set (path, blob_id)
+INSERT OR REPLACE INTO temp_rm_set (path, target_blob_id)
 WITH is_dir(v) AS (
   SELECT
     CASE
@@ -1441,8 +1453,9 @@ WITH is_dir(v) AS (
 )
 SELECT
   f.path,
-  f.blob_id
-FROM latest_filesystem_files AS f, is_dir
+  vfs.target_blob_id
+FROM latest_filesystem_files AS f
+LEFT JOIN virtual_filesystem AS vfs USING (path), is_dir
 WHERE
   ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
   OR
@@ -1457,7 +1470,7 @@ WHERE
             }
 
 
-            let had_violation = violations.len() > 0;
+            let had_violation = !violations.is_empty();
             for violation in violations.drain(0..violations.len())  {
                 yield violation;
             }
@@ -1465,8 +1478,6 @@ WHERE
                 // stop streaming here; no DB mutation when violations exist
                 return;
             }
-
-
 
             // 3) INSERT tombstones (append-only)
             sqlx::query(r#"
@@ -1477,9 +1488,9 @@ FROM temp_rm_set;
                 .bind(&now_str)
                 .execute(&pool).await.map_err(DBError::from)?;
 
-            // 4) STREAM instructions (path, blob_id)
+            // 4) STREAM instructions (path, target_blob_id)
             let mut instr_rows = pool.fetch_many(sqlx::query_as::<_, RmInstr>(
-                "SELECT path, blob_id FROM temp_rm_set;"
+                "SELECT path, target_blob_id FROM temp_rm_set;"
             ));
             while let Some(item) = instr_rows.next().await {
                 match item {

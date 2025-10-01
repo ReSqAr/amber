@@ -259,7 +259,7 @@ pub struct RmViolation {
 #[derive(Debug, FromRow, Clone)]
 pub struct RmInstr {
     pub path: String,
-    pub blob_id: String,
+    pub target_blob_id: String,
 }
 
 #[derive(Debug, Clone)]

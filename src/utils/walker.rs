@@ -66,9 +66,9 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     };
 
     let size = metadata.len();
-    let last_modified = match metadata.modified() {
+    let last_modified_ns = match metadata.modified() {
         Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
-            Ok(dur) => dur.as_secs() as i64,
+            Ok(dur) => dur.as_nanos() as i64,
             Err(e) => {
                 return Some(Err(Error::Observer(format!(
                     "SystemTime before UNIX_EPOCH for {}: {}",
@@ -88,7 +88,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     Some(Ok(FileObservation {
         rel_path,
         size: size as i64,
-        last_modified_ns: last_modified * 1_000_000_000,
+        last_modified_ns,
     }))
 }
 

@@ -590,6 +590,112 @@ async fn integration_rm_overlapping_inputs_dir_and_child() -> anyhow::Result<(),
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn integration_rm_hard_keeps_modified_file() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file keep.txt "original"
+        @a amber add
+
+        # modify the materialised file after it has been tracked
+        @a remove_file keep.txt
+        @a write_file keep.txt "changed"
+
+        # removal should refuse to delete because the timestamp differs
+        @a amber rm --hard keep.txt
+        assert_output_contains "kept modified file keep.txt"
+        assert_output_contains "removed 1 files (0 on disk)"
+
+        # the file stays on disk and becomes a new untracked file
+        @a assert_exists keep.txt "changed"
+        @a amber status
+        assert_output_contains "new keep.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_hard_keeps_modified_file_within_dir() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/keep.txt "K"
+        @a write_file dir/remove.txt "R"
+        @a amber add
+
+        # change only one of the files before removing the directory
+        @a remove_file dir/keep.txt
+        @a write_file dir/keep.txt "K2"
+
+        @a amber rm --hard dir
+        assert_output_contains "kept modified file dir/keep.txt"
+        assert_output_contains "removed dir/remove.txt"
+        assert_output_contains "removed 2 files (1 on disk)"
+
+        @a assert_exists dir/keep.txt "K2"
+        @a assert_does_not_exist dir/remove.txt
+        @a amber status
+        assert_output_contains "new dir/keep.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_hard_keeps_modified_file_after_status() -> anyhow::Result<(), anyhow::Error>
+{
+    let script = r#"
+        @a amber init a
+        @a write_file keep.txt "original"
+        @a amber add
+
+        # modify the materialised file after it has been tracked
+        @a remove_file keep.txt
+        @a write_file keep.txt "changed"
+        @a amber status
+
+        # removal should refuse to delete because the timestamp differs
+        @a amber rm --hard keep.txt
+        assert_output_contains "kept modified file keep.txt"
+        assert_output_contains "removed 1 files (0 on disk)"
+
+        # the file stays on disk and becomes a new untracked file
+        @a assert_exists keep.txt "changed"
+        @a amber status
+        assert_output_contains "new keep.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_rm_hard_keeps_modified_file_within_dir_after_status()
+-> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/keep.txt "K"
+        @a write_file dir/remove.txt "R"
+        @a amber add
+
+        # change only one of the files before removing the directory
+        @a remove_file dir/keep.txt
+        @a write_file dir/keep.txt "K2"
+        @a amber status
+
+        @a amber rm --hard dir
+        assert_output_contains "kept modified file dir/keep.txt"
+        assert_output_contains "removed dir/remove.txt"
+        assert_output_contains "removed 2 files (1 on disk)"
+
+        @a assert_exists dir/keep.txt "K2"
+        @a assert_does_not_exist dir/remove.txt
+        @a amber status
+        assert_output_contains "new dir/keep.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn integration_rm_soft_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
