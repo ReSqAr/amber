@@ -30,6 +30,8 @@ use rand::distr::Alphanumeric;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::{Instant, sleep};
 use tokio::{fs, task};
 
 #[derive(Clone)]
@@ -70,14 +72,27 @@ async fn find_repository_root(
 
 async fn acquire_exclusive_lock<P: AsRef<Path>>(path: P) -> Result<std::fs::File, InternalError> {
     let path = path.as_ref().to_owned();
-    task::spawn_blocking(move || {
-        let file = std::fs::File::create(&path)?;
+    let file = task::spawn_blocking(move || std::fs::File::create(&path)).await??;
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut delay = Duration::from_millis(5);
+    let max_delay = Duration::from_millis(200);
+
+    loop {
         match file.try_lock_exclusive() {
-            Ok(_) => Ok(file),
-            Err(_) => Err(InternalError::SharedAccess),
+            Ok(()) => return Ok(file),
+            Err(_) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(InternalError::SharedAccess);
+                }
+
+                let remaining = deadline.saturating_duration_since(now);
+                sleep(delay.min(remaining)).await;
+                delay = (delay * 2).min(max_delay);
+            }
         }
-    })
-    .await?
+    }
 }
 
 impl LocalRepository {
