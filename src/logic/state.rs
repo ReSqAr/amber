@@ -5,7 +5,7 @@ use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::tracked::sender;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils;
-use crate::utils::errors::InternalError;
+use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::sha256;
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
@@ -115,8 +115,13 @@ pub struct VirtualFile {
     pub state: VirtualFileState,
 }
 
+pub enum TryFromVirtualFileError {
+    NeedsCheck(models::VirtualFile),
+    CorruptionDetected(models::VirtualFile),
+}
+
 impl TryFrom<models::VirtualFile> for VirtualFile {
-    type Error = models::VirtualFile;
+    type Error = TryFromVirtualFileError;
 
     fn try_from(vf: models::VirtualFile) -> Result<Self, Self::Error> {
         match vf.state {
@@ -152,7 +157,10 @@ impl TryFrom<models::VirtualFile> for VirtualFile {
                     local_has_target_blob: vf.local_has_target_blob,
                 },
             }),
-            models::VirtualFileState::NeedsCheck => Err(vf),
+            models::VirtualFileState::NeedsCheck => Err(TryFromVirtualFileError::NeedsCheck(vf)),
+            models::VirtualFileState::CorruptionDetected => {
+                Err(TryFromVirtualFileError::CorruptionDetected(vf))
+            }
         }
     }
 }
@@ -295,21 +303,36 @@ pub async fn state(
                                     .await
                                     .expect("failed to send error to output stream")
                             }
-                            Err(vf) => {
-                                debug!("state -> splitter: {:?} needs check", vf.path);
-                                if needs_check_tx_clone.is_closed() {
-                                    panic!(
-                                        "programming error: data with needs check was received after shutdown"
-                                    );
-                                }
+                            Err(vf) => match vf {
+                                TryFromVirtualFileError::NeedsCheck(vf) => {
+                                    debug!("state -> splitter: {:?} needs check", vf.path);
+                                    if needs_check_tx_clone.is_closed() {
+                                        panic!(
+                                            "programming error: data with needs check was received after shutdown"
+                                        );
+                                    }
 
-                                if let Err(e) = needs_check_tx_clone.send(vf.clone().into()).await {
+                                    if let Err(e) =
+                                        needs_check_tx_clone.send(vf.clone().into()).await
+                                    {
+                                        tx_clone
+                                            .send(Err(e.into()))
+                                            .await
+                                            .expect("failed to send error to output stream")
+                                    }
+                                }
+                                TryFromVirtualFileError::CorruptionDetected(vf) => {
+                                    debug!("corruption detected: {:?}", vf);
                                     tx_clone
-                                        .send(Err(e.into()))
+                                        .send(Err(AppError::CorruptionDetected {
+                                            blob_id: vf.target_blob_id,
+                                            path: vf.path,
+                                        }
+                                        .into()))
                                         .await
                                         .expect("failed to send error to output stream")
                                 }
-                            }
+                            },
                         }
                     }
                 }

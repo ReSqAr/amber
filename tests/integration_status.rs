@@ -197,3 +197,30 @@ async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error>
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_force_altered_file() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file test.txt "Original content"
+        @a amber add
+        # Simulate forced user alteration overwriting file and blob (since they are hard-linked).
+        @a write_file test.txt "User altered content"
+
+        # action
+        @a expect "please run fsck: blob 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da (backing file test.txt) might be corrupted" amber status
+
+        @a amber fsck
+        assert_output_contains "blob corrupted 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da"
+
+        @a amber status
+        assert_output_contains "altered test.txt"
+
+        @a amber missing
+        assert_output_contains "missing test.txt (lost - no known location)"
+        assert_output_contains "detected 1 missing files and 1 missing blobs"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}

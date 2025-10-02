@@ -272,8 +272,8 @@ mod tests {
 
         assert_eq!(
             state_map.get("test"),
-            Some(&VirtualFileState::NeedsCheck),
-            "Expected file 'test' to be in NeedsCheck state"
+            Some(&VirtualFileState::CorruptionDetected),
+            "Expected file 'test' to be in CorruptionDetected state"
         );
     }
 

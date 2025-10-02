@@ -123,6 +123,7 @@ pub enum VirtualFileState {
     Altered,
     Outdated,
     NeedsCheck,
+    CorruptionDetected,
 }
 
 #[derive(Debug, Clone)]

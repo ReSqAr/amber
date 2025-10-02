@@ -44,6 +44,14 @@ pub enum AppError {
         "the transfer was incomplete: expected {expected_count} files but only {count} files were copied"
     )]
     IncompleteTransfer { count: u64, expected_count: u64 },
+    #[error(
+        "please run fsck: blob {blob} (backing file {path}) might be corrupted",
+        blob = .blob_id.as_deref().unwrap_or("<unknown>")
+    )]
+    CorruptionDetected {
+        blob_id: Option<String>,
+        path: String,
+    },
 }
 
 #[derive(Error, Debug)]
