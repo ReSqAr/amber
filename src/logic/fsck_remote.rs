@@ -50,10 +50,13 @@ pub(crate) async fn fsck_remote(
         let stream = remote.available();
         let local_clone = local.clone();
         let fsck_files_path_clone = fsck_files_path.clone();
+        let skipped = Arc::new(AtomicU64::new(0));
+        let skipped_clone = skipped.clone();
         let stream = StreamExt::map(stream, move |blob: Result<AvailableBlob, InternalError>| {
             let local = local_clone.clone();
             let fsck_files_path = fsck_files_path_clone.clone();
             let tx = tx.clone();
+            let skipped = skipped_clone.clone();
             async move {
                 let blob = blob?;
                 let blob_path = local.blob_path(&blob.blob_id);
@@ -68,14 +71,17 @@ pub(crate) async fn fsck_remote(
                         files::create_hard_link(&blob_path, &fsck_files_path.join(&path)).await?;
                         tx.send(path).await?;
                         o.observe_termination(log::Level::Debug, "materialised");
+                        Ok::<_, InternalError>(true)
                     } else {
-                        o.observe_termination(log::Level::Debug, "skipped");
+                        o.observe_termination(log::Level::Debug, "skipped (orphaned)");
+                        skipped.fetch_add(1, Ordering::Relaxed);
+                        Ok(false)
                     }
                 } else {
-                    o.observe_termination(log::Level::Debug, "skipped");
+                    o.observe_termination(log::Level::Info, "skipped (blob missing)");
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                    Ok(false)
                 }
-
-                Ok::<(), InternalError>(())
             }
         });
 
@@ -87,7 +93,11 @@ pub(crate) async fn fsck_remote(
         let mut count = 0u64;
         let mut obs = BaseObserver::without_id("fsck:files:materialise");
         while let Some(result) = stream.next().await {
-            count += 1;
+            if let Ok(is_materialised) = result
+                && is_materialised
+            {
+                count += 1;
+            }
             obs.observe_position(log::Level::Trace, count);
             result?;
         }
@@ -96,7 +106,12 @@ pub(crate) async fn fsck_remote(
         writing_task.await??;
 
         let duration = start_time.elapsed();
-        let msg = format!("materialised {} blobs for fsck in {duration:.2?}", count);
+        let mut parts = vec![format!("materialised {count} blobs")];
+        let skipped = skipped.load(Ordering::SeqCst);
+        if skipped > 0 {
+            parts.push(format!("skipped {} blobs", skipped));
+        }
+        let msg = format!("{} for fsck in {duration:.2?}", parts.join(" and "));
         obs.observe_termination(log::Level::Info, msg);
 
         count
