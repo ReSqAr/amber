@@ -742,3 +742,26 @@ async fn integration_rm_push_sync_propagation() -> anyhow::Result<(), anyhow::Er
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_mv_changed_file_and_then_delete() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action 1
+        @a remove_file test.txt
+        @a write_file test.txt "overwritten"
+        @a amber mv test.txt test.moved
+        @a amber rm --hard test.moved
+
+        # then
+        @a amber status
+        assert_output_contains "new test.moved"
+        @a assert_exists test.moved "overwritten"
+        @a assert_does_not_exist test.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
