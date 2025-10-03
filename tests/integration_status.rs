@@ -1,4 +1,5 @@
 use serial_test::serial;
+
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -200,27 +201,59 @@ async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error>
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn integration_test_force_altered_file() -> Result<(), anyhow::Error> {
+async fn integration_test_force_altered_file_hard_links() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
-        @a amber init a
+        @a amber --prefer-hard-links init a
         @a write_file test.txt "Original content"
-        @a amber add
+        @a amber --prefer-hard-links add
         # Simulate forced user alteration overwriting file and blob (since they are hard-linked).
         @a write_file test.txt "User altered content"
 
         # action
-        @a expect "please run fsck: blob 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da (backing file test.txt) might be corrupted" amber status
+        @a expect "please run fsck: blob 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da (backing file test.txt) might be corrupted" amber --prefer-hard-links status
 
-        @a amber fsck
+        @a amber --prefer-hard-links fsck
         assert_output_contains "blob corrupted 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da"
 
-        @a amber status
+        @a amber --prefer-hard-links status
         assert_output_contains "altered test.txt"
 
-        @a amber missing
+        @a amber --prefer-hard-links missing
         assert_output_contains "missing test.txt (lost - no known location)"
         assert_output_contains "detected 1 missing files and 1 missing blobs"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn integration_test_force_altered_file_ref_links() -> Result<(), anyhow::Error> {
+    if !dsl_definition::capability_check_ref_link().await? {
+        eprintln!("Skipping test: ref links are not supported");
+        return Ok(());
+    }
+
+    let script = r#"
+        # when
+        @a amber --prefer-ref-links init a
+        @a write_file test.txt "Original content"
+        @a amber --prefer-ref-links add
+        # Simulate forced user alteration overwriting blob (not the file, since they are not hard-linked).
+        @a write_file test.txt "User altered content"
+
+        # action
+        @a amber --prefer-ref-links status
+        assert_output_contains "altered test.txt"
+
+        @a amber --prefer-ref-links fsck
+        assert_output_contains "detected 1 altered files and 0 incomplete files"
+
+        @a amber --prefer-ref-links status
+        assert_output_contains "altered test.txt"
+
+        @a amber --prefer-ref-links missing
+        assert_output_contains "no files missing"
     "#;
     dsl_definition::run_dsl_script(script).await
 }

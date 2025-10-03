@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use std::collections::HashMap;
 use std::sync::Once;
 use tempfile::tempdir;
+use tokio::task;
 use types::{CommandLine, RepoInstance, TestEnv};
 
 mod amber;
@@ -233,4 +234,26 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
         }
     }
     Ok(())
+}
+
+pub async fn capability_check_ref_link() -> anyhow::Result<bool, anyhow::Error> {
+    let tmp_dir = tempdir()?;
+    let path = tmp_dir.path().to_path_buf();
+
+    let source = path.join(".capability_check_reflink_source");
+    let destination = path.join(".capability_check_reflink_destination");
+
+    {
+        tokio::fs::File::create(&source).await?;
+    }
+
+    let source_cloned = source.clone();
+    let destination_cloned = destination.clone();
+    let result =
+        task::spawn_blocking(move || reflink_copy::reflink(&source_cloned, &destination_cloned))
+            .await?;
+
+    let _ = tokio::fs::remove_file(&source).await;
+    let _ = tokio::fs::remove_file(&destination).await;
+    Ok(result.is_ok())
 }
