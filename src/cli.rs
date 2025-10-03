@@ -33,8 +33,6 @@ pub enum Commands {
     },
     /// Add new files to the repository
     Add {
-        #[arg(long, default_value_t = false, help = "Skip file deduplication")]
-        skip_deduplication: bool,
         #[arg(long, default_value_t = false, help = "Enable verbose output")]
         verbose: bool,
     },
@@ -179,18 +177,8 @@ pub async fn run_cli(
         Commands::Init { name } => {
             commands::init::init_repository(cli.path, cli.app_folder, name, output).await
         }
-        Commands::Add {
-            skip_deduplication,
-            verbose,
-        } => {
-            commands::add::add(
-                cli.path,
-                cli.app_folder,
-                skip_deduplication,
-                verbose,
-                output,
-            )
-            .await
+        Commands::Add { verbose } => {
+            commands::add::add(cli.path, cli.app_folder, verbose, output).await
         }
         Commands::Remove { files, hard } => {
             commands::fs::rm(cli.path, cli.app_folder, files, hard, output).await

@@ -23,7 +23,6 @@ pub(crate) async fn add_files(
     + Send
     + Sync
     + 'static,
-    skip_deduplication: bool,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut scanner_obs = BaseObserver::without_id("scanner");
@@ -110,14 +109,10 @@ pub(crate) async fn add_files(
                     let blob_locks_clone = blob_locks.clone();
                     async move {
                         let path = local_repository_clone.root().join(file_result?.path);
-                        let Blobify { blob_id, blob_size } = blobify::blobify(
-                            &local_repository_clone,
-                            &path,
-                            skip_deduplication,
-                            blob_locks_clone,
-                        )
-                        .await
-                        .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
+                        let Blobify { blob_id, blob_size } =
+                            blobify::blobify(&local_repository_clone, &path, blob_locks_clone)
+                                .await
+                                .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
 
                         let valid_from = chrono::Utc::now();
                         let file = InsertFile {

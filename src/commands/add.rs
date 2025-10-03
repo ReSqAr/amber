@@ -11,7 +11,6 @@ use std::path::PathBuf;
 pub async fn add(
     maybe_root: Option<PathBuf>,
     app_folder: PathBuf,
-    skip_deduplication: bool,
     verbose: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
@@ -19,7 +18,7 @@ pub async fn add(
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
-        add::add_files(local_repository, skip_deduplication).await?;
+        add::add_files(local_repository).await?;
         Ok::<(), InternalError>(())
     };
 

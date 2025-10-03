@@ -20,7 +20,6 @@ pub(crate) struct Blobify {
 pub(crate) async fn blobify(
     local: &(impl Local + Metadata),
     path: &RepoPath,
-    skip_deduplication: bool,
     blob_locks: BlobLockMap,
 ) -> Result<Blobify, InternalError> {
     let sha256::HashWithSize {
@@ -63,15 +62,11 @@ pub(crate) async fn blobify(
 
     if !are_hardlinked(&blob_path, &path).await? {
         // scenario 2: blob_path exists and is a carbon copy of $path, but they are not hard-linked
-        if !skip_deduplication {
-            files::forced_atomic_hard_link(local, &blob_path, path, &blob_id).await?;
-        } else {
-            debug!(
-                "{} and {} are two different files with the same content. deduplication was not requested. no action needed.",
-                blob_path.display(),
-                path.display()
-            );
-        }
+        debug!(
+            "{} and {} are two different files with the same content. no action needed.",
+            blob_path.display(),
+            path.display()
+        );
     } else {
         // scenario 3: blob_path exists and the files are hard-linked
         debug!(
