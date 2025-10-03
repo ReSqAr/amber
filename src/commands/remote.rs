@@ -5,11 +5,10 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Metadata};
 use crate::utils::errors::InternalError;
 use crate::utils::rclone;
-use std::path::PathBuf;
 
 fn render_connection_type(connection_type: ConnectionType) -> String {
     match connection_type {
@@ -20,11 +19,10 @@ fn render_connection_type(connection_type: ConnectionType) -> String {
 }
 
 pub async fn list(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
+    let local_repository = LocalRepository::new(config).await?;
     let mut connections = local_repository.list().await?;
 
     if connections.is_empty() {
@@ -50,14 +48,13 @@ pub async fn list(
 }
 
 pub async fn add(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     name: String,
     connection_type: ConnectionType,
     parameter: String,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
+    let local_repository = LocalRepository::new(config).await?;
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();

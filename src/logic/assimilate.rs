@@ -113,7 +113,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::local::LocalRepository;
+    use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
     use tempfile::tempdir;
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
@@ -124,9 +124,14 @@ mod tests {
         let repo_path = dir.path().join("repo");
         fs::create_dir_all(&repo_path).await?;
 
-        let local =
-            LocalRepository::create(Some(repo_path.clone()), ".amb".into(), "test_repo".into())
-                .await?;
+        let local = LocalRepository::create(
+            LocalRepositoryConfig {
+                maybe_root: Some(repo_path.clone()),
+                app_folder: ".amb".into(),
+            },
+            "test_repo".into(),
+        )
+        .await?;
 
         let file_path = repo_path.join("hello.txt");
         let mut file = fs::File::create(&file_path).await?;

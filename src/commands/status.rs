@@ -4,21 +4,19 @@ use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::state;
 use crate::logic::state::VirtualFileState;
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{Adder, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub async fn status(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     verbose: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
+    let local_repository = LocalRepository::new(config).await?;
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {

@@ -3,7 +3,7 @@ use crate::grpc::auth::ServerAuth;
 use crate::grpc::definitions;
 use crate::grpc::service::Service;
 use crate::logic::files;
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use crate::utils::port;
@@ -27,8 +27,7 @@ pub fn generate_auth_key() -> String {
 }
 
 pub async fn serve(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let auth_key = generate_auth_key();
@@ -53,8 +52,8 @@ pub async fn serve(
     };
 
     serve_on_port(
-        maybe_root,
-        app_folder,
+        config.maybe_root,
+        config.app_folder,
         output,
         port,
         auth_key,
@@ -71,7 +70,12 @@ pub async fn serve_on_port(
     auth_key: String,
     shutdown_signal: impl Future<Output = ()>,
 ) -> Result<(), InternalError> {
-    let local_repository = match LocalRepository::new(maybe_root, app_folder).await {
+    let config = LocalRepositoryConfig {
+        maybe_root,
+        app_folder,
+    };
+
+    let local_repository = match LocalRepository::new(config).await {
         Ok(local_repository) => local_repository,
         Err(e) => {
             let error = ServeResult::Error(ServeError {

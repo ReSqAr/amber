@@ -5,19 +5,17 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::{materialise, sync};
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
-use std::path::PathBuf;
 
 pub async fn sync(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
+    let local_repository = LocalRepository::new(config).await?;
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {

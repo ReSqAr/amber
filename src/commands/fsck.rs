@@ -4,21 +4,19 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::{fsck_local, fsck_remote};
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::rclone::RCloneConfig;
-use std::path::PathBuf;
 
 pub async fn fsck(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     connection_name: Option<String>,
     output: flightdeck::output::Output,
     rclone_checkers: usize,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root, app_folder).await?;
+    let local = LocalRepository::new(config).await?;
     let log_path = local.log_path().abs().clone();
 
     let config = RCloneConfig {

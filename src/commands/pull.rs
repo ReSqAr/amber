@@ -7,7 +7,7 @@ use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::files;
 use crate::logic::transfer::transfer;
 use crate::logic::{materialise, sync};
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
@@ -16,15 +16,14 @@ use crate::utils::rclone::RCloneConfig;
 use std::path::PathBuf;
 
 pub async fn pull(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     connection_name: String,
     paths: Vec<PathBuf>,
     output: flightdeck::output::Output,
     rclone_transfers: usize,
     rclone_checkers: usize,
 ) -> Result<(), InternalError> {
-    let local = LocalRepository::new(maybe_root, app_folder).await?;
+    let local = LocalRepository::new(config).await?;
     let log_path = local.log_path().abs().clone();
     let root = local.root();
     let paths = paths

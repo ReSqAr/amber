@@ -96,11 +96,18 @@ async fn acquire_exclusive_lock<P: AsRef<Path>>(path: P) -> Result<std::fs::File
     }
 }
 
+pub struct LocalRepositoryConfig {
+    pub maybe_root: Option<PathBuf>,
+    pub app_folder: PathBuf,
+}
+
 impl LocalRepository {
-    pub async fn new(
-        maybe_root: Option<PathBuf>,
-        app_folder: PathBuf,
-    ) -> Result<Self, InternalError> {
+    pub async fn new(config: LocalRepositoryConfig) -> Result<Self, InternalError> {
+        let LocalRepositoryConfig {
+            maybe_root,
+            app_folder,
+        } = config;
+
         let root = if let Some(root) = maybe_root {
             root
         } else {
@@ -163,10 +170,14 @@ impl LocalRepository {
     }
 
     pub async fn create(
-        maybe_root: Option<PathBuf>,
-        app_folder: PathBuf,
+        config: LocalRepositoryConfig,
         name: String,
     ) -> Result<Self, InternalError> {
+        let LocalRepositoryConfig {
+            maybe_root,
+            app_folder,
+        } = config;
+
         let root = if let Some(path) = maybe_root {
             path
         } else {
@@ -214,7 +225,11 @@ impl LocalRepository {
         }]))
         .await?;
 
-        Self::new(Some(root), app_folder).await
+        Self::new(LocalRepositoryConfig {
+            maybe_root: Some(root),
+            app_folder,
+        })
+        .await
     }
 
     pub(crate) fn db(&self) -> &Database {

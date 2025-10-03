@@ -1,3 +1,4 @@
+use crate::repository::local::LocalRepositoryConfig;
 use crate::utils::errors::InternalError;
 use crate::{commands, db};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -173,29 +174,26 @@ pub async fn run_cli(
     cli: Cli,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
+    let config = LocalRepositoryConfig {
+        maybe_root: cli.path,
+        app_folder: cli.app_folder,
+    };
+
     match cli.command {
-        Commands::Init { name } => {
-            commands::init::init_repository(cli.path, cli.app_folder, name, output).await
-        }
-        Commands::Add { verbose } => {
-            commands::add::add(cli.path, cli.app_folder, verbose, output).await
-        }
-        Commands::Remove { files, hard } => {
-            commands::fs::rm(cli.path, cli.app_folder, files, hard, output).await
-        }
+        Commands::Init { name } => commands::init::init_repository(config, name, output).await,
+        Commands::Add { verbose } => commands::add::add(config, verbose, output).await,
+        Commands::Remove { files, hard } => commands::fs::rm(config, files, hard, output).await,
         Commands::Move {
             source,
             destination,
-        } => commands::fs::mv(cli.path, cli.app_folder, source, destination, output).await,
-        Commands::Status { verbose } => {
-            commands::status::status(cli.path, cli.app_folder, verbose, output).await
-        }
+        } => commands::fs::mv(config, source, destination, output).await,
+        Commands::Status { verbose } => commands::status::status(config, verbose, output).await,
         Commands::Missing { connection_name } => {
-            commands::missing::missing(cli.path, cli.app_folder, connection_name, output).await
+            commands::missing::missing(config, connection_name, output).await
         }
-        Commands::Serve {} => commands::serve::serve(cli.path, cli.app_folder, output).await,
+        Commands::Serve {} => commands::serve::serve(config, output).await,
         Commands::Sync { connection_name } => {
-            commands::sync::sync(cli.path, cli.app_folder, connection_name, output).await
+            commands::sync::sync(config, connection_name, output).await
         }
         Commands::Pull {
             connection_name,
@@ -204,8 +202,7 @@ pub async fn run_cli(
             rclone_checkers,
         } => {
             commands::pull::pull(
-                cli.path,
-                cli.app_folder,
+                config,
                 connection_name,
                 paths,
                 output,
@@ -221,8 +218,7 @@ pub async fn run_cli(
             rclone_checkers,
         } => {
             commands::push::push(
-                cli.path,
-                cli.app_folder,
+                config,
                 connection_name,
                 paths,
                 output,
@@ -234,39 +230,20 @@ pub async fn run_cli(
         Commands::Fsck {
             connection_name,
             rclone_checkers,
-        } => {
-            commands::fsck::fsck(
-                cli.path,
-                cli.app_folder,
-                connection_name,
-                output,
-                rclone_checkers,
-            )
-            .await
-        }
+        } => commands::fsck::fsck(config, connection_name, output, rclone_checkers).await,
         Commands::Remote { command } => match command {
             RemoteCommands::Add {
                 name,
                 connection_type,
                 parameter,
             } => {
-                commands::remote::add(
-                    cli.path,
-                    cli.app_folder,
-                    name,
-                    connection_type.into(),
-                    parameter,
-                    output,
-                )
-                .await
+                commands::remote::add(config, name, connection_type.into(), parameter, output).await
             }
-            RemoteCommands::List {} => {
-                commands::remote::list(cli.path, cli.app_folder, output).await
-            }
+            RemoteCommands::List {} => commands::remote::list(config, output).await,
         },
         Commands::Config { command } => match command {
             ConfigCommands::SetName { name } => {
-                commands::config::set_name(cli.path, cli.app_folder, name, output).await
+                commands::config::set_name(config, name, output).await
             }
         },
     }

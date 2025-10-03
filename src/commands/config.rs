@@ -1,17 +1,15 @@
 use crate::db::models;
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{Adder, Metadata};
 use crate::utils::errors::InternalError;
 use futures::stream;
-use std::path::PathBuf;
 
 pub async fn set_name(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     name: String,
     output: crate::flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(maybe_root, app_folder).await?;
+    let local_repository = LocalRepository::new(config).await?;
 
     let meta = local_repository.current().await?;
 

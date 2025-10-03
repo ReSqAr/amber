@@ -1,4 +1,4 @@
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone::{ConfigSection, RCloneTarget};
@@ -23,7 +23,11 @@ impl LocalConfig {
         app_folder: PathBuf,
     ) -> Result<WrappedRepository, InternalError> {
         let LocalConfig { root } = self;
-        let repository = LocalRepository::new(Some(root.clone().into()), app_folder).await?;
+        let repository = LocalRepository::new(LocalRepositoryConfig {
+            maybe_root: Some(root.clone().into()),
+            app_folder,
+        })
+        .await?;
         Ok(WrappedRepository::Local(repository))
     }
 }

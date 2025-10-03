@@ -3,21 +3,19 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
-use crate::repository::local::LocalRepository;
+use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
-use std::path::PathBuf;
 
 pub async fn init_repository(
-    maybe_root: Option<PathBuf>,
-    app_folder: PathBuf,
+    config: LocalRepositoryConfig,
     name: String,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let wrapped = async {
         let mut init_obs = BaseObserver::without_id("init");
 
-        let local = LocalRepository::create(maybe_root, app_folder, name.clone()).await?;
+        let local = LocalRepository::create(config, name.clone()).await?;
 
         let msg = format!(
             "initialised repository {} in {}",
