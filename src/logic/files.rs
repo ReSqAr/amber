@@ -1,5 +1,6 @@
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
+use crate::utils::fs::{Capability, link};
 use crate::utils::path::RepoPath;
 use filetime::{FileTime, set_file_times};
 use log::debug;
@@ -7,19 +8,21 @@ use std::path::Path;
 use tokio::{fs, task};
 use uuid::Uuid;
 
-pub async fn create_hard_link(
+pub async fn create_link(
     source: &RepoPath,
     destination: &RepoPath,
+    capability: &Capability,
 ) -> Result<(), InternalError> {
     if let Some(parent) = destination.abs().parent() {
         fs::create_dir_all(parent).await?;
     }
 
-    fs::hard_link(source, destination).await?;
+    link(source, destination, capability).await?;
     debug!(
-        "hard linked {} to {}",
+        "linked {} to {} (via {:?})",
         source.display(),
-        destination.display()
+        destination.display(),
+        capability,
     );
 
     // make destination read only
@@ -49,7 +52,7 @@ pub async fn assimilate(source: &RepoPath, destination: &RepoPath) -> Result<(),
     Ok(())
 }
 
-pub async fn forced_atomic_hard_link(
+pub async fn forced_atomic_link(
     local: &impl Local,
     source: &RepoPath,
     destination: &RepoPath,
@@ -62,7 +65,7 @@ pub async fn forced_atomic_hard_link(
         .staging_path()
         .join(format!("{}.{}", blob_id, Uuid::now_v7()));
 
-    fs::hard_link(source, &staging_path).await?;
+    link(source, &staging_path, local.capability()).await?;
     debug!(
         "hard linked {} to {}",
         source.display(),

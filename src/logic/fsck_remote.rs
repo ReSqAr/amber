@@ -68,7 +68,12 @@ pub(crate) async fn fsck_remote(
                     .unwrap_or(false)
                 {
                     if let Some(path) = blob.path {
-                        files::create_hard_link(&blob_path, &fsck_files_path.join(&path)).await?;
+                        files::create_link(
+                            &blob_path,
+                            &fsck_files_path.join(&path),
+                            local.capability(),
+                        )
+                        .await?;
                         tx.send(path).await?;
                         o.observe_termination(log::Level::Debug, "materialised");
                         Ok::<_, InternalError>(true)

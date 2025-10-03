@@ -1,11 +1,46 @@
-use crate::utils::errors::{AppError, InternalError};
+use crate::utils::errors::InternalError;
 use log::debug;
 use std::fmt::Debug;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use tokio::fs;
+use tokio::{fs, task};
 
-pub async fn capability_check(path: &Path) -> Result<(), InternalError> {
+#[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone)]
+pub enum Capability {
+    RefLinks,
+    HardLinks,
+}
+
+pub async fn capability_check(path: &Path) -> Result<Option<Capability>, InternalError> {
+    if capability_check_ref_link(path).await? {
+        Ok(Some(Capability::RefLinks))
+    } else if capability_check_hard_link(path).await? {
+        Ok(Some(Capability::HardLinks))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn capability_check_ref_link(path: &Path) -> Result<bool, InternalError> {
+    let source = path.join(".capability_check_reflink_source");
+    let destination = path.join(".capability_check_reflink_destination");
+
+    {
+        fs::File::create(&source).await?;
+    }
+
+    let source_cloned = source.clone();
+    let destination_cloned = destination.clone();
+    let result =
+        task::spawn_blocking(move || reflink_copy::reflink(&source_cloned, &destination_cloned))
+            .await?;
+
+    let _ = fs::remove_file(&source).await;
+    let _ = fs::remove_file(&destination).await;
+    Ok(result.is_ok())
+}
+
+async fn capability_check_hard_link(path: &Path) -> Result<bool, InternalError> {
     let source = path.join(".capability_check_hardlink_source");
     let destination = path.join(".capability_check_hardlink_destination");
 
@@ -16,17 +51,29 @@ pub async fn capability_check(path: &Path) -> Result<(), InternalError> {
     let result = fs::hard_link(&source, &destination).await;
 
     let _ = fs::remove_file(&source).await;
-    if result.is_ok() {
-        let _ = fs::remove_file(&destination).await;
-    }
+    let _ = fs::remove_file(&destination).await;
+    Ok(result.is_ok())
+}
 
-    match result {
-        Ok(()) => Ok(()),
-        Err(e) => Err(AppError::HardlinksNotSupported(e.to_string()).into()),
+pub async fn link(
+    source: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+    capability: &Capability,
+) -> Result<(), InternalError> {
+    match capability {
+        Capability::RefLinks => {
+            let source = source.as_ref().to_path_buf();
+            let destination = destination.as_ref().to_path_buf();
+            Ok(
+                task::spawn_blocking(move || reflink_copy::reflink(&source, &destination))
+                    .await??,
+            )
+        }
+        Capability::HardLinks => Ok(fs::hard_link(&source, &destination).await?),
     }
 }
 
-pub(crate) async fn are_hardlinked(
+pub(crate) async fn are_hard_linked(
     path1: impl AsRef<Path> + Debug,
     path2: impl AsRef<Path> + Debug,
 ) -> std::io::Result<bool> {
@@ -43,7 +90,7 @@ pub(crate) async fn are_hardlinked(
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::fs::are_hardlinked;
+    use crate::utils::fs::{Capability, are_hard_linked, link};
     use tempfile::tempdir;
     use tokio::fs;
 
@@ -54,9 +101,9 @@ mod tests {
         fs::write(&file_path, "content").await?;
 
         let hardlink_path = dir.path().join("hardlink.txt");
-        fs::hard_link(&file_path, &hardlink_path).await?;
+        link(&file_path, &hardlink_path, &Capability::HardLinks).await?;
 
-        let linked = are_hardlinked(&file_path, &hardlink_path).await.unwrap();
+        let linked = are_hard_linked(&file_path, &hardlink_path).await.unwrap();
         assert!(linked);
 
         Ok(())

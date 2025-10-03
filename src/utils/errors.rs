@@ -36,8 +36,8 @@ pub enum AppError {
     MvErrors,
     #[error("remove encountered errors")]
     RmErrors,
-    #[error("filesystem does not support hardlinks (error: {0})")]
-    HardlinksNotSupported(String),
+    #[error("filesystem does neither support reflinks nor hardlinks")]
+    RefAndHardlinksNotSupported,
     #[error("rclone is required but: {0}")]
     RCloneErr(String),
     #[error(

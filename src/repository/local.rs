@@ -16,9 +16,9 @@ use crate::repository::traits::{
     Local, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
     TransferItem, VirtualFilesystem,
 };
-use crate::utils;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::fs::{Capability, capability_check, link};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use chrono::{DateTime, Utc};
@@ -40,6 +40,7 @@ pub(crate) struct LocalRepository {
     app_folder: PathBuf,
     repo_id: String,
     db: Database,
+    capability: Capability,
     _lock: Arc<std::fs::File>,
 }
 
@@ -118,6 +119,17 @@ impl LocalRepository {
         let lock_path = repository_path.join(".lock");
         let lock = acquire_exclusive_lock(lock_path).await?;
 
+        let capability = capability_check(&repository_path)
+            .await
+            .inspect_err(|e| log::error!("capability check failed: {e}"))?;
+        let capability = match capability {
+            Some(capability) => capability,
+            None => {
+                return Err(AppError::RefAndHardlinksNotSupported.into());
+            }
+        };
+        debug!("detected capability {:?}", capability);
+
         let staging_path = repository_path.join("staging");
         files::cleanup_staging(&staging_path).await?;
         debug!("deleted staging {}", staging_path.display());
@@ -145,6 +157,7 @@ impl LocalRepository {
             repo_id: repo.repo_id,
             app_folder,
             db,
+            capability,
             _lock: Arc::new(lock),
         })
     }
@@ -173,10 +186,6 @@ impl LocalRepository {
         fs::create_dir(repository_path.as_path())
             .await
             .inspect_err(|e| log::error!("unable to create path {repository_path:?}: {e}"))?;
-
-        utils::fs::capability_check(&repository_path)
-            .await
-            .inspect_err(|e| log::error!("capability check failed: {e}"))?;
 
         let blobs_path = repository_path.join("blobs");
         fs::create_dir_all(blobs_path.as_path())
@@ -267,6 +276,10 @@ impl Local for LocalRepository {
         self.repository_path()
             .join("logs")
             .join(format!("run_{ts}-{random}.txt.gz"))
+    }
+
+    fn capability(&self) -> &Capability {
+        &self.capability
     }
 }
 
@@ -577,7 +590,7 @@ impl Sender<BlobTransferItem> for LocalRepository {
                 fs::create_dir_all(parent).await?;
             }
 
-            fs::hard_link(blob_path, transfer_path).await?;
+            link(blob_path, transfer_path, self.capability()).await?;
             Result::<(), InternalError>::Ok(())
         });
 
@@ -657,7 +670,7 @@ impl Sender<FileTransferItem> for LocalRepository {
                 fs::create_dir_all(parent).await?;
             }
 
-            fs::hard_link(blob_path, transfer_path).await?;
+            link(blob_path, transfer_path, self.capability()).await?;
             Result::<(), InternalError>::Ok(())
         });
 

@@ -5,10 +5,8 @@ use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
-use crate::utils::fs::are_hardlinked;
 use crate::utils::walker::WalkerConfig;
 use futures::pin_mut;
-use log::debug;
 use tokio::fs;
 
 pub async fn materialise(
@@ -129,23 +127,16 @@ pub async fn materialise(
                                 .map(|m| m.is_file())
                                 .unwrap_or(false)
                             {
-                                if !are_hardlinked(&object_path, &target_path).await? {
-                                    files::forced_atomic_hard_link(
-                                        local,
-                                        &object_path,
-                                        &target_path,
-                                        &target_blob_id,
-                                    )
-                                    .await?;
-                                } else {
-                                    debug!(
-                                        "{} and {} are already hard linked. no action needed.",
-                                        object_path.display(),
-                                        target_path.display()
-                                    );
-                                }
+                                files::forced_atomic_link(
+                                    local,
+                                    &object_path,
+                                    &target_path,
+                                    &target_blob_id,
+                                )
+                                .await?;
                             } else {
-                                files::create_hard_link(&object_path, &target_path).await?;
+                                files::create_link(&object_path, &target_path, local.capability())
+                                    .await?;
                             }
 
                             o.observe_termination_ext(

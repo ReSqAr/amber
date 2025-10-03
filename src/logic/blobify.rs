@@ -1,12 +1,10 @@
 use crate::logic::files;
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::errors::InternalError;
-use crate::utils::fs::are_hardlinked;
 use crate::utils::path::RepoPath;
 use crate::utils::sha256;
 use async_lock::Mutex;
 use dashmap::DashMap;
-use log::debug;
 use std::sync::Arc;
 use tokio::fs;
 
@@ -54,26 +52,10 @@ pub(crate) async fn blobify(
             .map(|m| m.is_file())
             .unwrap_or(false)
         {
-            files::create_hard_link(path, &blob_path).await?;
+            files::create_link(path, &blob_path, local.capability()).await?;
             return Ok(result);
         }
         // lock is released here as `_lock_guard` goes out of scope
-    }
-
-    if !are_hardlinked(&blob_path, &path).await? {
-        // scenario 2: blob_path exists and is a carbon copy of $path, but they are not hard-linked
-        debug!(
-            "{} and {} are two different files with the same content. no action needed.",
-            blob_path.display(),
-            path.display()
-        );
-    } else {
-        // scenario 3: blob_path exists and the files are hard-linked
-        debug!(
-            "{} and {} are already hard linked. no action needed.",
-            blob_path.display(),
-            path.display()
-        );
     }
 
     Ok(result)

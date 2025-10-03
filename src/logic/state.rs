@@ -12,7 +12,7 @@ use crate::utils::walker::{FileObservation, WalkerConfig, walk};
 use futures::{Stream, StreamExt, future};
 use log::{debug, error};
 use tokio::task::JoinHandle;
-use utils::fs::are_hardlinked;
+use utils::fs::are_hard_linked;
 
 fn current_timestamp_ns() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,7 +26,7 @@ async fn check(vfs: &impl Local, vf: models::VirtualFile) -> Result<Observation,
     let path = vfs.root().join(vf.path.clone());
 
     let hash = if let Some(blob_id) = vf.materialisation_last_blob_id.clone() {
-        if vf.local_has_target_blob && are_hardlinked(&path, &vfs.blob_path(&blob_id)).await? {
+        if vf.local_has_target_blob && are_hard_linked(&path, &vfs.blob_path(&blob_id)).await? {
             Some(blob_id)
         } else {
             None

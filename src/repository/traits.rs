@@ -6,6 +6,7 @@ use crate::db::models::{
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::fs::Capability;
 use crate::utils::path::RepoPath;
 use chrono::{DateTime, Utc};
 use futures::Stream;
@@ -20,6 +21,7 @@ pub trait Local {
     fn staging_id_path(&self, staging_id: u32) -> RepoPath;
     fn rclone_target_path(&self, staging_id: u32) -> RepoPath;
     fn log_path(&self) -> RepoPath;
+    fn capability(&self) -> &Capability;
 }
 
 pub struct RepositoryMetadata {
