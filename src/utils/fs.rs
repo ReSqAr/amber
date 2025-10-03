@@ -11,14 +11,30 @@ pub enum Capability {
     HardLinks,
 }
 
-pub async fn capability_check(path: &Path) -> Result<Option<Capability>, InternalError> {
-    if capability_check_ref_link(path).await? {
-        Ok(Some(Capability::RefLinks))
-    } else if capability_check_hard_link(path).await? {
-        Ok(Some(Capability::HardLinks))
-    } else {
-        Ok(None)
+pub async fn capability_check(
+    path: &Path,
+    preferred: Option<Capability>,
+) -> Result<Option<Capability>, InternalError> {
+    let order = match preferred {
+        Some(Capability::RefLinks) | None => vec![Capability::RefLinks, Capability::HardLinks],
+        Some(Capability::HardLinks) => vec![Capability::HardLinks, Capability::RefLinks],
+    };
+
+    for capability in order {
+        match capability {
+            Capability::RefLinks => {
+                if capability_check_ref_link(path).await? {
+                    return Ok(Some(Capability::RefLinks));
+                }
+            }
+            Capability::HardLinks => {
+                if capability_check_hard_link(path).await? {
+                    return Ok(Some(Capability::HardLinks));
+                }
+            }
+        }
     }
+    Ok(None)
 }
 
 async fn capability_check_ref_link(path: &Path) -> Result<bool, InternalError> {

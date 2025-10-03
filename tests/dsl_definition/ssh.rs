@@ -619,6 +619,7 @@ pub async fn start_ssh_server(
         if let Err(e) = serve::serve_on_port(
             Some(repo_path_clone),
             app_folder,
+            None,
             Output::Override(writer),
             port,
             auth_key_clone,

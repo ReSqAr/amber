@@ -1,6 +1,7 @@
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
+use crate::utils::fs::Capability;
 use crate::utils::rclone::{ConfigSection, RCloneTarget};
 use std::path::PathBuf;
 
@@ -21,11 +22,13 @@ impl LocalConfig {
     pub(crate) async fn connect(
         &self,
         app_folder: PathBuf,
+        preferred_capability: Option<Capability>,
     ) -> Result<WrappedRepository, InternalError> {
         let LocalConfig { root } = self;
         let repository = LocalRepository::new(LocalRepositoryConfig {
             maybe_root: Some(root.clone().into()),
             app_folder,
+            preferred_capability,
         })
         .await?;
         Ok(WrappedRepository::Local(repository))

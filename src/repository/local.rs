@@ -99,6 +99,7 @@ async fn acquire_exclusive_lock<P: AsRef<Path>>(path: P) -> Result<std::fs::File
 pub struct LocalRepositoryConfig {
     pub maybe_root: Option<PathBuf>,
     pub app_folder: PathBuf,
+    pub preferred_capability: Option<Capability>,
 }
 
 impl LocalRepository {
@@ -106,6 +107,7 @@ impl LocalRepository {
         let LocalRepositoryConfig {
             maybe_root,
             app_folder,
+            preferred_capability,
         } = config;
 
         let root = if let Some(root) = maybe_root {
@@ -126,7 +128,7 @@ impl LocalRepository {
         let lock_path = repository_path.join(".lock");
         let lock = acquire_exclusive_lock(lock_path).await?;
 
-        let capability = capability_check(&repository_path)
+        let capability = capability_check(&repository_path, preferred_capability)
             .await
             .inspect_err(|e| log::error!("capability check failed: {e}"))?;
         let capability = match capability {
@@ -176,6 +178,7 @@ impl LocalRepository {
         let LocalRepositoryConfig {
             maybe_root,
             app_folder,
+            preferred_capability,
         } = config;
 
         let root = if let Some(path) = maybe_root {
@@ -228,6 +231,7 @@ impl LocalRepository {
         Self::new(LocalRepositoryConfig {
             maybe_root: Some(root),
             app_folder,
+            preferred_capability,
         })
         .await
     }

@@ -36,7 +36,9 @@ impl Config {
     ) -> Result<WrappedRepository, InternalError> {
         match self {
             Config::Local(local_config) => {
-                local_config.connect(local.app_folder().to_path_buf()).await
+                local_config
+                    .connect(local.app_folder().to_path_buf(), None)
+                    .await
             }
             Config::RClone(rclone_config) => rclone_config.connect(local, name).await,
             Config::Ssh(ssh_config) => ssh_config.connect().await,

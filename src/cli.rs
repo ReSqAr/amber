@@ -1,5 +1,6 @@
 use crate::repository::local::LocalRepositoryConfig;
 use crate::utils::errors::InternalError;
+use crate::utils::fs::Capability;
 use crate::{commands, db};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -20,6 +21,20 @@ pub struct Cli {
         default_value = ".amb"
     )]
     pub app_folder: PathBuf,
+
+    #[arg(
+        long = "prefer-ref-links",
+        conflicts_with = "prefer_hard_links",
+        help = "Prefer ref links (default)"
+    )]
+    pub prefer_ref_links: bool,
+
+    #[arg(
+        long = "prefer-hard-links",
+        conflicts_with = "prefer_ref_links",
+        help = "Prefer hard links"
+    )]
+    pub prefer_hard_links: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -177,6 +192,13 @@ pub async fn run_cli(
     let config = LocalRepositoryConfig {
         maybe_root: cli.path,
         app_folder: cli.app_folder,
+        preferred_capability: if cli.prefer_ref_links {
+            Some(Capability::RefLinks)
+        } else if cli.prefer_hard_links {
+            Some(Capability::HardLinks)
+        } else {
+            None
+        },
     };
 
     match cli.command {

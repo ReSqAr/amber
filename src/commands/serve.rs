@@ -6,6 +6,7 @@ use crate::logic::files;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
+use crate::utils::fs::Capability;
 use crate::utils::port;
 use log::debug;
 use rand::Rng;
@@ -54,6 +55,7 @@ pub async fn serve(
     serve_on_port(
         config.maybe_root,
         config.app_folder,
+        config.preferred_capability,
         output,
         port,
         auth_key,
@@ -65,6 +67,7 @@ pub async fn serve(
 pub async fn serve_on_port(
     maybe_root: Option<PathBuf>,
     app_folder: PathBuf,
+    preferred_capability: Option<Capability>,
     output: crate::flightdeck::output::Output,
     port: u16,
     auth_key: String,
@@ -73,6 +76,7 @@ pub async fn serve_on_port(
     let config = LocalRepositoryConfig {
         maybe_root,
         app_folder,
+        preferred_capability,
     };
 
     let local_repository = match LocalRepository::new(config).await {

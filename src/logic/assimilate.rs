@@ -128,6 +128,7 @@ mod tests {
             LocalRepositoryConfig {
                 maybe_root: Some(repo_path.clone()),
                 app_folder: ".amb".into(),
+                preferred_capability: None,
             },
             "test_repo".into(),
         )
