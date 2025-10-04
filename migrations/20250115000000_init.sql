@@ -56,22 +56,6 @@ CREATE TABLE materialisations (
     valid_from  DATETIME    NOT NULL
 );
 
--- table: virtual_filesystem
-CREATE TABLE virtual_filesystem (
-    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
-    path                          TEXT UNIQUE NOT NULL,
-    fs_last_seen_id               INTEGER,
-    fs_last_seen_dttm             INTEGER,
-    fs_last_modified_dttm         INTEGER,
-    fs_last_size                  INTEGER,
-    materialisation_last_blob_id  TEXT,
-    target_blob_id                TEXT,
-    target_blob_size              INTEGER,
-    local_has_target_blob         BOOLEAN NOT NULL DEFAULT FALSE,
-    check_last_dttm               INTEGER,
-    check_last_hash               TEXT
-);
-
 -- table: connections
 CREATE TABLE connections
 (

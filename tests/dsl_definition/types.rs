@@ -65,6 +65,9 @@ pub(crate) enum CommandLine {
         repo: String,
         sql: String,
     },
+    ResetVirtualFilesystem {
+        repo: String,
+    },
 }
 
 /// A repository instance in our DSL environment.

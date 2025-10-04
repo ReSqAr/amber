@@ -4,6 +4,7 @@ pub(crate) mod error;
 pub(crate) mod migrations;
 pub(crate) mod models;
 pub(crate) mod tests;
+pub(crate) mod virtual_filesystem;
 
 use crate::db::error::DBError;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};

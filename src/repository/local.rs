@@ -7,6 +7,7 @@ use crate::db::models::{
     File, FileTransferItem, MissingFile, MoveEvent, Observation, ObservedBlob, PathType,
     Repository, RepositoryName, RmEvent, VirtualFile,
 };
+use crate::db::virtual_filesystem::VirtualFilesystemStore;
 use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
@@ -151,7 +152,12 @@ impl LocalRepository {
             .await
             .expect("failed to run migrations");
 
-        let db = Database::new(pool.clone());
+        let vfs_path = repository_path.join("virtual_fs.redb");
+        let vfs_store = VirtualFilesystemStore::open(&vfs_path)
+            .await
+            .inspect_err(|e| log::error!("unable to initialise virtual filesystem store: {e}"))?;
+
+        let db = Database::new(pool.clone(), vfs_store);
         let repo = db
             .get_or_create_current_repository()
             .await
@@ -214,19 +220,30 @@ impl LocalRepository {
             .await
             .inspect_err(|e| log::error!("unable to run database migration: {e}"))?;
 
-        let db = Database::new(pool.clone());
+        let vfs_path = repository_path.join("virtual_fs.redb");
+        {
+            let vfs_store = VirtualFilesystemStore::open(&vfs_path)
+                .await
+                .inspect_err(|e| {
+                    log::error!("unable to initialise virtual filesystem store: {e}")
+                })?;
 
-        let repo = db
-            .get_or_create_current_repository()
-            .await
-            .expect("failed to create repo id");
+            let db = Database::new(pool.clone(), vfs_store);
 
-        db.add_repository_names(stream::iter([models::InsertRepositoryName {
-            repo_id: repo.repo_id.clone(),
-            name: name.clone(),
-            valid_from: chrono::Utc::now(),
-        }]))
-        .await?;
+            let repo = db
+                .get_or_create_current_repository()
+                .await
+                .expect("failed to create repo id");
+
+            db.add_repository_names(stream::iter([models::InsertRepositoryName {
+                repo_id: repo.repo_id.clone(),
+                name: name.clone(),
+                valid_from: chrono::Utc::now(),
+            }]))
+            .await?;
+        }
+
+        drop(pool);
 
         Self::new(LocalRepositoryConfig {
             maybe_root: Some(root),

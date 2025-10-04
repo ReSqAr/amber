@@ -2,6 +2,7 @@
 mod tests {
     use crate::db::database::Database;
     use crate::db::migrations::run_migrations;
+    use crate::db::virtual_filesystem::VirtualFilesystemStore;
 
     use crate::db::models::{
         AvailableBlob, Blob, BlobTransferItem, Connection, ConnectionType, CopiedTransferItem,
@@ -14,6 +15,7 @@ mod tests {
     use futures::StreamExt;
     use futures::stream;
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+    use tempfile::tempdir;
     use uuid::Uuid;
 
     async fn setup_test_db() -> Database {
@@ -27,7 +29,15 @@ mod tests {
             .await
             .expect("failed to run migrations");
 
-        Database::new(pool)
+        let tmp_dir = tempdir().expect("failed to create temp dir for redb");
+        let vfs_path = tmp_dir
+            .keep()
+            .join(format!("virtual_fs_{}.redb", Uuid::new_v4()));
+        let vfs_store = VirtualFilesystemStore::open(&vfs_path)
+            .await
+            .expect("open redb");
+
+        Database::new(pool, vfs_store)
     }
 
     #[tokio::test]

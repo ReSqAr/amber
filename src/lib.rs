@@ -7,3 +7,5 @@ mod grpc;
 mod logic;
 mod repository;
 mod utils;
+
+pub use crate::db::virtual_filesystem::VirtualFilesystemStore;

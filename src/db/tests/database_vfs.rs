@@ -8,11 +8,14 @@ mod tests {
         FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation,
         VirtualFileState,
     };
+    use crate::db::virtual_filesystem::VirtualFilesystemStore;
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::{DateTime, Utc};
     use futures::StreamExt;
     use futures::stream;
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+    use tempfile::tempdir;
+    use uuid::Uuid;
 
     const BEGINNING: i64 = 1577836800; // 2020-01-01T00:00:00Z
 
@@ -27,7 +30,15 @@ mod tests {
             .await
             .expect("failed to run migrations");
 
-        Database::new(pool)
+        let tmp_dir = tempdir().expect("failed to create temp dir for redb");
+        let vfs_path = tmp_dir
+            .keep()
+            .join(format!("virtual_fs_{}.redb", Uuid::new_v4()));
+        let vfs_store = VirtualFilesystemStore::open(&vfs_path)
+            .await
+            .expect("open redb");
+
+        Database::new(pool, vfs_store)
     }
     struct TestBlob {
         blob_id: String,

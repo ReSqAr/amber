@@ -2,11 +2,12 @@ use crate::db::cleaner::Cleaner;
 use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
-    CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
-    InsertMaterialisation, InsertRepositoryName, MissingFile, MoveEvent, MoveInstr, MoveViolation,
-    Observation, ObservedBlob, PathType, Repository, RepositoryName, RmEvent, RmInstr, RmViolation,
-    RmViolationCode, VirtualFile,
+    CurrentRepository, File, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
+    InsertRepositoryName, MaterialisationProjection, MissingFile, MoveEvent, MoveInstr,
+    MoveViolation, Observation, ObservedBlob, PathType, Repository, RepositoryName, RmEvent,
+    RmInstr, RmViolation, RmViolationCode, VirtualFile,
 };
+use crate::db::virtual_filesystem::VirtualFilesystemStore;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::stream::BoundedWaitChunksExt;
@@ -25,6 +26,7 @@ pub struct Database {
     pool: SqlitePool,
     max_variable_number: usize,
     cleaner: Cleaner,
+    virtual_filesystem: VirtualFilesystemStore,
 }
 
 const TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(5);
@@ -32,12 +34,13 @@ const TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(5);
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
 impl Database {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: SqlitePool, virtual_filesystem: VirtualFilesystemStore) -> Self {
         let cleaner = Cleaner::new(pool.clone());
         Self {
             pool,
             max_variable_number: 32000, // 32766 - actually: https://sqlite.org/limits.html
             cleaner,
+            virtual_filesystem,
         }
     }
 
@@ -766,23 +769,14 @@ impl Database {
     }
 
     pub async fn truncate_virtual_filesystem(&self) -> Result<(), DBError> {
-        let query = "DELETE FROM virtual_filesystem;";
-        sqlx::query(query)
-            .execute(&self.pool)
+        self.virtual_filesystem
+            .truncate()
             .await
-            .inspect_err(|e| log::error!("Database::truncate_virtual_filesystem failed: {e}"))?;
-        Ok(())
+            .inspect_err(|e| log::error!("Database::truncate_virtual_filesystem failed: {e}"))
     }
 
     pub async fn refresh_virtual_filesystem(&self) -> Result<(), DBError> {
-        let query = "
-            INSERT OR REPLACE INTO virtual_filesystem (
-                path,
-                materialisation_last_blob_id,
-                target_blob_id,
-                target_blob_size,
-                local_has_target_blob
-            )
+        let query = r#"
             WITH
                 locally_available_blobs AS (
                     SELECT
@@ -798,7 +792,7 @@ impl Database {
                         CASE
                             WHEN a.blob_id IS NOT NULL THEN TRUE
                             ELSE FALSE
-                            END AS local_has_blob,
+                        END AS local_has_blob,
                         f.blob_id,
                         blob_size
                     FROM latest_filesystem_files f
@@ -817,83 +811,49 @@ impl Database {
                 )
             SELECT
                 path,
-                a.materialisation_last_blob_id,
-                a.blob_id as target_blob_id,
-                a.blob_size as target_blob_size,
-                a.local_has_blob as local_has_target_blob
-            FROM latest_filesystem_files_with_materialisation_and_availability a
-                LEFT JOIN virtual_filesystem vfs USING (path)
-            WHERE
-                  a.materialisation_last_blob_id IS DISTINCT FROM vfs.materialisation_last_blob_id
-               OR a.blob_id IS DISTINCT FROM vfs.target_blob_id
-               OR a.blob_size IS DISTINCT FROM vfs.target_blob_size
-               OR a.local_has_blob IS DISTINCT FROM vfs.local_has_target_blob
-            UNION ALL
-            SELECT -- files which are not tracked - but have been deleted in the files table + no materialisation
-                path,
-                NULL AS materialisation_last_blob_id,
-                NULL as target_blob_id,
-                NULL as target_blob_size,
-                FALSE as local_has_target_blob
-            FROM virtual_filesystem vfs
-                LEFT JOIN latest_filesystem_files_with_materialisation_and_availability a USING (path)
-            WHERE
-                a.path IS NULL
-                AND (
-                      NULL IS DISTINCT FROM vfs.materialisation_last_blob_id
-                   OR NULL IS DISTINCT FROM vfs.target_blob_id
-                   OR NULL IS DISTINCT FROM vfs.target_blob_size
-                   OR FALSE IS DISTINCT FROM vfs.local_has_target_blob
-                );";
+                materialisation_last_blob_id,
+                blob_id as target_blob_id,
+                blob_size as target_blob_size,
+                local_has_blob as local_has_target_blob
+            FROM latest_filesystem_files_with_materialisation_and_availability;
+    "#;
 
-        let result = sqlx::query(query)
-            .execute(&self.pool)
+        let pool = self.pool.clone();
+        let s = try_stream! {
+            let mut rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<i64>, bool)>(query)
+                .fetch(&pool);
+
+            while let Some(row) = rows.next().await {
+                let (path, materialisation_last_blob_id, target_blob_id, target_blob_size, local_has_target_blob) =
+                    row.map_err(DBError::from)?;
+                yield MaterialisationProjection {
+                    path,
+                    materialisation_last_blob_id,
+                    target_blob_id,
+                    target_blob_size,
+                    local_has_target_blob,
+                };
+            }
+        };
+
+        let batch_id: i64 = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+        self.virtual_filesystem
+            .update_materialisation_data(s.boxed(), batch_id)
             .await
-            .inspect_err(|e| log::error!("Database::refresh_virtual_filesystem failed: {e}"))?;
-        debug!(
-            "refresh_virtual_filesystem: rows affected={}",
-            result.rows_affected()
-        );
-
-        Ok(())
     }
 
     pub async fn cleanup_virtual_filesystem(&self, last_seen_id: i64) -> Result<(), DBError> {
-        let query = "
-        DELETE FROM virtual_filesystem
-        WHERE fs_last_seen_id IS DISTINCT FROM ? AND target_blob_id IS NULL AND materialisation_last_blob_id IS NULL;
-    ";
-
-        let result = sqlx::query(query)
-            .bind(last_seen_id)
-            .execute(&self.pool)
+        self.virtual_filesystem
+            .cleanup(last_seen_id)
             .await
-            .inspect_err(|e| log::error!("Database::cleanup_virtual_filesystem failed: {e}"))?;
-        debug!(
-            "cleanup_virtual_filesystem: rows affected={}",
-            result.rows_affected()
-        );
-
-        Ok(())
+            .inspect_err(|e| log::error!("Database::cleanup_virtual_filesystem failed: {e}"))
     }
 
     pub async fn select_missing_files_on_virtual_filesystem(
         &self,
         last_seen_id: i64,
     ) -> DBOutputStream<'static, MissingFile> {
-        self.stream("Database::select_missing_files_on_virtual_filesystem",
-                    query(
-                        "
-                    SELECT
-                        path,
-                        target_blob_id,
-                        local_has_target_blob
-                    FROM virtual_filesystem
-                    WHERE (fs_last_seen_id != ? OR fs_last_seen_id IS NULL) AND target_blob_id IS NOT NULL
-                ;",
-                    )
-                        .bind(last_seen_id),
-        )
+        self.virtual_filesystem.select_missing_files(last_seen_id)
     }
 
     pub async fn add_virtual_filesystem_observations(
@@ -902,138 +862,31 @@ impl Database {
     ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static
     {
         let s = self.clone();
-        input_stream.bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT).then(move |chunk: Vec<Flow<Observation>>| {
-            let s = s.clone();
-            Box::pin(async move {
-                let _cleanup_guard = s.cleaner.periodic_cleanup(chunk.len()).await;
+        input_stream
+            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
+            .then(move |chunk: Vec<Flow<Observation>>| {
+                let s = s.clone();
+                Box::pin(async move {
+                    // propagate shutdown if any item is a shutdown signal
+                    let shutting_down = chunk.iter().any(|f| matches!(f, Flow::Shutdown));
+                    let observations: Vec<Observation> = chunk
+                        .into_iter()
+                        .filter_map(|f| match f {
+                            Flow::Data(o) => Some(o),
+                            _ => None,
+                        })
+                        .collect();
 
-                let shutting_down = chunk.iter().any(
-                    |message| matches!(message, Flow::Shutdown)
-                );
-                let observations: Vec<_> = chunk.iter().filter_map(
-                    |message| match message {
-                        Flow::Data(observation) => Some(observation),
-                        Flow::Shutdown => None,
+                    let result = s.virtual_filesystem.apply_observations(observations).await;
+                    if shutting_down {
+                        ExtFlow::Shutdown(result)
+                    } else {
+                        ExtFlow::Data(result)
                     }
-                ).collect();
-
-                if observations.is_empty() { // SQL is otherwise not valid
-                    return match shutting_down {
-                        true => ExtFlow::Shutdown(Ok(vec![])),
-                        false => ExtFlow::Data(Ok(vec![]))
-                    };
-                }
-
-                let placeholders = observations
-                    .iter()
-                    .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                let query_str = format!("
-                    INSERT INTO virtual_filesystem (
-                        path,
-                        fs_last_seen_id,
-                        fs_last_seen_dttm,
-                        fs_last_modified_dttm,
-                        fs_last_size,
-                        check_last_dttm,
-                        check_last_hash
-                    )
-                    VALUES {}
-                    ON CONFLICT(path) DO UPDATE SET
-                        fs_last_seen_id = COALESCE(excluded.fs_last_seen_id, fs_last_seen_id),
-                        fs_last_seen_dttm = COALESCE(excluded.fs_last_seen_dttm, fs_last_seen_dttm),
-                        fs_last_modified_dttm = COALESCE(excluded.fs_last_modified_dttm, fs_last_modified_dttm),
-                        fs_last_size = COALESCE(excluded.fs_last_size, fs_last_size),
-                        check_last_dttm = COALESCE(excluded.check_last_dttm, check_last_dttm),
-                        check_last_hash = COALESCE(excluded.check_last_hash, check_last_hash)
-                    RETURNING
-                        path,
-                        materialisation_last_blob_id,
-                        target_blob_id,
-                        local_has_target_blob,
-                        CASE
-                            WHEN target_blob_id IS NULL AND materialisation_last_blob_id IS NULL THEN 'new'
-                            WHEN fs_last_modified_dttm <= check_last_dttm THEN ( -- we can trust the check
-                                CASE
-                                    WHEN check_last_hash IS DISTINCT FROM target_blob_id THEN ( -- check says: they are not the same
-                                        CASE
-                                            WHEN check_last_hash = materialisation_last_blob_id THEN 'outdated' -- previously materialised version
-                                            ELSE 'altered'
-                                        END
-                                    )
-                                    WHEN target_blob_size IS NOT NULL AND fs_last_size IS NOT NULL AND fs_last_size IS DISTINCT FROM target_blob_size THEN 'corruption_detected' -- shouldn't have trusted the check that the blob ids are the same
-                                    WHEN check_last_hash IS DISTINCT FROM materialisation_last_blob_id THEN 'ok_materialisation_missing' -- materialisation needs to be recorded
-                                    ELSE 'ok' -- hash is the same and the size is the same -> OK
-                                END
-                            )
-                            ELSE 'needs_check' -- check not trustworthy, check again
-                        END AS state
-                    ;
-                ", placeholders);
-
-                let mut query = sqlx::query_as::<_, VirtualFile>(&query_str);
-
-                struct InsertVirtualFile {
-                    path: String,
-                    fs_last_seen_id: Option<i64>,
-                    fs_last_seen_dttm: Option<i64>,
-                    fs_last_modified_dttm: Option<i64>,
-                    fs_last_size: Option<i64>,
-                    check_last_dttm: Option<i64>,
-                    check_last_hash: Option<String>,
-                }
-                for observation in observations {
-                    let ivf: InsertVirtualFile = match observation {
-                        Observation::FileSeen(FileSeen {
-                                                  path,
-                                                  seen_id,
-                                                  seen_dttm,
-                                                  last_modified_dttm,
-                                                  size,
-                                              }) => InsertVirtualFile {
-                            path: path.clone(),
-                            fs_last_seen_id: (*seen_id).into(),
-                            fs_last_seen_dttm: (*seen_dttm).into(),
-                            fs_last_modified_dttm: (*last_modified_dttm).into(),
-                            fs_last_size: (*size).into(),
-                            check_last_dttm: None,
-                            check_last_hash: None,
-                        },
-                        Observation::FileCheck(FileCheck {
-                                                   path,
-                                                   check_dttm,
-                                                   hash,
-                                               }) => InsertVirtualFile {
-                            path: path.clone(),
-                            fs_last_seen_id: None,
-                            fs_last_seen_dttm: None,
-                            fs_last_modified_dttm: None,
-                            fs_last_size: None,
-                            check_last_dttm: (*check_dttm).into(),
-                            check_last_hash: hash.clone().into(),
-                        },
-                    };
-
-                    query = query
-                        .bind(ivf.path.clone())
-                        .bind(ivf.fs_last_seen_id)
-                        .bind(ivf.fs_last_seen_dttm)
-                        .bind(ivf.fs_last_modified_dttm)
-                        .bind(ivf.fs_last_size)
-                        .bind(ivf.check_last_dttm)
-                        .bind(ivf.check_last_hash);
-                }
-
-
-                let result = query.fetch_all(&s.pool).await.map_err(DBError::from);
-                match shutting_down {
-                    true => ExtFlow::Shutdown(result),
-                    false => ExtFlow::Data(result)
-                }
+                })
             })
-        }).boxed().track("Database::add_virtual_filesystem_observations")
+            .boxed()
+            .track("Database::add_virtual_filesystem_observations")
     }
 
     pub async fn add_connection(&self, connection: &Connection) -> Result<(), DBError> {
@@ -1405,11 +1258,6 @@ FROM temp_mv_map;
         paths_with_hint: Vec<(String, PathType)>,
         now: DateTime<Utc>,
     ) -> DBOutputStream<'a, RmEvent> {
-        // 0) Update VFS
-        if let Err(e) = self.refresh_virtual_filesystem().await {
-            return stream::iter(Err(e)).boxed();
-        }
-
         let norm_paths_with_hint: Vec<_> = paths_with_hint
             .iter()
             .map(|(p, h)| {
@@ -1453,9 +1301,8 @@ WITH is_dir(v) AS (
 )
 SELECT
   f.path,
-  vfs.target_blob_id
-FROM latest_filesystem_files AS f
-LEFT JOIN virtual_filesystem AS vfs USING (path), is_dir
+  f.blob_id as target_blob_id
+FROM latest_filesystem_files AS f, is_dir
 WHERE
   ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
   OR

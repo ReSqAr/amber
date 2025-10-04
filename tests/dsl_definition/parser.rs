@@ -197,6 +197,12 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
                     let sql = tokens[2].to_string();
                     Some(CommandLine::Sql { repo, sql })
                 }
+                "vfs" => {
+                    if tokens.len() != 3 || tokens[2].as_str() != "reset" {
+                        panic!("Invalid vfs command: {}", line);
+                    }
+                    Some(CommandLine::ResetVirtualFilesystem { repo })
+                }
                 other => panic!("Unknown repository command '{}' in line: {}", other, line),
             }
         }

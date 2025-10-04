@@ -13,7 +13,7 @@ async fn integration_test_resilience_missing_blobs() -> Result<(), anyhow::Error
         # action 1
         @a amber add
         @a sql 'DELETE FROM blobs'
-        @a sql 'DELETE FROM virtual_filesystem'
+        @a vfs reset
         
         # check 1
         @a amber status
@@ -44,7 +44,7 @@ async fn integration_test_resilience_missing_files() -> Result<(), anyhow::Error
         # action 1
         @a amber add
         @a sql 'DELETE FROM files'
-        @a sql 'DELETE FROM virtual_filesystem'
+        @a vfs reset
         
         # check 1
         @a amber status
@@ -72,7 +72,7 @@ async fn integration_test_resilience_missing_materialisations() -> Result<(), an
         # action 1
         @a amber add
         @a sql 'DELETE FROM materialisations'
-        @a sql 'DELETE FROM virtual_filesystem'
+        @a vfs reset
         
         # check 1
         @a amber status
@@ -103,7 +103,7 @@ async fn integration_test_resilience_missing_materialisations_sync() -> Result<(
         # action 1
         @a amber add
         @a sql 'DELETE FROM materialisations'
-        @a sql 'DELETE FROM virtual_filesystem'
+        @a vfs reset
         
         # check 1
         @a amber status
@@ -135,7 +135,7 @@ async fn integration_test_resilience_missing_materialisations_sync_broken_hardli
         # action 1
         @a amber add
         @a sql 'DELETE FROM materialisations'
-        @a sql 'DELETE FROM virtual_filesystem'
+        @a vfs reset
         # break hardlink
         @a remove_file test.txt
         @a write_file test.txt "Hello world!"

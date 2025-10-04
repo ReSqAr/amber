@@ -1,3 +1,4 @@
+use amber::VirtualFilesystemStore;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::path::Path;
 use std::str::FromStr;
@@ -15,5 +16,13 @@ pub(crate) async fn run_sql(path: &Path, sql: String) -> Result<(), anyhow::Erro
     let result = sqlx::query(&sql).execute(&pool).await?;
     println!("     > rows affected: {}", result.rows_affected());
 
+    Ok(())
+}
+
+pub(crate) async fn reset_virtual_filesystem(path: &Path) -> Result<(), anyhow::Error> {
+    let db_path = path.join(".amb/virtual_fs.redb");
+    let store = VirtualFilesystemStore::open(&db_path).await?;
+    store.truncate().await?;
+    println!("     > virtual filesystem reset");
     Ok(())
 }

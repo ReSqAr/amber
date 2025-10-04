@@ -225,10 +225,20 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     }
                 }
                 CommandLine::Sql { repo, sql } => {
-                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
-                        anyhow!("Repository {} not found for start_ssh command", repo)
-                    })?;
+                    let repo_instance = env
+                        .repos
+                        .get(&repo)
+                        .ok_or_else(|| anyhow!("Repository {} not found for sql command", repo))?;
                     db::run_sql(&repo_instance.path, sql).await?;
+                }
+                CommandLine::ResetVirtualFilesystem { repo } => {
+                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
+                        anyhow!(
+                            "Repository {} not found for reset_virtual_filesystem command",
+                            repo
+                        )
+                    })?;
+                    db::reset_virtual_filesystem(&repo_instance.path).await?;
                 }
             }
         }
@@ -236,6 +246,7 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn capability_check_ref_link() -> anyhow::Result<bool, anyhow::Error> {
     let tmp_dir = tempdir()?;
     let path = tmp_dir.path().to_path_buf();

@@ -268,3 +268,12 @@ pub enum RmEvent {
     Violation(RmViolation),
     Instruction(RmInstr),
 }
+
+#[derive(Debug, Clone, FromRow)]
+pub(crate) struct MaterialisationProjection {
+    pub(crate) path: String,
+    pub(crate) materialisation_last_blob_id: Option<String>,
+    pub(crate) target_blob_id: Option<String>,
+    pub(crate) target_blob_size: Option<i64>,
+    pub(crate) local_has_target_blob: bool,
+}
