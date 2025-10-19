@@ -242,6 +242,179 @@ impl RedbHistoryStore {
         Ok(())
     }
 
+    pub(crate) async fn append_all(
+        &self,
+        files: Vec<FileRecord>,
+        blobs: Vec<BlobRecord>,
+        materialisations: Vec<MaterialisationRecord>,
+    ) -> Result<(), DBError> {
+        if files.is_empty() && blobs.is_empty() && materialisations.is_empty() {
+            return Ok(());
+        }
+
+        let db = self.store.database();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut files_history_table = txn.open_table(FILES_HISTORY_TABLE)?;
+                let mut files_index_table = txn.open_table(FILES_INDEX_TABLE)?;
+                let mut blobs_history_table = txn.open_table(BLOBS_HISTORY_TABLE)?;
+                let mut blobs_index_table = txn.open_table(BLOBS_INDEX_TABLE)?;
+                let mut materialisations_table = txn.open_table(MATERIALISATIONS_HISTORY_TABLE)?;
+                let mut sequence_table = txn.open_table(SEQUENCE_TABLE)?;
+                let mut blob_state_table = txn.open_table(BLOB_STATE_TABLE)?;
+                let mut file_state_table = txn.open_table(FILE_STATE_TABLE)?;
+                let mut repo_blob_state_table = txn.open_table(REPO_BLOB_STATE_TABLE)?;
+
+                let mut current_file_sequence = sequence_table
+                    .get("files")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                let mut current_blob_sequence = sequence_table
+                    .get("blobs")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                let mut current_mat_sequence = sequence_table
+                    .get("materialisations")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+
+                let mut file_sequence_dirty = false;
+                let mut blob_sequence_dirty = false;
+                let mut mat_sequence_dirty = false;
+
+                for mut record in files {
+                    if record.id == 0 {
+                        current_file_sequence += 1;
+                        record.id = current_file_sequence;
+                        file_sequence_dirty = true;
+                    } else if record.id > current_file_sequence {
+                        current_file_sequence = record.id;
+                        file_sequence_dirty = true;
+                    }
+                    let bytes = bincode::serialize(&record)?;
+                    files_history_table.insert(record.uuid.as_str(), bytes.clone())?;
+                    files_index_table.insert(record.id, bytes.clone())?;
+
+                    if file_record_is_valid(&record, &mut blob_state_table)? {
+                        apply_valid_file_record(&record, &mut file_state_table)?;
+                    } else if let Some(blob_id) = &record.blob_id {
+                        add_pending_file_to_state(&mut blob_state_table, blob_id, &record)?;
+                    }
+                }
+
+                let mut pending_wakeups: HashMap<String, Vec<FileRecord>> = HashMap::new();
+
+                for mut record in blobs {
+                    if record.id == 0 {
+                        current_blob_sequence += 1;
+                        record.id = current_blob_sequence;
+                        blob_sequence_dirty = true;
+                    } else if record.id > current_blob_sequence {
+                        current_blob_sequence = record.id;
+                        blob_sequence_dirty = true;
+                    }
+                    let bytes = bincode::serialize(&record)?;
+                    blobs_history_table.insert(record.uuid.as_str(), bytes.clone())?;
+                    blobs_index_table.insert(record.id, bytes.clone())?;
+
+                    let mut blob_state =
+                        get_blob_state(&mut blob_state_table, record.blob_id.as_str())?;
+                    let mut repo_state =
+                        get_repo_blob_state(&mut repo_blob_state_table, record.repo_id.as_str())?;
+
+                    if let Some(existing) = repo_state.by_blob.get(record.blob_id.as_str()) {
+                        if let Some(existing_path) = &existing.path {
+                            repo_state.paths.remove(existing_path);
+                        }
+                    }
+                    if let Some(existing) = blob_state.repositories.get(record.repo_id.as_str()) {
+                        if let Some(existing_path) = &existing.path {
+                            repo_state.paths.remove(existing_path);
+                        }
+                    }
+
+                    if record.has_blob {
+                        blob_state.ever_had_blob = true;
+                    }
+                    blob_state
+                        .repositories
+                        .insert(record.repo_id.clone(), record.clone());
+
+                    repo_state
+                        .by_blob
+                        .insert(record.blob_id.clone(), record.clone());
+                    if let Some(path) = &record.path {
+                        repo_state
+                            .paths
+                            .insert(path.clone(), record.blob_id.clone());
+                    }
+
+                    let mut newly_valid = Vec::new();
+                    if blob_state.ever_had_blob && !blob_state.pending_files.is_empty() {
+                        newly_valid.extend(blob_state.pending_files.drain(..));
+                    }
+
+                    put_blob_state(&mut blob_state_table, record.blob_id.as_str(), &blob_state)?;
+                    put_repo_blob_state(
+                        &mut repo_blob_state_table,
+                        record.repo_id.as_str(),
+                        &repo_state,
+                    )?;
+
+                    if !newly_valid.is_empty() {
+                        pending_wakeups
+                            .entry(record.blob_id.clone())
+                            .or_default()
+                            .extend(newly_valid);
+                    }
+                }
+
+                for records in pending_wakeups.into_values() {
+                    for record in records {
+                        apply_valid_file_record(&record, &mut file_state_table)?;
+                    }
+                }
+
+                for mut record in materialisations {
+                    if record.id == 0 {
+                        current_mat_sequence += 1;
+                        record.id = current_mat_sequence;
+                        mat_sequence_dirty = true;
+                    } else if record.id > current_mat_sequence {
+                        current_mat_sequence = record.id;
+                        mat_sequence_dirty = true;
+                    }
+                    let bytes = bincode::serialize(&record)?;
+                    materialisations_table.insert(record.id, bytes)?;
+
+                    let mut state = get_file_state(&mut file_state_table, record.path.as_str())?;
+                    if materialisation_record_is_valid(&record, &state) {
+                        apply_latest_materialisation(&mut state, &record)?;
+                    } else {
+                        add_pending_materialisation_to_state(&mut state, &record)?;
+                    }
+                    put_file_state(&mut file_state_table, record.path.as_str(), &state)?;
+                }
+
+                if file_sequence_dirty {
+                    sequence_table.insert("files", current_file_sequence)?;
+                }
+                if blob_sequence_dirty {
+                    sequence_table.insert("blobs", current_blob_sequence)?;
+                }
+                if mat_sequence_dirty {
+                    sequence_table.insert("materialisations", current_mat_sequence)?;
+                }
+            }
+            txn.commit()?;
+            Ok::<(), DBError>(())
+        })
+        .await??;
+
+        Ok(())
+    }
+
     pub(crate) async fn store_transfers(
         &self,
         records: Vec<TransferRecord>,

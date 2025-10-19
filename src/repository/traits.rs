@@ -1,8 +1,9 @@
 use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, MoveEvent,
-    Observation, PathType, RmEvent, VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem,
+    InsertFileBlobMaterialisation, MissingFile, MoveEvent, Observation, PathType, RmEvent,
+    VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -86,6 +87,13 @@ pub trait Adder {
     fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
+
+    fn add_file_blob_materialisations<S>(
+        &self,
+        s: S,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send
+    where
+        S: Stream<Item = InsertFileBlobMaterialisation> + Unpin + Send;
 }
 
 #[derive(Debug)]

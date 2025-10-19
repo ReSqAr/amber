@@ -407,6 +407,13 @@ impl Adder for LocalRepository {
     {
         self.db.add_materialisations(s).await
     }
+
+    async fn add_file_blob_materialisations<S>(&self, s: S) -> Result<u64, DBError>
+    where
+        S: Stream<Item = models::InsertFileBlobMaterialisation> + Unpin + Send,
+    {
+        self.db.add_file_blob_materialisations(s).await
+    }
 }
 
 impl LastIndicesSyncer for LocalRepository {

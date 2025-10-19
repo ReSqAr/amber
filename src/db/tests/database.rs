@@ -6,9 +6,9 @@ mod tests {
 
     use crate::db::models::{
         AvailableBlob, Blob, BlobTransferItem, Connection, ConnectionType, CopiedTransferItem,
-        File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
-        InsertRepositoryName, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
-        VirtualFileState,
+        File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
+        InsertFileBlobMaterialisation, InsertMaterialisation, InsertRepositoryName, MissingFile,
+        Observation, ObservedBlob, Repository, RepositoryName, VirtualFileState,
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
@@ -331,6 +331,66 @@ mod tests {
 
         let mut missing_stream = db.select_missing_files_on_virtual_filesystem(0).await;
         while let Some(_mf) = missing_stream.next().await {}
+    }
+
+    #[tokio::test]
+    async fn test_add_file_blob_materialisations() {
+        let db = setup_test_db().await;
+        let repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("repo creation failed");
+        let now = Utc::now();
+
+        let file_path = "combined.txt".to_string();
+        let blob_id = "blob-combined".to_string();
+        let repo_id = repo.repo_id.clone();
+
+        let entry = InsertFileBlobMaterialisation {
+            file: InsertFile {
+                path: file_path.clone(),
+                blob_id: Some(blob_id.clone()),
+                valid_from: now,
+            },
+            blob: InsertBlob {
+                repo_id: repo_id.clone(),
+                blob_id: blob_id.clone(),
+                blob_size: 128,
+                has_blob: true,
+                path: Some(file_path.clone()),
+                valid_from: now,
+            },
+            materialisation: InsertMaterialisation {
+                path: file_path.clone(),
+                blob_id: Some(blob_id.clone()),
+                valid_from: now,
+            },
+        };
+
+        let count = db
+            .add_file_blob_materialisations(stream::iter(vec![entry]))
+            .await
+            .expect("add_file_blob_materialisations failed");
+        assert_eq!(count, 1, "expected one combined record to be inserted");
+
+        let mut file_stream = db.select_files(-1).await;
+        let file = file_stream
+            .next()
+            .await
+            .expect("select_files empty")
+            .expect("select_files failed");
+        assert_eq!(file.path, file_path);
+        assert_eq!(file.blob_id.as_deref(), Some(blob_id.as_str()));
+
+        let mut blob_stream = db.select_blobs(-1).await;
+        let blob = blob_stream
+            .next()
+            .await
+            .expect("select_blobs empty")
+            .expect("select_blobs failed");
+        assert_eq!(blob.repo_id, repo_id);
+        assert_eq!(blob.blob_id, blob_id);
+        assert_eq!(blob.path.as_deref(), Some(file_path.as_str()));
     }
 
     #[tokio::test]

@@ -2,10 +2,11 @@ use crate::db::cleaner::Cleaner;
 use crate::db::error::DBError;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
-    CurrentRepository, File, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
-    InsertRepositoryName, MaterialisationProjection, MissingFile, MoveEvent, MoveInstr,
-    MoveViolation, MoveViolationCode, Observation, ObservedBlob, PathType, Repository,
-    RepositoryName, RmEvent, RmInstr, RmViolation, RmViolationCode, VirtualFile,
+    CurrentRepository, File, FileTransferItem, InsertBlob, InsertFile,
+    InsertFileBlobMaterialisation, InsertMaterialisation, InsertRepositoryName,
+    MaterialisationProjection, MissingFile, MoveEvent, MoveInstr, MoveViolation, MoveViolationCode,
+    Observation, ObservedBlob, PathType, Repository, RepositoryName, RmEvent, RmInstr, RmViolation,
+    RmViolationCode, VirtualFile,
 };
 use crate::db::redb_history::{
     BlobRecord as RedbBlobRecord, FileRecord as RedbFileRecord,
@@ -798,6 +799,74 @@ impl Database {
             total_attempted, total_inserted
         );
         Ok(total_inserted)
+    }
+
+    pub async fn add_file_blob_materialisations<S>(&self, s: S) -> Result<u64, DBError>
+    where
+        S: Stream<Item = InsertFileBlobMaterialisation> + Send + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut chunk_stream = s
+            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
+            .boxed();
+
+        while let Some(chunk) = chunk_stream.next().await {
+            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let chunk_len = chunk.len();
+            let mut file_records = Vec::with_capacity(chunk_len);
+            let mut blob_records = Vec::with_capacity(chunk_len);
+            let mut materialisation_records = Vec::with_capacity(chunk_len);
+
+            for entry in chunk {
+                let InsertFileBlobMaterialisation {
+                    file,
+                    blob,
+                    materialisation,
+                } = entry;
+
+                file_records.push(RedbFileRecord {
+                    id: 0,
+                    uuid: Uuid::new_v4().to_string(),
+                    path: file.path,
+                    blob_id: file.blob_id,
+                    valid_from: file.valid_from,
+                });
+
+                blob_records.push(RedbBlobRecord {
+                    id: 0,
+                    uuid: Uuid::new_v4().to_string(),
+                    repo_id: blob.repo_id,
+                    blob_id: blob.blob_id,
+                    blob_size: blob.blob_size,
+                    has_blob: blob.has_blob,
+                    path: blob.path,
+                    valid_from: blob.valid_from,
+                });
+
+                materialisation_records.push(RedbMaterialisationRecord::new(
+                    0,
+                    materialisation.path,
+                    materialisation.blob_id,
+                    materialisation.valid_from,
+                ));
+            }
+
+            self.redb_history
+                .append_all(file_records, blob_records, materialisation_records)
+                .await?;
+
+            total_attempted += chunk_len as u64;
+        }
+
+        debug!(
+            "combined add: attempted={} inserted={}",
+            total_attempted, total_attempted
+        );
+        Ok(total_attempted)
     }
 
     pub async fn truncate_virtual_filesystem(&self) -> Result<(), DBError> {

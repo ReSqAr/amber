@@ -1,7 +1,6 @@
 use chrono::prelude::{DateTime, Utc};
-use sqlx::Type;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{FromRow, Row};
+use sqlx::{FromRow, Row, Type};
 
 #[derive(Debug, FromRow, Clone)]
 pub struct CurrentRepository {
@@ -80,6 +79,13 @@ pub struct InsertMaterialisation {
     pub path: String,
     pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InsertFileBlobMaterialisation {
+    pub file: InsertFile,
+    pub blob: InsertBlob,
+    pub materialisation: InsertMaterialisation,
 }
 
 #[derive(Debug, FromRow, Clone)]
