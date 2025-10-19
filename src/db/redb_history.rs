@@ -19,28 +19,12 @@ const BLOBS_INDEX_TABLE: TableDefinition<'static, i64, Vec<u8>> =
     TableDefinition::new("history_blobs_index");
 const SEQUENCE_TABLE: TableDefinition<'static, &'static str, i64> =
     TableDefinition::new("history_sequences");
-const LATEST_AVAILABLE_BLOBS_TABLE: TableDefinition<
-    'static,
-    (&'static str, &'static str),
-    Vec<u8>,
-> = TableDefinition::new("shadow_latest_available_blobs");
-const KNOWN_BLOBS_TABLE: TableDefinition<'static, &'static str, u8> =
-    TableDefinition::new("shadow_known_blobs");
-const LATEST_VALID_FILES_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
-    TableDefinition::new("shadow_latest_valid_files");
-const LATEST_FILESYSTEM_FILES_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
-    TableDefinition::new("shadow_latest_filesystem_files");
-const PENDING_FILES_BY_BLOB_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
-    TableDefinition::new("shadow_pending_files_by_blob");
-const VALID_FILE_KEYS_TABLE: TableDefinition<'static, (&'static str, &'static str), u8> =
-    TableDefinition::new("shadow_valid_file_keys");
-const PENDING_MATERIALISATIONS_TABLE: TableDefinition<
-    'static,
-    (&'static str, &'static str),
-    Vec<u8>,
-> = TableDefinition::new("shadow_pending_materialisations");
-const LATEST_MATERIALISATIONS_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
-    TableDefinition::new("shadow_latest_materialisations");
+const FILE_STATE_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
+    TableDefinition::new("shadow_file_states");
+const BLOB_STATE_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
+    TableDefinition::new("shadow_blob_states");
+const REPO_BLOB_STATE_TABLE: TableDefinition<'static, &'static str, Vec<u8>> =
+    TableDefinition::new("shadow_repo_blob_states");
 const TRANSFERS_TABLE: TableDefinition<'static, (i64, &'static str), Vec<u8>> =
     TableDefinition::new("transfers");
 
@@ -128,6 +112,55 @@ pub(crate) struct TransferRecord {
     pub(crate) path: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FileState {
+    latest: Option<FileRecord>,
+    latest_with_blob: Option<FileRecord>,
+    valid_blob_keys: HashSet<String>,
+    pending_materialisations: HashMap<String, Vec<MaterialisationRecord>>,
+    latest_materialisation: Option<MaterialisationRecord>,
+}
+
+impl FileState {
+    fn is_empty(&self) -> bool {
+        self.latest.is_none()
+            && self.latest_with_blob.is_none()
+            && self.latest_materialisation.is_none()
+            && self.valid_blob_keys.is_empty()
+            && self.pending_materialisations.is_empty()
+    }
+
+    fn clear_materialisations(&mut self) {
+        self.pending_materialisations.clear();
+        self.latest_materialisation = None;
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BlobState {
+    ever_had_blob: bool,
+    pending_files: Vec<FileRecord>,
+    repositories: HashMap<String, BlobRecord>,
+}
+
+impl BlobState {
+    fn is_empty(&self) -> bool {
+        !self.ever_had_blob && self.pending_files.is_empty() && self.repositories.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RepoBlobState {
+    by_blob: HashMap<String, BlobRecord>,
+    paths: HashMap<String, String>,
+}
+
+impl RepoBlobState {
+    fn is_empty(&self) -> bool {
+        self.by_blob.is_empty() && self.paths.is_empty()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RedbHistoryStore {
     store: RedbStore,
@@ -168,9 +201,7 @@ impl RedbHistoryStore {
             {
                 let mut table = txn.open_table(MATERIALISATIONS_HISTORY_TABLE)?;
                 let mut sequence_table = txn.open_table(SEQUENCE_TABLE)?;
-                let valid_file_keys_table = txn.open_table(VALID_FILE_KEYS_TABLE)?;
-                let mut latest_table = txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
-                let mut pending_table = txn.open_table(PENDING_MATERIALISATIONS_TABLE)?;
+                let mut file_state_table = txn.open_table(FILE_STATE_TABLE)?;
 
                 let mut current_sequence = sequence_table
                     .get("materialisations")?
@@ -190,11 +221,13 @@ impl RedbHistoryStore {
                     let bytes = bincode::serialize(&record)?;
                     table.insert(record.id, bytes)?;
 
-                    if materialisation_record_is_valid(&record, &valid_file_keys_table)? {
-                        apply_latest_materialisation_update(&mut latest_table, &record)?;
+                    let mut state = get_file_state(&mut file_state_table, record.path.as_str())?;
+                    if materialisation_record_is_valid(&record, &state) {
+                        apply_latest_materialisation(&mut state, &record)?;
                     } else {
-                        add_pending_materialisation(&mut pending_table, &record)?;
+                        add_pending_materialisation_to_state(&mut state, &record)?;
                     }
+                    put_file_state(&mut file_state_table, record.path.as_str(), &state)?;
                 }
 
                 if sequence_dirty {
@@ -303,27 +336,25 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_AVAILABLE_BLOBS_TABLE) {
+            let table = match txn.open_table(REPO_BLOB_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
                 Err(e) => return Err(DBError::from(e)),
             };
 
-            let mut results = Vec::new();
-            for item in table.iter()? {
-                let (key_guard, value_guard) = item?;
-                let (repo_key, _) = key_guard.value();
-                if repo_key != repo_id {
-                    continue;
-                }
+            let Some(value) = table.get(repo_id.as_str())? else {
+                return Ok(Vec::new());
+            };
+            let state: RepoBlobState = bincode::deserialize(value.value().as_slice())?;
 
-                let record: BlobRecord = bincode::deserialize(value_guard.value().as_slice())?;
+            let mut results = Vec::new();
+            for record in state.by_blob.values() {
                 if record.has_blob {
                     results.push(AvailableBlob {
-                        repo_id: record.repo_id,
-                        blob_id: record.blob_id,
+                        repo_id: record.repo_id.clone(),
+                        blob_id: record.blob_id.clone(),
                         blob_size: record.blob_size,
-                        path: record.path,
+                        path: record.path.clone(),
                     });
                 }
             }
@@ -347,33 +378,22 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_AVAILABLE_BLOBS_TABLE) {
+            let table = match txn.open_table(REPO_BLOB_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
                 Err(e) => return Err(DBError::from(e)),
             };
 
-            let mut remaining: HashSet<String> = targets.into_iter().collect();
+            let Some(value) = table.get(repo_id.as_str())? else {
+                return Ok(HashMap::new());
+            };
+            let state: RepoBlobState = bincode::deserialize(value.value().as_slice())?;
+
             let mut results: HashMap<String, BlobRecord> = HashMap::new();
-            if remaining.is_empty() {
-                return Ok(results);
-            }
-
-            let mut iter = table.range((repo_id.as_str(), "")..)?;
-            while let Some(entry) = iter.next() {
-                let (key_guard, value_guard) = entry?;
-                let (repo_key, _) = key_guard.value();
-                if repo_key != repo_id {
-                    break;
-                }
-
-                let record: BlobRecord = bincode::deserialize(value_guard.value().as_slice())?;
-                if let Some(path) = record.path.as_ref() {
-                    if remaining.remove(path) {
-                        results.insert(path.clone(), record);
-                        if remaining.is_empty() {
-                            break;
-                        }
+            for path in targets {
+                if let Some(blob_id) = state.paths.get(&path) {
+                    if let Some(record) = state.by_blob.get(blob_id) {
+                        results.insert(path.clone(), record.clone());
                     }
                 }
             }
@@ -389,7 +409,7 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_AVAILABLE_BLOBS_TABLE) {
+            let table = match txn.open_table(BLOB_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
                 Err(e) => return Err(DBError::from(e)),
@@ -397,15 +417,18 @@ impl RedbHistoryStore {
 
             let mut map: HashMap<String, Vec<String>> = HashMap::new();
             for entry in table.iter()? {
-                let (_key_guard, value_guard) = entry?;
-                let record: BlobRecord = bincode::deserialize(value_guard.value().as_slice())?;
-                if !record.has_blob {
-                    continue;
+                let (key_guard, value_guard) = entry?;
+                let blob_id = key_guard.value();
+                let state: BlobState = bincode::deserialize(value_guard.value().as_slice())?;
+                let mut repos = Vec::new();
+                for (repo, record) in state.repositories.iter() {
+                    if record.has_blob {
+                        repos.push(repo.clone());
+                    }
                 }
-
-                map.entry(record.blob_id.clone())
-                    .or_default()
-                    .push(record.repo_id.clone());
+                if !repos.is_empty() {
+                    map.insert(blob_id.to_string(), repos);
+                }
             }
 
             Ok(map)
@@ -447,7 +470,7 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_FILESYSTEM_FILES_TABLE) {
+            let table = match txn.open_table(FILE_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
                 Err(e) => return Err(DBError::from(e)),
@@ -456,8 +479,10 @@ impl RedbHistoryStore {
             let mut map = HashMap::new();
             for key in keys {
                 if let Some(value_guard) = table.get(key.as_str())? {
-                    let record: FileRecord = bincode::deserialize(value_guard.value().as_slice())?;
-                    map.insert(record.path.clone(), record);
+                    let state: FileState = bincode::deserialize(value_guard.value().as_slice())?;
+                    if let Some(record) = state.latest_with_blob.as_ref() {
+                        map.insert(record.path.clone(), record.clone());
+                    }
                 }
             }
 
@@ -474,7 +499,7 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_FILESYSTEM_FILES_TABLE) {
+            let table = match txn.open_table(FILE_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
                 Err(e) => return Err(DBError::from(e)),
@@ -489,8 +514,10 @@ impl RedbHistoryStore {
                     break;
                 }
 
-                let record: FileRecord = bincode::deserialize(value_guard.value().as_slice())?;
-                results.push(record);
+                let state: FileState = bincode::deserialize(value_guard.value().as_slice())?;
+                if let Some(record) = state.latest_with_blob.as_ref() {
+                    results.push(record.clone());
+                }
             }
 
             Ok(results)
@@ -520,7 +547,7 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_FILESYSTEM_FILES_TABLE) {
+            let table = match txn.open_table(FILE_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
                 Err(e) => return Err(DBError::from(e)),
@@ -529,9 +556,11 @@ impl RedbHistoryStore {
             let mut results = Vec::new();
             for entry in table.iter()? {
                 let (_key_guard, value_guard) = entry?;
-                let record: FileRecord = bincode::deserialize(value_guard.value().as_slice())?;
-                if let Some(blob_id) = record.blob_id {
-                    results.push((record.path, blob_id));
+                let state: FileState = bincode::deserialize(value_guard.value().as_slice())?;
+                if let Some(record) = state.latest_with_blob.as_ref() {
+                    if let Some(blob_id) = record.blob_id.as_ref() {
+                        results.push((record.path.clone(), blob_id.clone()));
+                    }
                 }
             }
 
@@ -544,7 +573,7 @@ impl RedbHistoryStore {
         let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read()?;
-            let table = match txn.open_table(LATEST_MATERIALISATIONS_TABLE) {
+            let table = match txn.open_table(FILE_STATE_TABLE) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
                 Err(e) => return Err(DBError::from(e)),
@@ -553,9 +582,10 @@ impl RedbHistoryStore {
             let mut results = Vec::new();
             for entry in table.iter()? {
                 let (_key_guard, value_guard) = entry?;
-                let record: MaterialisationRecord =
-                    bincode::deserialize(value_guard.value().as_slice())?;
-                results.push((record.path, record.blob_id));
+                let state: FileState = bincode::deserialize(value_guard.value().as_slice())?;
+                if let Some(record) = state.latest_materialisation.as_ref() {
+                    results.push((record.path.clone(), record.blob_id.clone()));
+                }
             }
 
             Ok(results)
@@ -570,12 +600,26 @@ impl RedbHistoryStore {
             let txn = db.begin_write()?;
             clear_table(&txn, FILES_HISTORY_TABLE)?;
             clear_table(&txn, FILES_INDEX_TABLE)?;
-            clear_table(&txn, LATEST_VALID_FILES_TABLE)?;
-            clear_table(&txn, LATEST_FILESYSTEM_FILES_TABLE)?;
-            clear_table(&txn, PENDING_FILES_BY_BLOB_TABLE)?;
-            clear_table(&txn, VALID_FILE_KEYS_TABLE)?;
-            clear_table(&txn, PENDING_MATERIALISATIONS_TABLE)?;
-            clear_table(&txn, LATEST_MATERIALISATIONS_TABLE)?;
+            clear_table(&txn, FILE_STATE_TABLE)?;
+            if let Ok(mut table) = txn.open_table(BLOB_STATE_TABLE) {
+                let mut updates: Vec<(String, BlobState)> = Vec::new();
+                {
+                    let mut iter = table.iter()?;
+                    while let Some(entry) = iter.next() {
+                        let (key_guard, value_guard) = entry?;
+                        let mut state: BlobState =
+                            bincode::deserialize(value_guard.value().as_slice())?;
+                        if state.pending_files.is_empty() {
+                            continue;
+                        }
+                        state.pending_files.clear();
+                        updates.push((key_guard.value().to_string(), state));
+                    }
+                }
+                for (key, state) in updates {
+                    put_blob_state(&mut table, key.as_str(), &state)?;
+                }
+            }
             txn.commit()?;
             Ok::<(), DBError>(())
         })
@@ -591,14 +635,9 @@ impl RedbHistoryStore {
             let txn = db.begin_write()?;
             clear_table(&txn, BLOBS_HISTORY_TABLE)?;
             clear_table(&txn, BLOBS_INDEX_TABLE)?;
-            clear_table(&txn, LATEST_AVAILABLE_BLOBS_TABLE)?;
-            clear_table(&txn, KNOWN_BLOBS_TABLE)?;
-            clear_table(&txn, PENDING_FILES_BY_BLOB_TABLE)?;
-            clear_table(&txn, LATEST_VALID_FILES_TABLE)?;
-            clear_table(&txn, LATEST_FILESYSTEM_FILES_TABLE)?;
-            clear_table(&txn, VALID_FILE_KEYS_TABLE)?;
-            clear_table(&txn, PENDING_MATERIALISATIONS_TABLE)?;
-            clear_table(&txn, LATEST_MATERIALISATIONS_TABLE)?;
+            clear_table(&txn, BLOB_STATE_TABLE)?;
+            clear_table(&txn, REPO_BLOB_STATE_TABLE)?;
+            clear_table(&txn, FILE_STATE_TABLE)?;
             txn.commit()?;
             Ok::<(), DBError>(())
         })
@@ -613,8 +652,27 @@ impl RedbHistoryStore {
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             clear_table(&txn, MATERIALISATIONS_HISTORY_TABLE)?;
-            clear_table(&txn, PENDING_MATERIALISATIONS_TABLE)?;
-            clear_table(&txn, LATEST_MATERIALISATIONS_TABLE)?;
+            if let Ok(mut table) = txn.open_table(FILE_STATE_TABLE) {
+                let mut updates: Vec<(String, FileState)> = Vec::new();
+                {
+                    let mut iter = table.iter()?;
+                    while let Some(entry) = iter.next() {
+                        let (key_guard, value_guard) = entry?;
+                        let mut state: FileState =
+                            bincode::deserialize(value_guard.value().as_slice())?;
+                        if state.pending_materialisations.is_empty()
+                            && state.latest_materialisation.is_none()
+                        {
+                            continue;
+                        }
+                        state.clear_materialisations();
+                        updates.push((key_guard.value().to_string(), state));
+                    }
+                }
+                for (key, state) in updates {
+                    put_file_state(&mut table, key.as_str(), &state)?;
+                }
+            }
             txn.commit()?;
             Ok::<(), DBError>(())
         })
@@ -641,15 +699,8 @@ impl RedbHistoryStore {
                 let mut history_table = txn.open_table(FILES_HISTORY_TABLE)?;
                 let mut index_table = txn.open_table(FILES_INDEX_TABLE)?;
                 let mut sequence_table = txn.open_table(SEQUENCE_TABLE)?;
-                let blob_presence_table = txn.open_table(KNOWN_BLOBS_TABLE)?;
-                let mut latest_valid_table = txn.open_table(LATEST_VALID_FILES_TABLE)?;
-                let mut latest_filesystem_table = txn.open_table(LATEST_FILESYSTEM_FILES_TABLE)?;
-                let mut pending_table = txn.open_table(PENDING_FILES_BY_BLOB_TABLE)?;
-                let mut valid_file_keys_table = txn.open_table(VALID_FILE_KEYS_TABLE)?;
-                let mut pending_materialisations_table =
-                    txn.open_table(PENDING_MATERIALISATIONS_TABLE)?;
-                let mut latest_materialisations_table =
-                    txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
+                let mut blob_state_table = txn.open_table(BLOB_STATE_TABLE)?;
+                let mut file_state_table = txn.open_table(FILE_STATE_TABLE)?;
 
                 let mut current_sequence = sequence_table
                     .get("files")?
@@ -674,25 +725,10 @@ impl RedbHistoryStore {
                     history_table.insert(record.uuid.as_str(), bytes.clone())?;
                     index_table.insert(record.id, bytes.clone())?;
 
-                    if file_record_is_valid(&record, &blob_presence_table)? {
-                        mark_valid_file(
-                            &mut valid_file_keys_table,
-                            record.path.as_str(),
-                            record.blob_id.as_deref(),
-                        )?;
-                        apply_latest_file_update(
-                            &mut latest_valid_table,
-                            &mut latest_filesystem_table,
-                            &record,
-                        )?;
-                        process_pending_materialisations(
-                            record.path.as_str(),
-                            record.blob_id.as_deref(),
-                            &mut pending_materialisations_table,
-                            &mut latest_materialisations_table,
-                        )?;
+                    if file_record_is_valid(&record, &mut blob_state_table)? {
+                        apply_valid_file_record(&record, &mut file_state_table)?;
                     } else if let Some(blob_id) = &record.blob_id {
-                        add_pending_file(&mut pending_table, blob_id, &record)?;
+                        add_pending_file_to_state(&mut blob_state_table, blob_id, &record)?;
                     }
 
                     inserted += 1;
@@ -726,23 +762,17 @@ impl RedbHistoryStore {
                 let mut history_table = txn.open_table(BLOBS_HISTORY_TABLE)?;
                 let mut index_table = txn.open_table(BLOBS_INDEX_TABLE)?;
                 let mut sequence_table = txn.open_table(SEQUENCE_TABLE)?;
-                let mut latest_table = txn.open_table(LATEST_AVAILABLE_BLOBS_TABLE)?;
-                let mut known_blob_table = txn.open_table(KNOWN_BLOBS_TABLE)?;
-                let mut pending_table = txn.open_table(PENDING_FILES_BY_BLOB_TABLE)?;
-                let mut latest_valid_table = txn.open_table(LATEST_VALID_FILES_TABLE)?;
-                let mut latest_filesystem_table = txn.open_table(LATEST_FILESYSTEM_FILES_TABLE)?;
-                let mut valid_file_keys_table = txn.open_table(VALID_FILE_KEYS_TABLE)?;
-                let mut pending_materialisations_table =
-                    txn.open_table(PENDING_MATERIALISATIONS_TABLE)?;
-                let mut latest_materialisations_table =
-                    txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
-                let mut touched_blob_ids = HashSet::new();
+                let mut blob_state_table = txn.open_table(BLOB_STATE_TABLE)?;
+                let mut repo_blob_state_table = txn.open_table(REPO_BLOB_STATE_TABLE)?;
+                let mut file_state_table = txn.open_table(FILE_STATE_TABLE)?;
+
                 let mut current_sequence = sequence_table
                     .get("blobs")?
                     .map(|guard| guard.value())
                     .unwrap_or(0);
                 let mut sequence_dirty = false;
                 let mut inserted = 0usize;
+                let mut pending_wakeups: HashMap<String, Vec<FileRecord>> = HashMap::new();
 
                 for mut record in records {
                     if skip_existing && history_table.get(record.uuid.as_str())?.is_some() {
@@ -760,22 +790,65 @@ impl RedbHistoryStore {
                     let bytes = bincode::serialize(&record)?;
                     history_table.insert(record.uuid.as_str(), bytes.clone())?;
                     index_table.insert(record.id, bytes.clone())?;
-                    update_latest_available_blob(&mut latest_table, &record, bytes)?;
-                    known_blob_table.insert(record.blob_id.as_str(), 1)?;
-                    touched_blob_ids.insert(record.blob_id.clone());
+
+                    let mut blob_state =
+                        get_blob_state(&mut blob_state_table, record.blob_id.as_str())?;
+                    let mut repo_state =
+                        get_repo_blob_state(&mut repo_blob_state_table, record.repo_id.as_str())?;
+
+                    if let Some(existing) = repo_state.by_blob.get(record.blob_id.as_str()) {
+                        if let Some(existing_path) = &existing.path {
+                            repo_state.paths.remove(existing_path);
+                        }
+                    }
+                    if let Some(existing) = blob_state.repositories.get(record.repo_id.as_str()) {
+                        if let Some(existing_path) = &existing.path {
+                            repo_state.paths.remove(existing_path);
+                        }
+                    }
+
+                    if record.has_blob {
+                        blob_state.ever_had_blob = true;
+                    }
+                    blob_state
+                        .repositories
+                        .insert(record.repo_id.clone(), record.clone());
+
+                    repo_state
+                        .by_blob
+                        .insert(record.blob_id.clone(), record.clone());
+                    if let Some(path) = &record.path {
+                        repo_state
+                            .paths
+                            .insert(path.clone(), record.blob_id.clone());
+                    }
+
+                    let mut newly_valid = Vec::new();
+                    if blob_state.ever_had_blob && !blob_state.pending_files.is_empty() {
+                        newly_valid.extend(blob_state.pending_files.drain(..));
+                    }
+
+                    put_blob_state(&mut blob_state_table, record.blob_id.as_str(), &blob_state)?;
+                    put_repo_blob_state(
+                        &mut repo_blob_state_table,
+                        record.repo_id.as_str(),
+                        &repo_state,
+                    )?;
+
+                    if !newly_valid.is_empty() {
+                        pending_wakeups
+                            .entry(record.blob_id.clone())
+                            .or_default()
+                            .extend(newly_valid);
+                    }
+
                     inserted += 1;
                 }
 
-                for blob_id in touched_blob_ids.iter() {
-                    process_pending_files(
-                        blob_id,
-                        &mut pending_table,
-                        &mut latest_valid_table,
-                        &mut latest_filesystem_table,
-                        &mut valid_file_keys_table,
-                        &mut pending_materialisations_table,
-                        &mut latest_materialisations_table,
-                    )?;
+                for records in pending_wakeups.into_values() {
+                    for record in records {
+                        apply_valid_file_record(&record, &mut file_state_table)?;
+                    }
                 }
 
                 if sequence_dirty {
@@ -837,28 +910,80 @@ impl RedbHistoryStore {
     }
 }
 
-fn update_latest_available_blob(
-    table: &mut redb::Table<(&str, &str), Vec<u8>>,
-    record: &BlobRecord,
-    encoded: Vec<u8>,
-) -> Result<(), DBError> {
-    let key = (record.repo_id.as_str(), record.blob_id.as_str());
-    let action = match table.get(key)? {
-        Some(existing) => {
-            let existing_record: BlobRecord = bincode::deserialize(existing.value().as_slice())?;
-            decide_latest_action(Some(&existing_record), record)
-        }
-        None => decide_latest_action(None, record),
-    };
+fn blob_key_owned(blob_id: Option<&str>) -> String {
+    blob_id.unwrap_or(NULL_BLOB_SENTINEL).to_string()
+}
 
-    match action {
-        LatestAction::Keep => {}
-        LatestAction::Delete => {
-            table.remove(key)?;
-        }
-        LatestAction::Upsert => {
-            table.insert(key, encoded)?;
-        }
+fn get_file_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    path: &str,
+) -> Result<FileState, DBError> {
+    match table.get(path)? {
+        Some(value) => Ok(bincode::deserialize(value.value().as_slice())?),
+        None => Ok(FileState::default()),
+    }
+}
+
+fn put_file_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    path: &str,
+    state: &FileState,
+) -> Result<(), DBError> {
+    if state.is_empty() {
+        table.remove(path)?;
+    } else {
+        let encoded = bincode::serialize(state)?;
+        table.insert(path, encoded)?;
+    }
+
+    Ok(())
+}
+
+fn get_blob_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    blob_id: &str,
+) -> Result<BlobState, DBError> {
+    match table.get(blob_id)? {
+        Some(value) => Ok(bincode::deserialize(value.value().as_slice())?),
+        None => Ok(BlobState::default()),
+    }
+}
+
+fn put_blob_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    blob_id: &str,
+    state: &BlobState,
+) -> Result<(), DBError> {
+    if state.is_empty() {
+        table.remove(blob_id)?;
+    } else {
+        let encoded = bincode::serialize(state)?;
+        table.insert(blob_id, encoded)?;
+    }
+
+    Ok(())
+}
+
+fn get_repo_blob_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    repo_id: &str,
+) -> Result<RepoBlobState, DBError> {
+    match table.get(repo_id)? {
+        Some(value) => Ok(bincode::deserialize(value.value().as_slice())?),
+        None => Ok(RepoBlobState::default()),
+    }
+}
+
+fn put_repo_blob_state(
+    table: &mut redb::Table<&str, Vec<u8>>,
+    repo_id: &str,
+    state: &RepoBlobState,
+) -> Result<(), DBError> {
+    if state.is_empty() {
+        table.remove(repo_id)?;
+    } else {
+        let encoded = bincode::serialize(state)?;
+        table.insert(repo_id, encoded)?;
     }
 
     Ok(())
@@ -866,159 +991,95 @@ fn update_latest_available_blob(
 
 fn file_record_is_valid(
     record: &FileRecord,
-    known_blob_table: &redb::Table<&str, u8>,
+    blob_state_table: &mut redb::Table<&str, Vec<u8>>,
 ) -> Result<bool, DBError> {
     match &record.blob_id {
         None => Ok(true),
-        Some(blob_id) => Ok(known_blob_table.get(blob_id.as_str())?.is_some()),
-    }
-}
-
-fn add_pending_file(
-    pending_table: &mut redb::Table<&str, Vec<u8>>,
-    blob_id: &str,
-    record: &FileRecord,
-) -> Result<(), DBError> {
-    let mut pending_records: Vec<FileRecord> = match pending_table.get(blob_id)? {
-        Some(existing) => bincode::deserialize(existing.value().as_slice())?,
-        None => Vec::new(),
-    };
-    pending_records.push(record.clone());
-
-    let encoded = bincode::serialize(&pending_records)?;
-    pending_table.insert(blob_id, encoded)?;
-
-    Ok(())
-}
-
-fn add_pending_materialisation(
-    pending_table: &mut redb::Table<(&str, &str), Vec<u8>>,
-    record: &MaterialisationRecord,
-) -> Result<(), DBError> {
-    let key = (record.path.as_str(), blob_key(record.blob_id.as_deref()));
-    let mut records: Vec<MaterialisationRecord> = match pending_table.get(key)? {
-        Some(existing) => bincode::deserialize(existing.value().as_slice())?,
-        None => Vec::new(),
-    };
-    records.push(record.clone());
-
-    let encoded = bincode::serialize(&records)?;
-    pending_table.insert(key, encoded)?;
-
-    Ok(())
-}
-
-fn mark_valid_file(
-    table: &mut redb::Table<(&str, &str), u8>,
-    path: &str,
-    blob_id: Option<&str>,
-) -> Result<(), DBError> {
-    let key = (path, blob_key(blob_id));
-    table.insert(key, 1)?;
-    Ok(())
-}
-
-fn process_pending_files(
-    blob_id: &str,
-    pending_table: &mut redb::Table<&str, Vec<u8>>,
-    latest_valid_table: &mut redb::Table<&str, Vec<u8>>,
-    latest_filesystem_table: &mut redb::Table<&str, Vec<u8>>,
-    valid_file_keys_table: &mut redb::Table<(&str, &str), u8>,
-    pending_materialisations_table: &mut redb::Table<(&str, &str), Vec<u8>>,
-    latest_materialisations_table: &mut redb::Table<&str, Vec<u8>>,
-) -> Result<(), DBError> {
-    let Some(pending_bytes) = pending_table.remove(blob_id)? else {
-        return Ok(());
-    };
-
-    let records: Vec<FileRecord> = bincode::deserialize(pending_bytes.value().as_slice())?;
-    for record in records {
-        mark_valid_file(
-            valid_file_keys_table,
-            record.path.as_str(),
-            record.blob_id.as_deref(),
-        )?;
-        apply_latest_file_update(latest_valid_table, latest_filesystem_table, &record)?;
-        process_pending_materialisations(
-            record.path.as_str(),
-            record.blob_id.as_deref(),
-            pending_materialisations_table,
-            latest_materialisations_table,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn process_pending_materialisations(
-    path: &str,
-    blob_id: Option<&str>,
-    pending_table: &mut redb::Table<(&str, &str), Vec<u8>>,
-    latest_table: &mut redb::Table<&str, Vec<u8>>,
-) -> Result<(), DBError> {
-    let key = (path, blob_key(blob_id));
-    let Some(existing) = pending_table.remove(key)? else {
-        return Ok(());
-    };
-
-    let records: Vec<MaterialisationRecord> = bincode::deserialize(existing.value().as_slice())?;
-    for record in records {
-        apply_latest_materialisation_update(latest_table, &record)?;
-    }
-
-    Ok(())
-}
-
-fn apply_latest_file_update(
-    latest_valid_table: &mut redb::Table<&str, Vec<u8>>,
-    latest_filesystem_table: &mut redb::Table<&str, Vec<u8>>,
-    record: &FileRecord,
-) -> Result<(), DBError> {
-    let key = record.path.as_str();
-    let should_replace = match latest_valid_table.get(key)? {
-        Some(existing) => {
-            let current: FileRecord = bincode::deserialize(existing.value().as_slice())?;
-            should_replace_latest_file(&current, record)
+        Some(blob_id) => {
+            let state = get_blob_state(blob_state_table, blob_id.as_str())?;
+            Ok(state.ever_had_blob)
         }
-        None => true,
-    };
+    }
+}
+
+fn add_pending_file_to_state(
+    blob_state_table: &mut redb::Table<&str, Vec<u8>>,
+    blob_id: &str,
+    record: &FileRecord,
+) -> Result<(), DBError> {
+    let mut state = get_blob_state(blob_state_table, blob_id)?;
+    state.pending_files.push(record.clone());
+    put_blob_state(blob_state_table, blob_id, &state)
+}
+
+fn apply_valid_file_record(
+    record: &FileRecord,
+    file_state_table: &mut redb::Table<&str, Vec<u8>>,
+) -> Result<(), DBError> {
+    let mut state = get_file_state(file_state_table, record.path.as_str())?;
+    let key = blob_key_owned(record.blob_id.as_deref());
+    state.valid_blob_keys.insert(key.clone());
+    update_latest_file_state(&mut state, record);
+
+    if let Some(pending) = state.pending_materialisations.remove(&key) {
+        for pending_record in pending {
+            apply_latest_materialisation(&mut state, &pending_record)?;
+        }
+    }
+
+    put_file_state(file_state_table, record.path.as_str(), &state)
+}
+
+fn update_latest_file_state(state: &mut FileState, record: &FileRecord) {
+    let should_replace = state
+        .latest
+        .as_ref()
+        .map(|current| should_replace_latest_file(current, record))
+        .unwrap_or(true);
 
     if should_replace {
-        let encoded = bincode::serialize(record)?;
-        latest_valid_table.insert(key, encoded.clone())?;
+        state.latest = Some(record.clone());
         if record.blob_id.is_some() {
-            latest_filesystem_table.insert(key, encoded)?;
+            state.latest_with_blob = Some(record.clone());
         } else {
-            latest_filesystem_table.remove(key)?;
+            state.latest_with_blob = None;
         }
+    }
+}
+
+fn add_pending_materialisation_to_state(
+    state: &mut FileState,
+    record: &MaterialisationRecord,
+) -> Result<(), DBError> {
+    let key = blob_key_owned(record.blob_id.as_deref());
+    state
+        .pending_materialisations
+        .entry(key)
+        .or_default()
+        .push(record.clone());
+    Ok(())
+}
+
+fn apply_latest_materialisation(
+    state: &mut FileState,
+    record: &MaterialisationRecord,
+) -> Result<(), DBError> {
+    let should_replace = state
+        .latest_materialisation
+        .as_ref()
+        .map(|current| should_replace_latest_materialisation(current, record))
+        .unwrap_or(true);
+
+    if should_replace {
+        state.latest_materialisation = Some(record.clone());
     }
 
     Ok(())
 }
 
-fn apply_latest_materialisation_update(
-    table: &mut redb::Table<&str, Vec<u8>>,
-    record: &MaterialisationRecord,
-) -> Result<(), DBError> {
-    let key = record.path.as_str();
-    let action = match table.get(key)? {
-        Some(existing) => {
-            let current: MaterialisationRecord = bincode::deserialize(existing.value().as_slice())?;
-            if should_replace_latest_materialisation(&current, record) {
-                LatestAction::Upsert
-            } else {
-                LatestAction::Keep
-            }
-        }
-        None => LatestAction::Upsert,
-    };
-
-    if matches!(action, LatestAction::Upsert) {
-        let encoded = bincode::serialize(record)?;
-        table.insert(key, encoded)?;
-    }
-
-    Ok(())
+fn materialisation_record_is_valid(record: &MaterialisationRecord, state: &FileState) -> bool {
+    let key = blob_key_owned(record.blob_id.as_deref());
+    state.valid_blob_keys.contains(&key)
 }
 
 fn should_replace_latest_file(current: &FileRecord, candidate: &FileRecord) -> bool {
@@ -1074,63 +1135,6 @@ fn should_replace_latest_materialisation(
     }
 
     candidate.id > current.id
-}
-
-enum LatestAction {
-    Keep,
-    Delete,
-    Upsert,
-}
-
-fn decide_latest_action(current: Option<&BlobRecord>, candidate: &BlobRecord) -> LatestAction {
-    match current {
-        None => {
-            if candidate.has_blob {
-                LatestAction::Upsert
-            } else {
-                LatestAction::Delete
-            }
-        }
-        Some(existing) => {
-            if !should_replace_latest(existing, candidate) {
-                return LatestAction::Keep;
-            }
-
-            if candidate.has_blob {
-                LatestAction::Upsert
-            } else {
-                LatestAction::Delete
-            }
-        }
-    }
-}
-
-fn should_replace_latest(current: &BlobRecord, candidate: &BlobRecord) -> bool {
-    if candidate.valid_from > current.valid_from {
-        return true;
-    }
-
-    if candidate.valid_from < current.valid_from {
-        return false;
-    }
-
-    if candidate.has_blob != current.has_blob {
-        return candidate.has_blob;
-    }
-
-    candidate.uuid > current.uuid
-}
-
-fn materialisation_record_is_valid(
-    record: &MaterialisationRecord,
-    valid_file_table: &redb::Table<(&str, &str), u8>,
-) -> Result<bool, DBError> {
-    let key = (record.path.as_str(), blob_key(record.blob_id.as_deref()));
-    Ok(valid_file_table.get(key)?.is_some())
-}
-
-fn blob_key(blob_id: Option<&str>) -> &str {
-    blob_id.unwrap_or(NULL_BLOB_SENTINEL)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
