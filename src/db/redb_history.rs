@@ -172,9 +172,20 @@ impl RedbHistoryStore {
                 let mut latest_table = txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
                 let mut pending_table = txn.open_table(PENDING_MATERIALISATIONS_TABLE)?;
 
+                let mut current_sequence = sequence_table
+                    .get("materialisations")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                let mut sequence_dirty = false;
+
                 for mut record in records {
                     if record.id == 0 {
-                        record.id = next_sequence(&mut sequence_table, "materialisations")?;
+                        current_sequence += 1;
+                        record.id = current_sequence;
+                        sequence_dirty = true;
+                    } else if record.id > current_sequence {
+                        current_sequence = record.id;
+                        sequence_dirty = true;
                     }
                     let bytes = bincode::serialize(&record)?;
                     table.insert(record.id, bytes)?;
@@ -184,6 +195,10 @@ impl RedbHistoryStore {
                     } else {
                         add_pending_materialisation(&mut pending_table, &record)?;
                     }
+                }
+
+                if sequence_dirty {
+                    sequence_table.insert("materialisations", current_sequence)?;
                 }
             }
             txn.commit()?;
@@ -636,6 +651,11 @@ impl RedbHistoryStore {
                 let mut latest_materialisations_table =
                     txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
 
+                let mut current_sequence = sequence_table
+                    .get("files")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                let mut sequence_dirty = false;
                 let mut inserted = 0usize;
                 for mut record in records {
                     if skip_existing && history_table.get(record.uuid.as_str())?.is_some() {
@@ -643,7 +663,12 @@ impl RedbHistoryStore {
                     }
 
                     if record.id == 0 {
-                        record.id = next_sequence(&mut sequence_table, "files")?;
+                        current_sequence += 1;
+                        record.id = current_sequence;
+                        sequence_dirty = true;
+                    } else if record.id > current_sequence {
+                        current_sequence = record.id;
+                        sequence_dirty = true;
                     }
                     let bytes = bincode::serialize(&record)?;
                     history_table.insert(record.uuid.as_str(), bytes.clone())?;
@@ -671,6 +696,10 @@ impl RedbHistoryStore {
                     }
 
                     inserted += 1;
+                }
+
+                if sequence_dirty {
+                    sequence_table.insert("files", current_sequence)?;
                 }
 
                 inserted
@@ -708,6 +737,11 @@ impl RedbHistoryStore {
                 let mut latest_materialisations_table =
                     txn.open_table(LATEST_MATERIALISATIONS_TABLE)?;
                 let mut touched_blob_ids = HashSet::new();
+                let mut current_sequence = sequence_table
+                    .get("blobs")?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                let mut sequence_dirty = false;
                 let mut inserted = 0usize;
 
                 for mut record in records {
@@ -716,7 +750,12 @@ impl RedbHistoryStore {
                     }
 
                     if record.id == 0 {
-                        record.id = next_sequence(&mut sequence_table, "blobs")?;
+                        current_sequence += 1;
+                        record.id = current_sequence;
+                        sequence_dirty = true;
+                    } else if record.id > current_sequence {
+                        current_sequence = record.id;
+                        sequence_dirty = true;
                     }
                     let bytes = bincode::serialize(&record)?;
                     history_table.insert(record.uuid.as_str(), bytes.clone())?;
@@ -737,6 +776,10 @@ impl RedbHistoryStore {
                         &mut pending_materialisations_table,
                         &mut latest_materialisations_table,
                     )?;
+                }
+
+                if sequence_dirty {
+                    sequence_table.insert("blobs", current_sequence)?;
                 }
 
                 inserted
@@ -792,13 +835,6 @@ impl RedbHistoryStore {
         })
         .await?
     }
-}
-
-fn next_sequence(table: &mut redb::Table<&str, i64>, key: &'static str) -> Result<i64, DBError> {
-    let current = table.get(key)?.map(|guard| guard.value()).unwrap_or(0);
-    let next = current + 1;
-    table.insert(key, next)?;
-    Ok(next)
 }
 
 fn update_latest_available_blob(
