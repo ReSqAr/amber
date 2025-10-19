@@ -2,15 +2,13 @@ use crate::db::error::DBError;
 use crate::db::models::{
     MaterialisationProjection, MissingFile, Observation, VirtualFile, VirtualFileState,
 };
+use crate::db::redb_store::RedbStore;
 use crate::utils::stream::BoundedWaitChunksExt;
 use futures::StreamExt;
 use futures_core::stream::BoxStream;
-use redb::{
-    Database as RedbDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
-};
+use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -82,30 +80,22 @@ fn decode_entry(bytes: &[u8]) -> Result<VirtualFilesystemEntry, DBError> {
 
 #[derive(Clone)]
 pub struct VirtualFilesystemStore {
-    db: Arc<RedbDatabase>,
+    store: RedbStore,
 }
 
 impl VirtualFilesystemStore {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, DBError> {
-        let path = path.as_ref().to_path_buf();
+        let store = RedbStore::open(path).await?;
 
-        let db = tokio::task::spawn_blocking(move || {
-            if path.exists() {
-                Ok::<_, DBError>(RedbDatabase::open(path.as_path())?)
-            } else {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                Ok(RedbDatabase::create(path.as_path())?)
-            }
-        })
-        .await??;
+        Ok(Self { store })
+    }
 
-        Ok(Self { db: Arc::new(db) })
+    pub(crate) fn redb_store(&self) -> RedbStore {
+        self.store.clone()
     }
 
     pub async fn truncate(&self) -> Result<(), DBError> {
-        let db = self.db.clone();
+        let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             if let Ok(mut table) = txn.open_table(VIRTUAL_FILESYSTEM_TABLE) {
@@ -126,7 +116,7 @@ impl VirtualFilesystemStore {
             .bounded_wait_chunks(VFS_MATERIALISATION_CHUNK_SIZE, VFS_MATERIALISATION_MAX_WAIT)
             .boxed();
         while let Some(chunk) = chunks.next().await {
-            let db = self.db.clone();
+            let db = self.store.database();
             tokio::task::spawn_blocking(move || {
                 let mut ok_items = Vec::with_capacity(chunk.len());
                 for item in chunk {
@@ -172,7 +162,7 @@ impl VirtualFilesystemStore {
     }
 
     pub(crate) async fn cleanup_materialisation_batch(&self, batch_id: i64) -> Result<(), DBError> {
-        let db = self.db.clone();
+        let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             {
@@ -224,7 +214,7 @@ impl VirtualFilesystemStore {
     }
 
     pub async fn cleanup(&self, last_seen_id: i64) -> Result<(), DBError> {
-        let db = self.db.clone();
+        let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             {
@@ -252,7 +242,7 @@ impl VirtualFilesystemStore {
         last_seen_id: i64,
     ) -> BoxStream<'static, Result<MissingFile, DBError>> {
         let (tx, rx) = mpsc::unbounded_channel::<Result<MissingFile, DBError>>();
-        let db = self.db.clone();
+        let db = self.store.database();
 
         tokio::task::spawn_blocking(move || {
             let send_ok = |m: MissingFile| {
@@ -314,7 +304,7 @@ impl VirtualFilesystemStore {
         &self,
         observations: Vec<Observation>,
     ) -> Result<Vec<VirtualFile>, DBError> {
-        let db = self.db.clone();
+        let db = self.store.database();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             let output = {

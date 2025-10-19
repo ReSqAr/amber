@@ -8,4 +8,5 @@ mod logic;
 mod repository;
 mod utils;
 
+pub use db::test_utils as test_utils;
 pub use crate::db::virtual_filesystem::VirtualFilesystemStore;

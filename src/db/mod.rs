@@ -3,6 +3,9 @@ pub(crate) mod database;
 pub(crate) mod error;
 pub(crate) mod migrations;
 pub(crate) mod models;
+pub(crate) mod redb_history;
+pub(crate) mod redb_store;
+pub mod test_utils;
 pub(crate) mod tests;
 pub(crate) mod virtual_filesystem;
 
