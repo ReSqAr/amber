@@ -581,7 +581,7 @@ impl Database {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO files (uuid, path, blob_id, valid_from) VALUES {}",
+                "INSERT INTO files (uuid, path, blob_id, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -633,7 +633,7 @@ impl Database {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
+                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
                 placeholders
             );
 
@@ -688,7 +688,7 @@ impl Database {
                 .join(", ");
 
             let query_str = format!(
-                "INSERT OR IGNORE INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
+                "INSERT INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
                 placeholders
             );
 
