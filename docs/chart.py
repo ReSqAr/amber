@@ -14,7 +14,8 @@ import pandas as pd
 
 def get_log_files():
     # Newest files first.
-    return sorted(glob.glob(".amb/logs/run_*.txt.gz"), reverse=True)
+    folder_name = os.environ.get('AMBER_REPOSITORY_FOLDER_NAME') or '.amb'
+    return sorted(glob.glob(f"{folder_name}/logs/run_*.txt.gz"), reverse=True)
 
 
 # Subclass gzip.GzipFile to override read and ignore EOFError
