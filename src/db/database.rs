@@ -29,6 +29,36 @@ pub struct Database {
 
 const TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(5);
 
+const BLOB_INDEX_DROP_STATEMENTS: [&str; 2] = [
+    "DROP INDEX IF EXISTS blobs_blob_id_idx;",
+    "DROP INDEX IF EXISTS blobs_repo_id_idx;",
+];
+
+const BLOB_INDEX_CREATE_STATEMENTS: [&str; 2] = [
+    "CREATE INDEX IF NOT EXISTS blobs_blob_id_idx ON blobs (blob_id);",
+    "CREATE INDEX IF NOT EXISTS blobs_repo_id_idx ON blobs (repo_id);",
+];
+
+const FILE_INDEX_DROP_STATEMENTS: [&str; 2] = [
+    "DROP INDEX IF EXISTS files_path_idx;",
+    "DROP INDEX IF EXISTS files_path_blob_idx;",
+];
+
+const FILE_INDEX_CREATE_STATEMENTS: [&str; 2] = [
+    "CREATE INDEX IF NOT EXISTS files_path_idx ON files (path);",
+    "CREATE INDEX IF NOT EXISTS files_path_blob_idx ON files (path, blob_id);",
+];
+
+const MATERIALISATION_INDEX_DROP_STATEMENTS: [&str; 2] = [
+    "DROP INDEX IF EXISTS materialisations_path_idx;",
+    "DROP INDEX IF EXISTS materialisations_path_blob_idx;",
+];
+
+const MATERIALISATION_INDEX_CREATE_STATEMENTS: [&str; 2] = [
+    "CREATE INDEX IF NOT EXISTS materialisations_path_idx ON materialisations (path);",
+    "CREATE INDEX IF NOT EXISTS materialisations_path_blob_idx ON materialisations (path, blob_id);",
+];
+
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
 impl Database {
@@ -48,6 +78,10 @@ impl Database {
             .inspect_err(|e| log::error!("Database::clean failed: {e}"))?;
 
         let _ = self.cleaner.try_periodic_cleanup().await;
+
+        self.recreate_file_indexes().await?;
+        self.recreate_blob_indexes().await?;
+        self.recreate_materialisation_indexes().await?;
 
         Ok(())
     }
@@ -81,6 +115,64 @@ impl Database {
         };
 
         stream.boxed().track(name).boxed()
+    }
+
+    async fn execute_index_statements(
+        &self,
+        statements: &[&str],
+        context: &str,
+    ) -> Result<(), DBError> {
+        for statement in statements {
+            sqlx::query(statement)
+                .execute(&self.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!("{} failed for statement `{}`: {}", context, statement, e)
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn drop_blob_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(&BLOB_INDEX_DROP_STATEMENTS, "Database::drop_blob_indexes")
+            .await
+    }
+
+    async fn recreate_blob_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(
+            &BLOB_INDEX_CREATE_STATEMENTS,
+            "Database::recreate_blob_indexes",
+        )
+        .await
+    }
+
+    async fn drop_file_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(&FILE_INDEX_DROP_STATEMENTS, "Database::drop_file_indexes")
+            .await
+    }
+
+    async fn recreate_file_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(
+            &FILE_INDEX_CREATE_STATEMENTS,
+            "Database::recreate_file_indexes",
+        )
+        .await
+    }
+
+    async fn drop_materialisation_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(
+            &MATERIALISATION_INDEX_DROP_STATEMENTS,
+            "Database::drop_materialisation_indexes",
+        )
+        .await
+    }
+
+    async fn recreate_materialisation_indexes(&self) -> Result<(), DBError> {
+        self.execute_index_statements(
+            &MATERIALISATION_INDEX_CREATE_STATEMENTS,
+            "Database::recreate_materialisation_indexes",
+        )
+        .await
     }
 
     pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, DBError> {
@@ -127,6 +219,8 @@ impl Database {
     where
         S: Stream<Item = InsertFile> + Send + Unpin,
     {
+        self.drop_file_indexes().await?;
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let mut chunk_stream = s
@@ -173,6 +267,8 @@ impl Database {
             "files added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+
+        self.recreate_file_indexes().await?;
         Ok(total_inserted)
     }
 
@@ -180,6 +276,8 @@ impl Database {
     where
         S: Stream<Item = InsertBlob> + Send + Unpin,
     {
+        self.drop_blob_indexes().await?;
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let mut chunk_stream = s
@@ -229,6 +327,8 @@ impl Database {
             "blobs added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+
+        self.recreate_blob_indexes().await?;
         Ok(total_inserted)
     }
 
@@ -718,6 +818,8 @@ impl Database {
     where
         S: Stream<Item = InsertMaterialisation> + Send + Unpin,
     {
+        self.drop_materialisation_indexes().await?;
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let mut chunk_stream = s
@@ -762,6 +864,8 @@ impl Database {
             "materialisations added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+
+        self.recreate_materialisation_indexes().await?;
         Ok(total_inserted)
     }
 
