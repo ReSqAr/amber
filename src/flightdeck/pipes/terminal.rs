@@ -56,6 +56,9 @@ impl TerminalPipe {
         if let Some(detail) = lookup_key(&obs.data, "detail") {
             parts.push(detail.to_string());
         }
+        if let Some(count) = lookup_u64_key(&obs.data, "count") {
+            parts.push(format!("count={}", count));
+        }
 
         self.buffer.push(parts.join(" "));
     }
@@ -86,6 +89,20 @@ fn lookup_key(data: &[Data], key: &str) -> Option<String> {
         .filter_map(|data| {
             if data.key == *key {
                 if let Value::String(s) = data.value.clone() {
+                    return Some(s);
+                }
+            }
+            None
+        })
+        .next()
+}
+
+#[allow(clippy::collapsible_if)]
+fn lookup_u64_key(data: &[Data], key: &str) -> Option<u64> {
+    data.iter()
+        .filter_map(|data| {
+            if data.key == *key {
+                if let Value::U64(s) = data.value.clone() {
                     return Some(s);
                 }
             }

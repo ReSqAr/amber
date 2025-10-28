@@ -15,45 +15,43 @@ CREATE TABLE repositories
     last_name_index INTEGER     NOT NULL DEFAULT -1
 );
 
--- table: files
-CREATE TABLE files
-(
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid       TEXT UNIQUE NOT NULL,
-    path       TEXT        NOT NULL,
-    blob_id    TEXT,
-    valid_from DATETIME    NOT NULL
-);
 
--- table: blobs
-CREATE TABLE blobs
+CREATE TABLE latest_available_blobs
 (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid        TEXT UNIQUE NOT NULL,
-    repo_id     TEXT        NOT NULL,
-    blob_id     TEXT        NOT NULL,
-    blob_size   INTEGER     NOT NULL,
-    has_blob    INTEGER     NOT NULL,
+    repo_id     TEXT    NOT NULL,
+    blob_id     TEXT    NOT NULL,
+    blob_size   INTEGER NOT NULL,
+    has_blob    INTEGER NOT NULL,
     path        TEXT,
-    valid_from  DATETIME    NOT NULL
+    valid_from  DATETIME NOT NULL,
+    PRIMARY KEY (repo_id, blob_id)
 );
 
--- table: repository_names
-CREATE TABLE repository_names
+CREATE TABLE latest_filesystem_files
 (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid        TEXT UNIQUE NOT NULL,
-    repo_id     TEXT        NOT NULL,
-    name        TEXT        NOT NULL,
-    valid_from  DATETIME    NOT NULL
+    path        TEXT PRIMARY KEY,
+    blob_id     TEXT,
+    valid_from  DATETIME NOT NULL
 );
 
--- table: materialisations
-CREATE TABLE materialisations (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    path        TEXT        NOT NULL,
+CREATE TABLE latest_materialisations
+(
+    path        TEXT PRIMARY KEY,
     blob_id     TEXT,
-    valid_from  DATETIME    NOT NULL
+    valid_from  DATETIME NOT NULL
+);
+
+CREATE TABLE latest_repository_names
+(
+    repo_id     TEXT PRIMARY KEY,
+    name        TEXT     NOT NULL,
+    valid_from  DATETIME NOT NULL
+);
+
+CREATE TABLE latest_reductions
+(
+    table_name TEXT PRIMARY KEY,
+    offset     INTEGER NOT NULL
 );
 
 -- table: virtual_filesystem

@@ -14,20 +14,20 @@ message CurrentRepositoryMetadataResponse {
 
 message Repository {
     string repo_id = 1;
-    int32 last_file_index = 2;
-    int32 last_blob_index = 3;
-    int32 last_name_index = 4;
+    int64 last_file_index = 2;
+    int64 last_blob_index = 3;
+    int64 last_name_index = 4;
 }
 
 message File {
-    string uuid = 1;
+    uint64 uid = 1;
     string path = 2;
     optional string blob_id = 3;
     google.protobuf.Timestamp valid_from = 4;
 }
 
 message Blob {
-    string uuid = 1;
+    uint64 uid = 1;
     string repo_id = 2;
     string blob_id = 3;
     int64 blob_size = 4;
@@ -37,7 +37,7 @@ message Blob {
 }
 
 message RepositoryName {
-    string uuid = 1;
+    uint64 uid = 1;
     string repo_id = 2;
     string name = 3;
     google.protobuf.Timestamp valid_from = 4;
@@ -55,21 +55,21 @@ message LookupLastIndicesRequest {
     string repo_id = 1;
 }
 message LookupLastIndicesResponse {
-    int32 file = 1;
-    int32 blob = 2;
-    int32 name = 3;
+    int64 file = 1;
+    int64 blob = 2;
+    int64 name = 3;
 }
 
 message SelectRepositoriesRequest {}
 message SelectFilesRequest {
-    int32 last_index = 1;
+    int64 last_index = 1;
 }
 message SelectBlobsRequest {
-    int32 last_index = 1;
+    int64 last_index = 1;
 }
 
 message SelectRepositoryNamesRequest {
-    int32 last_index = 1;
+    int64 last_index = 1;
 }
 
 message RclonePathRequest {

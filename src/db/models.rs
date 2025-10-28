@@ -11,14 +11,14 @@ pub struct CurrentRepository {
 #[derive(Debug, FromRow, Clone)]
 pub struct Repository {
     pub repo_id: String,
-    pub last_file_index: i32,
-    pub last_blob_index: i32,
-    pub last_name_index: i32,
+    pub last_file_index: i64,
+    pub last_blob_index: i64,
+    pub last_name_index: i64,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
-    pub uuid: String,
+    pub uid: u64,
     pub path: String,
     pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
@@ -31,9 +31,9 @@ pub struct InsertFile {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Blob {
-    pub uuid: String,
+    pub uid: u64,
     pub repo_id: String,
     pub blob_id: String,
     pub blob_size: i64,
@@ -60,9 +60,9 @@ pub struct ObservedBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepositoryName {
-    pub uuid: String,
+    pub uid: u64,
     pub repo_id: String,
     pub name: String,
     pub valid_from: DateTime<Utc>,
@@ -75,11 +75,18 @@ pub struct InsertRepositoryName {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InsertMaterialisation {
     pub path: String,
     pub blob_id: Option<String>,
     pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InsertFileBundle {
+    pub file: InsertFile,
+    pub blob: InsertBlob,
+    pub materialisation: InsertMaterialisation,
 }
 
 #[derive(Debug, FromRow, Clone)]

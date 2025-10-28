@@ -35,7 +35,7 @@ impl From<models::Repository> for Repository {
 impl From<models::File> for File {
     fn from(file: models::File) -> Self {
         File {
-            uuid: file.uuid,
+            uid: file.uid,
             path: file.path,
             blob_id: file.blob_id,
             valid_from: datetime_to_timestamp(&file.valid_from),
@@ -46,7 +46,7 @@ impl From<models::File> for File {
 impl From<models::Blob> for Blob {
     fn from(blob: models::Blob) -> Self {
         Blob {
-            uuid: blob.uuid,
+            uid: blob.uid,
             repo_id: blob.repo_id,
             blob_id: blob.blob_id,
             blob_size: blob.blob_size,
@@ -60,7 +60,7 @@ impl From<models::Blob> for Blob {
 impl From<models::RepositoryName> for RepositoryName {
     fn from(repo_name: models::RepositoryName) -> Self {
         RepositoryName {
-            uuid: repo_name.uuid,
+            uid: repo_name.uid,
             repo_id: repo_name.repo_id,
             name: repo_name.name,
             valid_from: datetime_to_timestamp(&repo_name.valid_from),
@@ -82,7 +82,7 @@ impl From<Repository> for models::Repository {
 impl From<File> for models::File {
     fn from(file: File) -> Self {
         models::File {
-            uuid: file.uuid,
+            uid: file.uid,
             path: file.path,
             blob_id: file.blob_id,
             valid_from: timestamp_to_datetime(&file.valid_from),
@@ -93,7 +93,7 @@ impl From<File> for models::File {
 impl From<Blob> for models::Blob {
     fn from(blob: Blob) -> Self {
         models::Blob {
-            uuid: blob.uuid,
+            uid: blob.uid,
             repo_id: blob.repo_id,
             blob_id: blob.blob_id,
             blob_size: blob.blob_size,
@@ -107,7 +107,7 @@ impl From<Blob> for models::Blob {
 impl From<RepositoryName> for models::RepositoryName {
     fn from(repo_name: RepositoryName) -> Self {
         models::RepositoryName {
-            uuid: repo_name.uuid,
+            uid: repo_name.uid,
             repo_id: repo_name.repo_id,
             name: repo_name.name,
             valid_from: timestamp_to_datetime(&repo_name.valid_from),

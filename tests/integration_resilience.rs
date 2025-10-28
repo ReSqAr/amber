@@ -10,21 +10,13 @@ async fn integration_test_resilience_missing_blobs() -> Result<(), anyhow::Error
         @a amber init a
         @a write_file test.txt "Hello world!"
 
-        # action 1
+        # action
         @a amber add
-        @a sql 'DELETE FROM blobs'
+        @a sql 'DELETE FROM latest_available_blobs'
+        @a sql 'DELETE FROM latest_reductions'
         @a sql 'DELETE FROM virtual_filesystem'
         
-        # check 1
-        @a amber status
-        assert_output_contains "detected 1 new files"
-        @a amber fsck
-        assert_output_contains "found no altered and no incomplete files"
-        
-        # action 2
-        @a amber add
-        
-        # check 2
+        # check
         @a amber status
         assert_output_contains "detected 1 materialised files"
         @a amber fsck
@@ -43,7 +35,8 @@ async fn integration_test_resilience_missing_files() -> Result<(), anyhow::Error
 
         # action 1
         @a amber add
-        @a sql 'DELETE FROM files'
+        @a sql 'DELETE FROM latest_filesystem_files'
+        @a sql 'DELETE FROM latest_reductions'
         @a sql 'DELETE FROM virtual_filesystem'
         
         # check 1
@@ -69,21 +62,13 @@ async fn integration_test_resilience_missing_materialisations() -> Result<(), an
         @a amber init a
         @a write_file test.txt "Hello world!"
 
-        # action 1
+        # action
         @a amber add
-        @a sql 'DELETE FROM materialisations'
+        @a sql 'DELETE FROM latest_materialisations'
+        @a sql 'DELETE FROM latest_reductions'
         @a sql 'DELETE FROM virtual_filesystem'
         
-        # check 1
-        @a amber status
-        assert_output_contains "detected 1 incomplete files"
-        @a amber fsck
-        assert_output_contains "detected 0 altered files and 1 incomplete files"
-        
-        # action 2
-        @a amber add
-        
-        # check 2
+        # check
         @a amber status
         assert_output_contains "detected 1 materialised files"
         @a amber fsck
@@ -102,14 +87,15 @@ async fn integration_test_resilience_missing_materialisations_sync() -> Result<(
 
         # action 1
         @a amber add
-        @a sql 'DELETE FROM materialisations'
+        @a sql 'DELETE FROM latest_materialisations'
+        @a sql 'DELETE FROM latest_reductions'
         @a sql 'DELETE FROM virtual_filesystem'
         
         # check 1
         @a amber status
-        assert_output_contains "detected 1 incomplete files"
+        assert_output_contains "detected 1 materialised files"
         @a amber fsck
-        assert_output_contains "detected 0 altered files and 1 incomplete files"
+        assert_output_contains "found no altered and no incomplete files"
         
         # action 2
         @a amber sync
@@ -134,7 +120,8 @@ async fn integration_test_resilience_missing_materialisations_sync_broken_hardli
 
         # action 1
         @a amber add
-        @a sql 'DELETE FROM materialisations'
+        @a sql 'DELETE FROM latest_materialisations'
+        @a sql 'DELETE FROM latest_reductions'
         @a sql 'DELETE FROM virtual_filesystem'
         # break hardlink
         @a remove_file test.txt
@@ -142,9 +129,9 @@ async fn integration_test_resilience_missing_materialisations_sync_broken_hardli
 
         # check 1
         @a amber status
-        assert_output_contains "detected 1 incomplete files"
+        assert_output_contains "detected 1 materialised files"
         @a amber fsck
-        assert_output_contains "detected 0 altered files and 1 incomplete files"
+        assert_output_contains "found no altered and no incomplete files"
         
         # action 2
         @a amber sync

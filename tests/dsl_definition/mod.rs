@@ -236,6 +236,7 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn capability_check_ref_link() -> anyhow::Result<bool, anyhow::Error> {
     let tmp_dir = tempdir()?;
     let path = tmp_dir.path().to_path_buf();

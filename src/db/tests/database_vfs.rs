@@ -2,8 +2,8 @@
 mod tests {
     use chrono::TimeZone;
 
+    use crate::db;
     use crate::db::database::Database;
-    use crate::db::migrations::run_migrations;
     use crate::db::models::{
         FileCheck, FileSeen, InsertBlob, InsertFile, InsertMaterialisation, Observation,
         VirtualFileState,
@@ -12,23 +12,15 @@ mod tests {
     use chrono::{DateTime, Utc};
     use futures::StreamExt;
     use futures::stream;
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+    use tempfile::tempdir;
 
     const BEGINNING: i64 = 1577836800; // 2020-01-01T00:00:00Z
 
-    async fn setup_test_db() -> Database {
-        let pool: SqlitePool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("failed to create pool");
-
-        run_migrations(&pool)
-            .await
-            .expect("failed to run migrations");
-
-        Database::new(pool)
+    async fn setup_test_db() -> (Database, tempfile::TempDir) {
+        let t = tempdir().unwrap();
+        (db::open(t.path()).await.unwrap(), t)
     }
+
     struct TestBlob {
         blob_id: String,
         blob_size: i64,
@@ -138,7 +130,7 @@ mod tests {
         seen_files: impl IntoIterator<Item = FileSeen>,
         eq_blob_check: impl IntoIterator<Item = FileCheck>,
     ) -> Database {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
 
         seed_files(&db, files).await;
         seed_blobs(&db, blobs).await;
@@ -157,7 +149,7 @@ mod tests {
         db
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_new_file() {
         let files = [];
         let blobs = [];
@@ -183,7 +175,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_ok_state_for_repeated_observation() {
         let files = [TestFile {
             path: "test".into(),
@@ -232,7 +224,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_modified_size() {
         let files = [TestFile {
             path: "test".into(),
@@ -277,7 +269,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_modified_last_modified() {
         let files = [TestFile {
             path: "test".into(),
@@ -322,7 +314,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_check_same_file() {
         let files = [TestFile {
             path: "test".into(),
@@ -365,7 +357,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_altered() {
         let files = [TestFile {
             path: "test".into(),
@@ -404,7 +396,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_outdated() {
         let files = [
             TestFile {
@@ -468,7 +460,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_deleted() {
         let files = [
             TestFile {

@@ -1,13 +1,13 @@
 use crate::connection::EstablishedConnection;
+use crate::db;
 use crate::db::database::{DBOutputStream, Database};
 use crate::db::error::DBError;
-use crate::db::migrations::run_migrations;
+use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     File, FileTransferItem, MissingFile, MoveEvent, Observation, ObservedBlob, PathType,
     Repository, RepositoryName, RmEvent, VirtualFile,
 };
-use crate::db::{establish_connection, models};
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
@@ -143,21 +143,12 @@ impl LocalRepository {
         files::cleanup_staging(&staging_path).await?;
         debug!("deleted staging {}", staging_path.display());
 
-        let db_path = repository_path.join("db.sqlite");
-        let pool = establish_connection(db_path.to_str().unwrap())
-            .await
-            .expect("failed to establish connection");
-        run_migrations(&pool)
-            .await
-            .expect("failed to run migrations");
+        let db = db::open(&repository_path).await?;
 
-        let db = Database::new(pool.clone());
         let repo = db
             .get_or_create_current_repository()
             .await
             .expect("failed to create repo id");
-
-        db.clean().await?;
 
         debug!("db connected");
 
@@ -206,15 +197,7 @@ impl LocalRepository {
             .await
             .inspect_err(|e| log::error!("failed to create blobs path {blobs_path:?}: {e}"))?;
 
-        let db_path = repository_path.join("db.sqlite");
-        let pool = establish_connection(db_path.to_str().unwrap())
-            .await
-            .inspect_err(|e| log::error!("unable to establish a database connection: {e}"))?;
-        run_migrations(&pool)
-            .await
-            .inspect_err(|e| log::error!("unable to run database migration: {e}"))?;
-
-        let db = Database::new(pool.clone());
+        let db = db::open(&repository_path).await?;
 
         let repo = db
             .get_or_create_current_repository()
@@ -310,7 +293,6 @@ impl Config for LocalRepository {
             BufferType::TransferRcloneFilesWriterChunkSize => 1000,
             BufferType::AddFilesBlobifyFutureFileParallelism => 20,
             BufferType::AddFilesDBAddFilesChannelSize => 10000,
-            BufferType::AddFilesDBAddBlobsChannelSize => 10000,
             BufferType::AddFilesDBAddMaterialisationsChannelSize => 10000,
             BufferType::PrepareTransferParallelism => 20,
             BufferType::StateBufferChannelSize => 10000,
@@ -368,6 +350,13 @@ impl Adder for LocalRepository {
         S: Stream<Item = models::InsertBlob> + Unpin + Send,
     {
         self.db.add_blobs(s).await
+    }
+
+    async fn add_file_bundles<S>(&self, s: S) -> Result<u64, DBError>
+    where
+        S: Stream<Item = models::InsertFileBundle> + Unpin + Send,
+    {
+        self.db.add_file_bundles(s).await
     }
 
     async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
@@ -436,13 +425,13 @@ impl Syncer<Repository> for LocalRepository {
 }
 
 impl SyncerParams for File {
-    type Params = i32;
+    type Params = i64;
 }
 
 impl Syncer<File> for LocalRepository {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static,
     > + Send {
@@ -458,13 +447,13 @@ impl Syncer<File> for LocalRepository {
 }
 
 impl SyncerParams for Blob {
-    type Params = i32;
+    type Params = i64;
 }
 
 impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static,
     > + Send {
@@ -479,13 +468,13 @@ impl Syncer<Blob> for LocalRepository {
     }
 }
 impl SyncerParams for RepositoryName {
-    type Params = i32;
+    type Params = i64;
 }
 
 impl Syncer<RepositoryName> for LocalRepository {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl Stream<Item = Result<RepositoryName, InternalError>> + Unpin + Send + 'static,
     > + Send {
