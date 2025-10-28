@@ -219,7 +219,7 @@ impl Syncer<models::Repository> for GRPCClient {
 impl Syncer<models::File> for GRPCClient {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::File, InternalError>>
                  + Unpin
@@ -257,7 +257,7 @@ impl Syncer<models::File> for GRPCClient {
 impl Syncer<models::Blob> for GRPCClient {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
                  + Unpin
@@ -295,7 +295,7 @@ impl Syncer<models::Blob> for GRPCClient {
 impl Syncer<models::RepositoryName> for GRPCClient {
     fn select(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
                  + Unpin

@@ -118,7 +118,7 @@ mod tests {
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_assimilate_single_file() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let repo_path = dir.path().join("repo");

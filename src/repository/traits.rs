@@ -1,8 +1,8 @@
 use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, MissingFile, MoveEvent,
-    Observation, PathType, RmEvent, VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, InsertFileBundle,
+    MissingFile, MoveEvent, Observation, PathType, RmEvent, VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::flow::{ExtFlow, Flow};
@@ -39,7 +39,6 @@ pub enum BufferType {
     TransferRcloneFilesStreamChunkSize,
     AddFilesBlobifyFutureFileParallelism,
     AddFilesDBAddFilesChannelSize,
-    AddFilesDBAddBlobsChannelSize,
     AddFilesDBAddMaterialisationsChannelSize,
     PrepareTransferParallelism,
     StateBufferChannelSize,
@@ -67,6 +66,7 @@ pub trait Availability {
 }
 
 pub trait Adder {
+    #[allow(dead_code)]
     fn add_files<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send;
@@ -74,6 +74,10 @@ pub trait Adder {
     fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
+
+    fn add_file_bundles<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
+    where
+        S: Stream<Item = InsertFileBundle> + Unpin + Send;
 
     fn observe_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
@@ -90,9 +94,9 @@ pub trait Adder {
 
 #[derive(Debug)]
 pub struct LastIndices {
-    pub file: i32,
-    pub blob: i32,
-    pub name: i32,
+    pub file: i64,
+    pub blob: i64,
+    pub name: i64,
 }
 
 pub trait LastIndicesSyncer {

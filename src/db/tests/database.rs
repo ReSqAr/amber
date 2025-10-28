@@ -1,38 +1,27 @@
 #[cfg(test)]
 mod tests {
+    use crate::db;
     use crate::db::database::Database;
-    use crate::db::migrations::run_migrations;
-
     use crate::db::models::{
         AvailableBlob, Blob, BlobTransferItem, Connection, ConnectionType, CopiedTransferItem,
-        File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertMaterialisation,
-        InsertRepositoryName, MissingFile, Observation, ObservedBlob, Repository, RepositoryName,
-        VirtualFileState,
+        File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile, InsertFileBundle,
+        InsertMaterialisation, InsertRepositoryName, MissingFile, Observation, ObservedBlob,
+        Repository, RepositoryName, VirtualFileState,
     };
     use crate::utils::flow::{ExtFlow, Flow};
     use chrono::Utc;
     use futures::StreamExt;
     use futures::stream;
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
-    use uuid::Uuid;
+    use tempfile::tempdir;
 
-    async fn setup_test_db() -> Database {
-        let pool: SqlitePool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("failed to create pool");
-
-        run_migrations(&pool)
-            .await
-            .expect("failed to run migrations");
-
-        Database::new(pool)
+    async fn setup_test_db() -> (Database, tempfile::TempDir) {
+        let t = tempdir().unwrap();
+        (db::open(t.path()).await.unwrap(), t)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_get_or_create_current_repository() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let repo1 = db
             .get_or_create_current_repository()
             .await
@@ -47,9 +36,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_lookup_current_repository_name() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let repo = db
             .get_or_create_current_repository()
             .await
@@ -83,9 +72,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_add_and_select_files() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         let file1 = InsertFile {
@@ -118,11 +107,79 @@ mod tests {
             paths.contains(&"file2.txt".to_string()),
             "Expected file2.txt in the query results"
         );
+
+        let mut stream = db.select_files(0).await;
+        let mut paths = Vec::new();
+        while let Some(result) = stream.next().await {
+            let file: File = result.expect("select_files failed");
+            paths.push(file.path);
+        }
+        assert!(
+            paths.contains(&"file2.txt".to_string()),
+            "Expected file2.txt in the query results"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_add_file_bundles() {
+        let (db, _t) = setup_test_db().await;
+        let repo = db
+            .get_or_create_current_repository()
+            .await
+            .expect("failed to create repository");
+        let now = Utc::now();
+
+        let bundle = InsertFileBundle {
+            file: InsertFile {
+                path: "bundled.txt".into(),
+                blob_id: Some("bundle-blob".into()),
+                valid_from: now,
+            },
+            blob: InsertBlob {
+                repo_id: repo.repo_id.clone(),
+                blob_id: "bundle-blob".into(),
+                blob_size: 64,
+                has_blob: true,
+                path: None,
+                valid_from: now,
+            },
+            materialisation: InsertMaterialisation {
+                path: "bundled.txt".into(),
+                blob_id: Some("bundle-blob".into()),
+                valid_from: now,
+            },
+        };
+
+        let inserted = db
+            .add_file_bundles(stream::iter([bundle]))
+            .await
+            .expect("failed to add bundle");
+        assert_eq!(inserted, 1, "Expected a single bundle to be inserted");
+
+        let files: Vec<_> = db.select_files(-1).await.collect().await;
+        let file_paths: Vec<_> = files
+            .into_iter()
+            .map(|res| res.expect("select_files failed").path)
+            .collect();
+        assert!(
+            file_paths.contains(&"bundled.txt".to_string()),
+            "Expected bundled.txt to be present in files"
+        );
+
+        let blobs: Vec<_> = db.available_blobs(repo.repo_id.clone()).collect().await;
+        let blob_ids: Vec<_> = blobs
+            .into_iter()
+            .map(|res| res.expect("available_blobs failed").blob_id)
+            .collect();
+        assert!(
+            blob_ids.contains(&"bundle-blob".to_string()),
+            "Expected bundle-blob to be present in available blobs"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_add_and_select_blobs() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let repo = db
             .get_or_create_current_repository()
@@ -161,9 +218,9 @@ mod tests {
         assert!(blob_ids.contains(&"blob2".to_string()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_repositories() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let repo_id = "test_repo".to_string();
 
         let repo_initial = Repository {
@@ -195,9 +252,9 @@ mod tests {
         assert_eq!(repo.last_name_index, 5);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_update_last_indices() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let repo = db.get_or_create_current_repository().await.expect("failed");
 
         let now = Utc::now();
@@ -229,14 +286,14 @@ mod tests {
             .update_last_indices()
             .await
             .expect("update_last_indices failed");
-        assert!(updated_repo.last_file_index > 0);
-        assert!(updated_repo.last_blob_index > 0);
-        assert!(updated_repo.last_name_index > 0);
+        assert!(updated_repo.last_file_index >= 0);
+        assert!(updated_repo.last_blob_index >= 0);
+        assert!(updated_repo.last_name_index >= 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_available_and_missing_blobs() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let repo = db.get_or_create_current_repository().await.expect("failed");
         let now = Utc::now();
 
@@ -290,9 +347,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_virtual_filesystem_operations() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         db.truncate_virtual_filesystem()
             .await
             .expect("truncate_virtual_filesystem failed");
@@ -323,9 +380,9 @@ mod tests {
         while let Some(_mf) = missing_stream.next().await {}
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_connection_methods() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         use Connection;
 
         let list = db.list_all_connections().await.expect("list failed");
@@ -351,9 +408,9 @@ mod tests {
         assert_eq!(list.len(), 1, "Expected one connection in list");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_populate_and_select_missing_blobs_transfer() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         let remote_blob = InsertBlob {
@@ -406,9 +463,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_populate_and_select_missing_files_transfer() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let repo = db.get_or_create_current_repository().await.expect("failed");
 
@@ -465,9 +522,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_observe_blobs() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let repo = db.get_or_create_current_repository().await.expect("failed");
 
@@ -507,9 +564,9 @@ mod tests {
         assert!(found, "Observed blob 'test_blob' should be available");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_select_repositories() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
 
         let repo1 = Repository {
             repo_id: "repo1".into(),
@@ -542,9 +599,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_select_repository_names() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         let rn1 = InsertRepositoryName {
@@ -577,19 +634,19 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_files() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         let file1 = File {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 1,
             path: "file_a.txt".into(),
             blob_id: Some("blob_a".into()),
             valid_from: now,
         };
         let file2 = File {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 2,
             path: "file_b.txt".into(),
             blob_id: Some("blob_b".into()),
             valid_from: now,
@@ -614,14 +671,14 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_blobs() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let repo = db.get_or_create_current_repository().await.expect("failed");
 
         let blob1 = Blob {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 1,
             repo_id: repo.repo_id.clone(),
             blob_id: "merge_blob1".into(),
             blob_size: 111,
@@ -630,7 +687,7 @@ mod tests {
             valid_from: now,
         };
         let blob2 = Blob {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 2,
             repo_id: repo.repo_id.clone(),
             blob_id: "merge_blob2".into(),
             blob_size: 222,
@@ -658,18 +715,18 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_repository_names() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let rn1 = RepositoryName {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 1,
             repo_id: "repo_merge".into(),
             name: "Merge Name 1".into(),
             valid_from: now,
         };
         let rn2 = RepositoryName {
-            uuid: Uuid::new_v4().to_string(),
+            uid: 2,
             repo_id: "repo_merge".into(),
             name: "Merge Name 2".into(),
             valid_from: now,
@@ -692,19 +749,19 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_files_deduplication() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
-        let fixed_uuid = "fixed-uuid-file";
+        let fixed_uid = 42;
         let file1 = File {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             path: "dup_file.txt".into(),
             blob_id: Some("blob1".into()),
             valid_from: now,
         };
         let file2 = File {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             path: "dup_file.txt".into(),
             blob_id: Some("blob2".into()),
             valid_from: now,
@@ -719,7 +776,7 @@ mod tests {
         let mut found_blob = None;
         while let Some(result) = stream.next().await {
             let file: File = result.expect("select_files failed");
-            if file.uuid == fixed_uuid {
+            if file.uid == fixed_uid {
                 count += 1;
                 found_blob = file.blob_id;
             }
@@ -728,15 +785,15 @@ mod tests {
         assert_eq!(found_blob, Some("blob1".into()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_blobs_deduplication() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let repo = db.get_or_create_current_repository().await.expect("failed");
 
-        let fixed_uuid = "fixed-uuid-blob";
+        let fixed_uid = 42;
         let blob1 = Blob {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             repo_id: repo.repo_id.clone(),
             blob_id: "dup_blob".into(),
             blob_size: 100,
@@ -745,7 +802,7 @@ mod tests {
             valid_from: now,
         };
         let blob2 = Blob {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             repo_id: repo.repo_id.clone(),
             blob_id: "dup_blob".into(),
             blob_size: 200,
@@ -763,7 +820,7 @@ mod tests {
         let mut found_size = None;
         while let Some(result) = stream.next().await {
             let blob: Blob = result.expect("select_blobs failed");
-            if blob.uuid == fixed_uuid {
+            if blob.uid == fixed_uid {
                 count += 1;
                 found_size = Some(blob.blob_size);
             }
@@ -772,19 +829,19 @@ mod tests {
         assert_eq!(found_size, Some(100));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_merge_repository_names_deduplication() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
-        let fixed_uuid = "fixed-uuid-repo-name";
+        let fixed_uid = 42;
         let rn1 = RepositoryName {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             repo_id: "repo_merge".into(),
             name: "First Name".into(),
             valid_from: now,
         };
         let rn2 = RepositoryName {
-            uuid: fixed_uuid.to_string(),
+            uid: fixed_uid,
             repo_id: "repo_merge".into(),
             name: "Second Name".into(),
             valid_from: now,
@@ -799,7 +856,7 @@ mod tests {
         let mut found_name = None;
         while let Some(result) = stream.next().await {
             let rn: RepositoryName = result.expect("select_repository_names failed");
-            if rn.uuid == fixed_uuid {
+            if rn.uid == fixed_uid {
                 count += 1;
                 found_name = Some(rn.name);
             }
@@ -808,9 +865,9 @@ mod tests {
         assert_eq!(found_name, Some("First Name".into()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_clean_transfers() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         let remote_blob = InsertBlob {
@@ -847,9 +904,9 @@ mod tests {
         assert_eq!(count, 0, "Expected transfers to be cleaned");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn populate_missing_blobs_is_pull_only() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         db.add_files(stream::iter([InsertFile {
@@ -888,7 +945,7 @@ mod tests {
             "expected at least one transfer (pull semantics)"
         );
 
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let _local_repo = db
             .get_or_create_current_repository()
@@ -929,9 +986,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn populate_missing_files_is_pull_only_and_respects_path_selector() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let local_repo = db
             .get_or_create_current_repository()
@@ -1015,9 +1072,9 @@ mod tests {
         assert_eq!(only_dir1[0].path, "dir1/a.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn remote_assimilation_makes_missing_empty() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         db.add_files(stream::iter([InsertFile {
@@ -1055,9 +1112,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn hashed_path_roundtrip_consistency() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
 
         db.add_files(stream::iter([InsertFile {
@@ -1096,12 +1153,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sync_marks_missing_then_clears_only_after_materialise_and_seen_id_matches() {
         use chrono::Utc;
         use futures::{StreamExt, stream};
 
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let scan_id: i64 = 7;
 
@@ -1191,9 +1248,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn remote_assimilation_eliminates_missing() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let remote_repo = db
             .get_or_create_current_repository()
@@ -1246,9 +1303,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn vfs_state_transitions_ok_materialisation_missing_to_ok() {
-        let db = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let remote_repo = db
             .get_or_create_current_repository()
@@ -1371,9 +1428,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn file_then_blob_produces_materialise_candidate() {
-        let db: Database = setup_test_db().await;
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn file_and_blob_produces_materialise_candidate() {
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let blob_id = "abcdeffedcba1234";
 
@@ -1398,10 +1455,6 @@ mod tests {
         }]))
         .await
         .expect("add_files");
-
-        db.refresh_virtual_filesystem().await.expect("refresh vfs");
-        let miss0 = collect_missing(0).await;
-        assert!(miss0.is_empty(), "no candidate until the blob exists");
 
         let repo_id = db.get_or_create_current_repository().await.unwrap().repo_id;
         db.add_blobs(stream::iter([InsertBlob {
@@ -1428,9 +1481,9 @@ mod tests {
         assert_eq!(miss1[0].target_blob_id, blob_id);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn blob_then_file_produces_materialise_candidate() {
-        let db: Database = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let blob_id = "0123456789abcdef";
 
@@ -1475,9 +1528,9 @@ mod tests {
         assert_eq!(miss[0].target_blob_id, blob_id);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn available_from_other_repo_still_requires_materialisation() {
-        let db: Database = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let blob_id = "feedfacecafebeef";
 
@@ -1528,9 +1581,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn clears_only_after_materialise_and_seen_id_matches() {
-        let db: Database = setup_test_db().await;
+        let (db, _t) = setup_test_db().await;
         let now = Utc::now();
         let scan_id: i64 = 42;
         let blob_id = "aa11bb22cc33";

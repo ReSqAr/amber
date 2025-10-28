@@ -1,28 +1,37 @@
 use crate::db::cleaner::Cleaner;
 use crate::db::error::DBError;
+use crate::db::logs::Logs;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
     CurrentRepository, File, FileCheck, FileSeen, FileTransferItem, InsertBlob, InsertFile,
-    InsertMaterialisation, InsertRepositoryName, MissingFile, MoveEvent, MoveInstr, MoveViolation,
-    Observation, ObservedBlob, PathType, Repository, RepositoryName, RmEvent, RmInstr, RmViolation,
-    RmViolationCode, VirtualFile,
+    InsertFileBundle, InsertMaterialisation, InsertRepositoryName, MissingFile, MoveEvent,
+    MoveInstr, MoveViolation, Observation, ObservedBlob, PathType, Repository, RepositoryName,
+    RmEvent, RmInstr, RmViolation, RmViolationCode, VirtualFile,
 };
+use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::flow::{ExtFlow, Flow};
+use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::stream::BoundedWaitChunksExt;
 use async_stream::try_stream;
+use behemoth::{Offset, StreamError, TailFrom};
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
 use log::debug;
+use roaring::RoaringTreemap;
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
-use sqlx::{Either, Executor, FromRow, Sqlite, SqlitePool, query};
+use sqlx::{Either, Executor, FromRow, Pool, Sqlite, SqlitePool, query};
+use std::collections::HashMap;
+use std::future;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    logs: Logs,
     max_variable_number: usize,
     cleaner: Cleaner,
 }
@@ -32,10 +41,11 @@ const TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(5);
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
 impl Database {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: SqlitePool, logs: Logs) -> Self {
         let cleaner = Cleaner::new(pool.clone());
         Self {
             pool,
+            logs,
             max_variable_number: 32000, // 32766 - actually: https://sqlite.org/limits.html
             cleaner,
         }
@@ -48,6 +58,63 @@ impl Database {
             .inspect_err(|e| log::error!("Database::clean failed: {e}"))?;
 
         let _ = self.cleaner.try_periodic_cleanup().await;
+
+        #[derive(Debug, FromRow)]
+        struct LatestReduction {
+            table_name: String,
+            offset: i64,
+        }
+        let reductions = sqlx::query_as::<_, LatestReduction>(
+            "SELECT table_name, offset FROM latest_reductions",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DBError::from)?;
+        let reductions: HashMap<_, _> = reductions
+            .into_iter()
+            .map(|r| (r.table_name, r.offset))
+            .collect();
+
+        let mut of = BaseObserver::without_id("Database::clean::files");
+        let file_offset = (reductions.get("files").copied().unwrap_or(-1) + 1) as u64;
+        let f = self.file_log_stream(self.logs.files_writer.reader().from(Offset(file_offset)));
+        let mut ob = BaseObserver::without_id("Database::clean::blobs");
+        let blob_offset = (reductions.get("blobs").copied().unwrap_or(-1) + 1) as u64;
+        let b = self.blob_log_stream(self.logs.blobs_writer.reader().from(Offset(blob_offset)));
+        let mut om = BaseObserver::without_id("Database::clean::materialisations");
+        let mat_offset = (reductions.get("materialisations").copied().unwrap_or(-1) + 1) as u64;
+        let mat_reader = self.logs.materialisations_writer.reader();
+        let m = self.materialisation_log_stream(mat_reader.from(Offset(mat_offset)));
+        let mut orn = BaseObserver::without_id("Database::clean::repository_names");
+        let name_offset = (reductions.get("repository_names").copied().unwrap_or(-1) + 1) as u64;
+        let repo_name_reader = self.logs.repository_names_writer.reader();
+        let rn = self.repository_name_log_stream(repo_name_reader.from(Offset(name_offset)));
+
+        let f_count = f.await??;
+        let b_count = b.await??;
+        let m_count = m.await??;
+        let rn_count = rn.await??;
+
+        of.observe_termination_ext(
+            log::Level::Debug,
+            "reduced",
+            [("count".into(), f_count as u64)],
+        );
+        ob.observe_termination_ext(
+            log::Level::Debug,
+            "reduced",
+            [("count".into(), b_count as u64)],
+        );
+        om.observe_termination_ext(
+            log::Level::Debug,
+            "reduced",
+            [("count".into(), m_count as u64)],
+        );
+        orn.observe_termination_ext(
+            log::Level::Debug,
+            "reduced",
+            [("count".into(), rn_count as u64)],
+        );
 
         Ok(())
     }
@@ -62,6 +129,19 @@ impl Database {
     {
         let pool = self.pool.clone();
         let cleaner = self.cleaner.clone();
+
+        Self::query_results_as_stream(name, q, pool, cleaner)
+    }
+
+    fn query_results_as_stream<'a, T>(
+        name: &str,
+        q: Query<'static, Sqlite, SqliteArguments<'static>>,
+        pool: Pool<Sqlite>,
+        cleaner: Cleaner,
+    ) -> DBOutputStream<'a, T>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + 'static,
+    {
         let stream = try_stream! {
             let _long_running_stream_guard = cleaner.try_periodic_cleanup().await;
 
@@ -129,45 +209,31 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
-            .boxed();
+        let txn = self.logs.files_writer.transaction()?;
+        let bg = self.file_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        let mut s = s.enumerate();
+        while let Some((i, file)) = s.next().await {
+            total_attempted += 1;
+            let uid = ts + (i as u64);
+            txn.push(&File {
+                uid,
+                path: file.path.clone(),
+                blob_id: file.blob_id.clone(),
+                valid_from: file.valid_from,
+            })
+            .await
+            .inspect_err(|e| log::error!("Database::add_files failed to add log: {e}"))?;
+            total_inserted += 1;
+
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT INTO files (uuid, path, blob_id, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for file in &chunk {
-                let uuid = Uuid::new_v4().to_string();
-                query = query
-                    .bind(uuid)
-                    .bind(&file.path)
-                    .bind(&file.blob_id)
-                    .bind(file.valid_from);
-            }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::add_files failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "files added: attempted={} inserted={}",
@@ -182,48 +248,34 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
-            .boxed();
+        let txn = self.logs.blobs_writer.transaction()?;
+        let bg = self.blob_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        let mut s = s.enumerate();
+        while let Some((i, blob)) = s.next().await {
+            total_attempted += 1;
+            let uid = ts + (i as u64);
+            txn.push(&Blob {
+                uid,
+                repo_id: blob.repo_id.clone(),
+                blob_id: blob.blob_id.clone(),
+                blob_size: blob.blob_size,
+                has_blob: blob.has_blob,
+                path: blob.path.clone(),
+                valid_from: blob.valid_from,
+            })
+            .await
+            .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
+            total_inserted += 1;
+
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for blob in &chunk {
-                let uuid = Uuid::new_v4().to_string();
-                query = query
-                    .bind(uuid)
-                    .bind(&blob.repo_id)
-                    .bind(&blob.blob_id)
-                    .bind(blob.blob_size)
-                    .bind(blob.has_blob)
-                    .bind(&blob.path)
-                    .bind(blob.valid_from);
-            }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::add_blobs failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "blobs added: attempted={} inserted={}",
@@ -232,70 +284,170 @@ impl Database {
         Ok(total_inserted)
     }
 
+    pub async fn add_file_bundles<S>(&self, s: S) -> Result<u64, DBError>
+    where
+        S: Stream<Item = InsertFileBundle> + Send + Unpin,
+    {
+        let mut total_attempted: u64 = 0;
+        let mut total_inserted: u64 = 0;
+
+        let file_txn = self.logs.files_writer.transaction()?;
+        let blob_txn = self.logs.blobs_writer.transaction()?;
+        let mat_txn = self.logs.materialisations_writer.transaction()?;
+
+        let file_bg = self.file_log_stream(file_txn.tail(TailFrom::Head));
+        let blob_bg = self.blob_log_stream(blob_txn.tail(TailFrom::Head));
+        let mat_bg = self.materialisation_log_stream(mat_txn.tail(TailFrom::Head));
+
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+
+        let mut s = s.enumerate();
+        while let Some((i, bundle)) = s.next().await {
+            total_attempted += 1;
+            let InsertFileBundle {
+                file,
+                blob,
+                materialisation,
+            } = bundle;
+
+            let uid = ts + (i as u64);
+            file_txn
+                .push(&File {
+                    uid,
+                    path: file.path.clone(),
+                    blob_id: file.blob_id.clone(),
+                    valid_from: file.valid_from,
+                })
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::add_file_bundles failed to add file log: {e}")
+                })?;
+
+            blob_txn
+                .push(&Blob {
+                    uid,
+                    repo_id: blob.repo_id.clone(),
+                    blob_id: blob.blob_id.clone(),
+                    blob_size: blob.blob_size,
+                    has_blob: blob.has_blob,
+                    path: blob.path.clone(),
+                    valid_from: blob.valid_from,
+                })
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::add_file_bundles failed to add blob log: {e}")
+                })?;
+
+            mat_txn.push(&materialisation).await.inspect_err(|e| {
+                log::error!("Database::add_file_bundles failed to add materialisation log: {e}")
+            })?;
+
+            total_inserted += 1;
+
+            if i % self.logs.flush_size == 0 {
+                blob_txn.flush().await?;
+                file_txn.flush().await?;
+                mat_txn.flush().await?;
+            }
+        }
+
+        blob_txn.close().await?;
+        file_txn.close().await?;
+        mat_txn.close().await?;
+
+        blob_bg.await??;
+        file_bg.await??;
+        mat_bg.await??;
+
+        debug!(
+            "file bundles added: attempted={} inserted={}",
+            total_attempted, total_inserted
+        );
+
+        Ok(total_inserted)
+    }
+
     pub async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = ObservedBlob> + Send + Unpin,
     {
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 5, TIMEOUT)
-            .boxed();
+        let chunk_stream = s.bounded_wait_chunks(self.max_variable_number / 2, TIMEOUT);
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
+        let chunk_stream = chunk_stream.then(async |chunk| {
             if chunk.is_empty() {
-                continue;
+                return stream::iter(Vec::<Result<InsertBlob, DBError>>::new());
             }
 
             let placeholders = chunk
                 .iter()
-                .map(|_| "(?, ?, ?, ?, ?)")
+                .map(|_| "(?, ?)")
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let query_str = format!(
-                "INSERT INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from)
-                    WITH VS(uuid, repo_id, has_blob, path, valid_from) AS (
+                "
+                    WITH VS(repo_id, path) AS (
                         VALUES {}
                     )
                     SELECT
-                        uuid,
                         repo_id,
-                        blob_id,
-                        blob_size,
-                        has_blob,
                         path,
-                        valid_from
+                        blob_id,
+                        blob_size
                     FROM VS
                     INNER JOIN latest_available_blobs USING (repo_id, path)",
                 placeholders
             );
 
-            let mut query = sqlx::query(&query_str);
-
-            for blob in &chunk {
-                let uuid = Uuid::new_v4().to_string();
-                query = query
-                    .bind(uuid)
-                    .bind(&blob.repo_id)
-                    .bind(blob.has_blob)
-                    .bind(&blob.path)
-                    .bind(blob.valid_from);
+            #[derive(Debug, FromRow, Clone)]
+            struct BlobData {
+                pub repo_id: String,
+                pub path: String,
+                pub blob_id: String,
+                pub blob_size: i64,
             }
 
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::observe_blobs failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
-        }
+            let mut query = sqlx::query_as::<_, BlobData>(&query_str);
+            for blob in &chunk {
+                query = query.bind(&blob.repo_id).bind(&blob.path);
+            }
+            let blob_data = match query.fetch_all(&self.pool).await.map_err(DBError::from) {
+                Ok(v) => v,
+                Err(e) => return stream::iter(vec![Err(e)]),
+            };
+            let mut map: HashMap<String, HashMap<String, (String, i64)>> = HashMap::new();
 
-        debug!(
-            "blobs added: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
+            for d in blob_data {
+                map.entry(d.repo_id)
+                    .or_default()
+                    .insert(d.path, (d.blob_id, d.blob_size));
+            }
+            let chunk: Vec<Result<_, _>> = chunk
+                .into_iter()
+                .filter_map(|o| {
+                    map.get(&o.repo_id).and_then(|e| {
+                        e.get(&o.path).map(|(blob_id, blob_size)| {
+                            Ok(InsertBlob {
+                                repo_id: o.repo_id,
+                                blob_id: blob_id.clone(),
+                                blob_size: *blob_size,
+                                has_blob: o.has_blob,
+                                path: Some(o.path),
+                                valid_from: o.valid_from,
+                            })
+                        })
+                    })
+                })
+                .collect();
+            stream::iter(chunk)
+        });
+
+        let total_inserted = chunk_stream
+            .flatten()
+            .boxed()
+            .try_forward_into::<_, _, _, _, DBError>(|s| self.add_blobs(s))
+            .await?;
+
         Ok(total_inserted)
     }
 
@@ -305,45 +457,31 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
-            .boxed();
+        let txn = self.logs.repository_names_writer.transaction()?;
+        let bg = self.repository_name_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        let mut s = s.enumerate();
+        while let Some((i, blob)) = s.next().await {
+            total_attempted += 1;
+            let uid = ts + (i as u64);
+            txn.push(&RepositoryName {
+                uid,
+                repo_id: blob.repo_id.clone(),
+                name: blob.name.clone(),
+                valid_from: blob.valid_from,
+            })
+            .await
+            .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
+            total_inserted += 1;
+
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for repository_name in &chunk {
-                let uuid = Uuid::new_v4().to_string();
-                query = query
-                    .bind(uuid)
-                    .bind(&repository_name.repo_id)
-                    .bind(&repository_name.name)
-                    .bind(repository_name.valid_from);
-            }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::add_repository_names failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "repository_names added: attempted={} inserted={}",
@@ -358,46 +496,67 @@ impl Database {
         ))
     }
 
-    pub async fn select_files(&self, last_index: i32) -> DBOutputStream<'static, File> {
-        self.stream(
-            "Database::select_files",
-            query(
-                "
-            SELECT uuid, path, blob_id, valid_from
-            FROM files
-            WHERE id > ?",
-            )
-            .bind(last_index),
-        )
+    pub async fn select_files(&self, last_index: i64) -> DBOutputStream<'static, File> {
+        let reader = self.logs.files_writer.reader();
+        let watermark = reader.snapshot_watermark();
+        reader
+            .from(Offset((last_index + 1) as u64))
+            .take_while(move |r| {
+                future::ready(match r {
+                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
+                    Err(_) => true,
+                })
+            })
+            .map(|r| match r {
+                Ok((_, f)) => Ok(f),
+                Err(e) => Err(e.into()),
+            })
+            .boxed()
+            .track("db::select_files")
+            .boxed()
     }
 
-    pub async fn select_blobs(&self, last_index: i32) -> DBOutputStream<'static, Blob> {
-        self.stream(
-            "Database::select_blobs",
-            query(
-                "
-                SELECT uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from
-                FROM blobs
-                WHERE id > ?",
-            )
-            .bind(last_index),
-        )
+    pub async fn select_blobs(&self, last_index: i64) -> DBOutputStream<'static, Blob> {
+        let reader = self.logs.blobs_writer.reader();
+        let watermark = reader.snapshot_watermark();
+        reader
+            .from(Offset((last_index + 1) as u64))
+            .take_while(move |r| {
+                future::ready(match r {
+                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
+                    Err(_) => true,
+                })
+            })
+            .map(|r| match r {
+                Ok((_, f)) => Ok(f),
+                Err(e) => Err(e.into()),
+            })
+            .boxed()
+            .track("db::select_blobs")
+            .boxed()
     }
 
     pub async fn select_repository_names(
         &self,
-        last_index: i32,
+        last_index: i64,
     ) -> DBOutputStream<'static, RepositoryName> {
-        self.stream(
-            "Database::select_repository_names",
-            query(
-                "
-                SELECT uuid, repo_id, name, valid_from
-                FROM repository_names
-                WHERE id > ?",
-            )
-            .bind(last_index),
-        )
+        let reader = self.logs.repository_names_writer.reader();
+        let watermark = reader.snapshot_watermark();
+        reader
+            .from(Offset((last_index + 1) as u64))
+            .take_while(move |r| {
+                future::ready(match r {
+                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
+                    Err(_) => true,
+                })
+            })
+            .map(|r| match r {
+                Ok((_, name)) => Ok(name),
+                Err(e) => Err(e.into()),
+            })
+            .boxed()
+            .track("db::select_repository_names")
+            .boxed()
     }
 
     pub async fn merge_repositories<S>(&self, s: S) -> Result<(), DBError>
@@ -435,9 +594,10 @@ impl Database {
 
             let mut query = sqlx::query(&query_str);
 
-            for repo in &chunk {
+            total_attempted += chunk.len() as u64;
+            for repo in chunk {
                 query = query
-                    .bind(&repo.repo_id)
+                    .bind(repo.repo_id)
                     .bind(repo.last_file_index)
                     .bind(repo.last_blob_index)
                     .bind(repo.last_name_index)
@@ -448,7 +608,6 @@ impl Database {
                 .await
                 .inspect_err(|e| log::error!("Database::merge_repositories failed: {e}"))?;
             total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
 
         debug!(
@@ -464,44 +623,26 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
-            .boxed();
+        let txn = self.logs.files_writer.transaction()?;
+        let bg = self.file_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let mut rb = RoaringTreemap::new();
+        let mut s = s.enumerate();
+        while let Some((i, file)) = s.next().await {
+            total_attempted += 1;
+            if rb.insert(file.uid) {
+                txn.push(&file)
+                    .await
+                    .inspect_err(|e| log::error!("Database::merge_files failed to add log: {e}"))?;
+                total_inserted += 1;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT OR IGNORE INTO files (uuid, path, blob_id, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for file in &chunk {
-                query = query
-                    .bind(&file.uuid)
-                    .bind(&file.path)
-                    .bind(&file.blob_id)
-                    .bind(file.valid_from)
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::merge_files failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "files merged: attempted={} inserted={}",
@@ -516,47 +657,26 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 7, TIMEOUT)
-            .boxed();
+        let txn = self.logs.blobs_writer.transaction()?;
+        let bg = self.blob_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let mut rb = RoaringTreemap::new();
+        let mut s = s.enumerate();
+        while let Some((i, blob)) = s.next().await {
+            total_attempted += 1;
+            if rb.insert(blob.uid) {
+                txn.push(&blob)
+                    .await
+                    .inspect_err(|e| log::error!("Database::merge_blobs failed to add log: {e}"))?;
+                total_inserted += 1;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT OR IGNORE INTO blobs (uuid, repo_id, blob_id, blob_size, has_blob, path, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for file in &chunk {
-                query = query
-                    .bind(&file.uuid)
-                    .bind(&file.repo_id)
-                    .bind(&file.blob_id)
-                    .bind(file.blob_size)
-                    .bind(file.has_blob)
-                    .bind(&file.path)
-                    .bind(file.valid_from)
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::merge_blobs failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "blobs merged: attempted={} inserted={}",
@@ -571,44 +691,26 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 4, TIMEOUT)
-            .boxed();
+        let txn = self.logs.repository_names_writer.transaction()?;
+        let bg = self.repository_name_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let mut rb = RoaringTreemap::new();
+        let mut s = s.enumerate();
+        while let Some((i, repository_name)) = s.next().await {
+            total_attempted += 1;
+            if rb.insert(repository_name.uid) {
+                txn.push(&repository_name).await.inspect_err(|e| {
+                    log::error!("Database::merge_repository_names failed to add log: {e}")
+                })?;
+                total_inserted += 1;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT OR IGNORE INTO repository_names (uuid, repo_id, name, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for file in &chunk {
-                query = query
-                    .bind(&file.uuid)
-                    .bind(&file.repo_id)
-                    .bind(&file.name)
-                    .bind(file.valid_from)
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::merge_repository_names failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "repository_names merged: attempted={} inserted={}",
@@ -637,14 +739,35 @@ impl Database {
     }
 
     pub async fn update_last_indices(&self) -> Result<Repository, DBError> {
+        let files_max_id = self
+            .logs
+            .files_writer
+            .watermark()
+            .map(|i| i.0 as i64)
+            .unwrap_or(-1);
+
+        let blobs_max_id = self
+            .logs
+            .blobs_writer
+            .watermark()
+            .map(|i| i.0 as i64)
+            .unwrap_or(-1);
+
+        let repository_names_max_id = self
+            .logs
+            .repository_names_writer
+            .watermark()
+            .map(|i| i.0 as i64)
+            .unwrap_or(-1);
+
         sqlx::query_as::<_, Repository>(
             "
             INSERT INTO repositories (repo_id, last_file_index, last_blob_index, last_name_index)
             SELECT
                 (SELECT repo_id FROM current_repository LIMIT 1),
-                (SELECT COALESCE(MAX(id), -1) FROM files),
-                (SELECT COALESCE(MAX(id), -1) FROM blobs),
-                (SELECT COALESCE(MAX(id), -1) FROM repository_names)
+                ?,
+                ?,
+                ?
             ON CONFLICT(repo_id) DO UPDATE
             SET
                 last_file_index = MAX(excluded.last_file_index, repositories.last_file_index),
@@ -653,6 +776,9 @@ impl Database {
             RETURNING repo_id, last_file_index, last_blob_index, last_name_index;
             ",
         )
+        .bind(files_max_id)
+        .bind(blobs_max_id)
+        .bind(repository_names_max_id)
         .fetch_one(&self.pool)
         .await
         .map_err(DBError::from)
@@ -720,43 +846,24 @@ impl Database {
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let mut chunk_stream = s
-            .bounded_wait_chunks(self.max_variable_number / 3, TIMEOUT)
-            .boxed();
+        let txn = self.logs.materialisations_writer.transaction()?;
+        let bg = self.materialisation_log_stream(txn.tail(TailFrom::Head));
 
-        while let Some(chunk) = chunk_stream.next().await {
-            let _cleanup_guard = self.cleaner.periodic_cleanup(chunk.len()).await;
-            if chunk.is_empty() {
-                continue;
+        let mut s = s.enumerate();
+        while let Some((i, mat)) = s.next().await {
+            total_attempted += 1;
+            txn.push(&mat).await.inspect_err(|e| {
+                log::error!("Database::add_materialisations failed to add log: {e}")
+            })?;
+            total_inserted += 1;
+
+            if i % self.logs.flush_size == 0 {
+                txn.flush().await?;
             }
-
-            let placeholders = chunk
-                .iter()
-                .map(|_| "(?, ?, ?)")
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query_str = format!(
-                "INSERT INTO materialisations (path, blob_id, valid_from) VALUES {}",
-                placeholders
-            );
-
-            let mut query = sqlx::query(&query_str);
-
-            for mat in &chunk {
-                query = query
-                    .bind(&mat.path)
-                    .bind(&mat.blob_id)
-                    .bind(mat.valid_from);
-            }
-
-            let result = query
-                .execute(&self.pool)
-                .await
-                .inspect_err(|e| log::error!("Database::add_materialisations failed: {e}"))?;
-            total_inserted += result.rows_affected();
-            total_attempted += chunk.len() as u64;
         }
+
+        txn.close().await?;
+        bg.await??;
 
         debug!(
             "materialisations added: attempted={} inserted={}",
@@ -1289,19 +1396,22 @@ impl Database {
     ) -> DBOutputStream<'a, MoveEvent> {
         let src_norm = trim_trailing_slash(normalize_path(src_raw.to_string()));
         let dst_norm = normalize_path(dst_raw.to_string());
-        let now_str = now.to_rfc3339();
 
-        let pool = self.pool.clone();
+        let inner = self.clone();
 
         let s = try_stream! {
             // 1) TEMP TABLE
             sqlx::query("DROP TABLE IF EXISTS temp_mv_map;")
-                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 1) drop table: {e}")).map_err(DBError::from)?;
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| log::error!("db::move_files: 1) drop table: {e}"))
+                .map_err(DBError::from)?;
             sqlx::query("CREATE TABLE temp_mv_map (src_path TEXT PRIMARY KEY, dst_path TEXT NOT NULL, blob_id TEXT NOT NULL);")
-                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 1) create table: {e}")).map_err(DBError::from)?;
+                .execute(&inner.pool).await.inspect_err(|e| log::error!("db::move_files: 1) create table: {e}")).map_err(DBError::from)?;
 
             // 2) POPULATE (named params for readability; bind in order of appearance)
-            sqlx::query(r#"
+            sqlx::query(
+                r#"
 INSERT INTO temp_mv_map (src_path, dst_path, blob_id)
 WITH is_dir(v) AS (
   SELECT
@@ -1325,35 +1435,40 @@ WHERE
   ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
   OR
   ((SELECT v FROM is_dir)=0 AND f.path = $2);
-"#)
-                .bind(mv_type_hint)
-                .bind(&src_norm)
-                .bind(&dst_norm)
-                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}")).map_err(DBError::from)?;
+"#,
+            )
+            .bind(mv_type_hint)
+            .bind(&src_norm)
+            .bind(&dst_norm)
+            .execute(&inner.pool)
+            .await
+            .inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}"))
+            .map_err(DBError::from)?;
 
             // 3) VIOLATIONS — stream them back (as data). If any → STOP (no DB mutation).
-            let mut vio_rows = pool.fetch_many(sqlx::query_as::<_, MoveViolation>(r#"
-  SELECT 'source_not_found' AS code, '' AS detail
-  WHERE NOT EXISTS (SELECT 1 FROM temp_mv_map)
-UNION ALL
-  SELECT 'destination_exists_db' AS code, m.dst_path AS detail
-  FROM temp_mv_map AS m
-  JOIN latest_filesystem_files AS d ON d.path = m.dst_path
-UNION ALL
-  SELECT 'source_equals_destination' AS code, '' AS detail
-  WHERE EXISTS (SELECT 1 FROM temp_mv_map WHERE src_path = dst_path)
-;"#));
+            let mut s = Self::query_results_as_stream::<MoveViolation>(
+                "db::move_files(3)",
+                query(
+                    r#"
+                      SELECT 'source_not_found' AS code, '' AS detail
+                      WHERE NOT EXISTS (SELECT 1 FROM temp_mv_map)
+                    UNION ALL
+                      SELECT 'destination_exists_db' AS code, m.dst_path AS detail
+                      FROM temp_mv_map AS m
+                      JOIN latest_filesystem_files AS d ON d.path = m.dst_path
+                    UNION ALL
+                      SELECT 'source_equals_destination' AS code, '' AS detail
+                      WHERE EXISTS (SELECT 1 FROM temp_mv_map WHERE src_path = dst_path)
+                    ;"#,
+                ),
+                inner.pool.clone(),
+                inner.cleaner.clone(),
+            );
 
             let mut had_violation = false;
-            while let Some(item) = vio_rows.next().await {
-                match item {
-                    Ok(Either::Right(v)) => {
-                        had_violation = true;
-                        yield MoveEvent::Violation(MoveViolation::from_row(&v)?);
-                    }
-                    Ok(Either::Left(_)) => continue,
-                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::move_files: 3) load violations: {e}"))?,
-                }
+            while let Some(v) = s.next().await {
+                had_violation = true;
+                yield MoveEvent::Violation(v?)
             }
             if had_violation {
                 // stop streaming here; no DB mutation when violations exist
@@ -1361,40 +1476,50 @@ UNION ALL
             }
 
             // 4) INSERT (tombstones + new rows) — single statement
-            sqlx::query(r#"
-INSERT INTO files (uuid, path, blob_id, valid_from)
-SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
-    src_path,
-    NULL,
-    $1
-FROM temp_mv_map
-UNION ALL
-SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
-    dst_path,
-    blob_id,
-    $1
-FROM temp_mv_map;
-"#)
-                .bind(&now_str)
-                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 4) insert files: {e}")).map_err(DBError::from)?;
+            #[derive(Debug, FromRow, Clone)]
+            struct PathBlob {
+                pub path: String,
+                pub blob_id: Option<String>,
+            }
+
+            Self::query_results_as_stream::<PathBlob>(
+                "Database::move_files(4)",
+                query(
+                    "SELECT src_path AS path, NULL AS blob_id FROM temp_mv_map
+                        UNION ALL
+                        SELECT dst_path AS path, blob_id AS blob_id FROM temp_mv_map;",
+                ),
+                inner.pool.clone(),
+                inner.cleaner.clone(),
+            )
+            .map(|pb| {
+                pb.map(|pb| InsertFile {
+                    path: pb.path,
+                    blob_id: pb.blob_id,
+                    valid_from: now,
+                })
+            })
+            .try_forward_into::<_, _, _, _, DBError>(|s| inner.add_files(s))
+            .await
+            .inspect_err(|e| log::error!("db::move_files: 4) insert files: {e}"))?;
 
             // 5) STREAM INSTRUCTIONS (as MoveEvent::Instruction)
-            let mut instr_rows = pool.fetch_many(sqlx::query_as::<_, MoveInstr>(
-                "SELECT src_path, dst_path, blob_id FROM temp_mv_map;"
-            ));
-            while let Some(item) = instr_rows.next().await {
-                match item {
-                    Ok(Either::Right(instr)) => yield MoveEvent::Instruction(MoveInstr::from_row(&instr)?),
-                    Ok(Either::Left(_)) => continue,
-                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::move_files: 5) stream instructions: {e}"))?,
-                }
+            let mut s = Self::query_results_as_stream::<MoveInstr>(
+                "db::move_files(5)",
+                query("SELECT src_path, dst_path, blob_id FROM temp_mv_map;"),
+                inner.pool.clone(),
+                inner.cleaner.clone(),
+            );
+            while let Some(instr) = s.next().await {
+                yield MoveEvent::Instruction(instr?)
             }
 
             // 6) CLEANUP
             sqlx::query("DROP TABLE IF EXISTS temp_mv_map;")
-                .execute(&pool).await.map_err(DBError::from).inspect_err(|e| log::error!("db::move_files: 6) cleanup: {e}"))?;
+                .execute(&inner.pool)
+                .await
+                .map_err(DBError::from)
+                .inspect_err(|e| log::error!("db::move_files: 6) cleanup: {e}"))?;
         };
 
         s.boxed().track("move_files").boxed()
@@ -1419,20 +1544,22 @@ FROM temp_mv_map;
                 )
             })
             .collect();
-        let now_str = now.to_rfc3339();
 
-        let pool = self.pool.clone();
+        let inner = self.clone();
         let s = try_stream! {
             // 1) TEMP TABLE
             sqlx::query("DROP TABLE IF EXISTS temp_rm_set;")
-                .execute(&pool).await.inspect_err(|e| log::error!("db::remove_files: 1) drop table: {e}")).map_err(DBError::from)?;
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| log::error!("db::remove_files: 1) drop table: {e}"))
+                .map_err(DBError::from)?;
             sqlx::query(
                 "CREATE TABLE temp_rm_set (
                     path TEXT PRIMARY KEY,
                     target_blob_id STRING NOT NULL
                 );",
             )
-            .execute(&pool)
+            .execute(&inner.pool)
             .await
             .inspect_err(|e| log::error!("db::remove_files: 1) create table: {e}"))
             .map_err(DBError::from)?;
@@ -1440,7 +1567,8 @@ FROM temp_mv_map;
             // 2) POPULATE
             let mut violations = Vec::new();
             for (path, hint) in norm_paths_with_hint {
-                let result = sqlx::query(r#"
+                let result = sqlx::query(
+                    r#"
 INSERT OR REPLACE INTO temp_rm_set (path, target_blob_id)
 WITH is_dir(v) AS (
   SELECT
@@ -1460,18 +1588,24 @@ WHERE
   ((SELECT v FROM is_dir)=1 AND f.path LIKE $2 || '/%')
   OR
   ((SELECT v FROM is_dir)=0 AND f.path = $2);
-"#)
+"#,
+                )
                 .bind(hint)
                 .bind(&path)
-                .execute(&pool).await.inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}")).map_err(DBError::from)?;
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| log::error!("db::move_files: 2) insert data: {e}"))
+                .map_err(DBError::from)?;
                 if result.rows_affected() == 0 {
-                    violations.push(RmEvent::Violation(RmViolation{code: RmViolationCode::SourceNotFound, detail: path}))
+                    violations.push(RmEvent::Violation(RmViolation {
+                        code: RmViolationCode::SourceNotFound,
+                        detail: path,
+                    }))
                 }
             }
 
-
             let had_violation = !violations.is_empty();
-            for violation in violations.drain(0..violations.len())  {
+            for violation in violations.drain(0..violations.len()) {
                 yield violation;
             }
             if had_violation {
@@ -1480,33 +1614,346 @@ WHERE
             }
 
             // 3) INSERT tombstones (append-only)
-            sqlx::query(r#"
-INSERT INTO files (uuid, path, blob_id, valid_from)
-SELECT lower(hex(randomblob(16))), path, NULL, $1
-FROM temp_rm_set;
-"#)
-                .bind(&now_str)
-                .execute(&pool).await.map_err(DBError::from)?;
+            #[derive(Debug, FromRow, Clone)]
+            struct Path {
+                pub path: String,
+            }
+
+            Self::query_results_as_stream::<Path>(
+                "Database::remove_files(3)",
+                query("SELECT path FROM temp_rm_set"),
+                inner.pool.clone(),
+                inner.cleaner.clone(),
+            )
+            .map(|pb| {
+                pb.map(|pb| InsertFile {
+                    path: pb.path,
+                    blob_id: None,
+                    valid_from: now,
+                })
+            })
+            .try_forward_into::<_, _, _, _, DBError>(|s| inner.add_files(s))
+            .await
+            .inspect_err(|e| log::error!("db::remove_files: 3) removing files: {e}"))?;
 
             // 4) STREAM instructions (path, target_blob_id)
-            let mut instr_rows = pool.fetch_many(sqlx::query_as::<_, RmInstr>(
-                "SELECT path, target_blob_id FROM temp_rm_set;"
-            ));
-            while let Some(item) = instr_rows.next().await {
-                match item {
-                    Ok(Either::Right(instr)) => yield RmEvent::Instruction(RmInstr::from_row(&instr)?),
-                    Ok(Either::Left(_))      => continue,
-                    Err(e) => Err(DBError::from(e)).inspect_err(|e| log::error!("db::remove_files: 4) stream instructions: {e}"))?,
-                }
+            let mut s = Self::query_results_as_stream::<RmInstr>(
+                "db::remove_files(4)",
+                query("SELECT path, target_blob_id FROM temp_rm_set;"),
+                inner.pool.clone(),
+                inner.cleaner.clone(),
+            );
+            while let Some(instr) = s.next().await {
+                yield RmEvent::Instruction(instr?)
             }
 
             // 5) CLEANUP
             sqlx::query("DROP TABLE IF EXISTS temp_rm_set;")
-                .execute(&pool).await.map_err(DBError::from).inspect_err(|e| log::error!("db::remove_files: 5) cleanup: {e}"))?;
-
+                .execute(&inner.pool)
+                .await
+                .map_err(DBError::from)
+                .inspect_err(|e| log::error!("db::remove_files: 5) cleanup: {e}"))?;
         };
 
         s.boxed().track("remove_files").boxed()
+    }
+
+    fn blob_log_stream(
+        &self,
+        s: impl Stream<Item = Result<(Offset, Blob), StreamError>> + Unpin + Send + 'static,
+    ) -> JoinHandle<Result<usize, DBError>> {
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let mut chunk_stream = s
+                .bounded_wait_chunks(inner.max_variable_number / 6, TIMEOUT)
+                .boxed()
+                .track("log::blob");
+
+            let mut counter = 0;
+            while let Some(chunk) = chunk_stream.next().await {
+                let _cleanup_guard = inner.cleaner.periodic_cleanup(chunk.len()).await;
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?, ?, ?, ?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!(
+                    "INSERT INTO latest_available_blobs (repo_id, blob_id, blob_size, has_blob, path, valid_from)
+                        VALUES {}
+                        ON CONFLICT(repo_id, blob_id) DO UPDATE SET
+                            blob_size  = excluded.blob_size,
+                            has_blob   = excluded.has_blob,
+                            path       = excluded.path,
+                            valid_from = excluded.valid_from
+                        WHERE excluded.valid_from > latest_available_blobs.valid_from",
+                    placeholders
+                );
+
+                let mut query = sqlx::query(&query_str);
+
+                let mut max_offset = Offset(0);
+                for blob_w_offset in chunk {
+                    let (offset, blob) = blob_w_offset.map_err(DBError::from)?;
+                    query = query
+                        .bind(blob.repo_id)
+                        .bind(blob.blob_id)
+                        .bind(blob.blob_size)
+                        .bind(blob.has_blob)
+                        .bind(blob.path)
+                        .bind(blob.valid_from);
+                    max_offset = offset;
+                    counter += 1;
+                }
+                query
+                    .execute(&inner.pool)
+                    .await
+                    .inspect_err(|e| log::error!("Database::blob_log_stream failed: {e}"))?;
+
+                sqlx::query(
+                    "INSERT INTO latest_reductions (table_name, offset)
+                         VALUES (?, ?)
+                         ON CONFLICT (table_name)
+                         DO UPDATE SET offset = excluded.offset;",
+                )
+                .bind("blobs")
+                .bind(max_offset.0 as i64)
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::blob_log_stream failed to update latest reduction: {e}")
+                })?;
+            }
+
+            sqlx::query("DELETE FROM latest_available_blobs WHERE NOT has_blob;")
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::blob_log_stream failed to clean up: {e}")
+                })?;
+
+            Ok(counter)
+        })
+    }
+
+    fn file_log_stream(
+        &self,
+        s: impl Stream<Item = Result<(Offset, File), StreamError>> + Unpin + Send + 'static,
+    ) -> JoinHandle<Result<usize, DBError>> {
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let mut chunk_stream = s
+                .bounded_wait_chunks(inner.max_variable_number / 3, TIMEOUT)
+                .boxed()
+                .track("log::file");
+
+            let mut counter = 0;
+            while let Some(chunk) = chunk_stream.next().await {
+                let _cleanup_guard = inner.cleaner.periodic_cleanup(chunk.len()).await;
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!(
+                    "INSERT INTO latest_filesystem_files (path, blob_id, valid_from)
+                        VALUES {}
+                        ON CONFLICT(path) DO UPDATE SET
+                            blob_id  = excluded.blob_id,
+                            valid_from = excluded.valid_from
+                        WHERE excluded.valid_from > latest_filesystem_files.valid_from",
+                    placeholders
+                );
+
+                let mut query = sqlx::query(&query_str);
+
+                let mut max_offset = Offset(0);
+                for file_w_offset in chunk {
+                    let (offset, file) = file_w_offset.map_err(DBError::from)?;
+                    query = query
+                        .bind(file.path)
+                        .bind(file.blob_id)
+                        .bind(file.valid_from);
+                    max_offset = offset;
+                    counter += 1;
+                }
+                query
+                    .execute(&inner.pool)
+                    .await
+                    .inspect_err(|e| log::error!("Database::file_log_stream failed: {e}"))?;
+
+                sqlx::query(
+                    "INSERT INTO latest_reductions (table_name, offset)
+                         VALUES (?, ?)
+                         ON CONFLICT (table_name)
+                         DO UPDATE SET offset = excluded.offset;",
+                )
+                .bind("files")
+                .bind(max_offset.0 as i64)
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::file_log_stream failed to update latest reduction: {e}")
+                })?;
+            }
+
+            sqlx::query("DELETE FROM latest_filesystem_files WHERE blob_id IS NULL;")
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Database::file_log_stream failed to clean up: {e}")
+                })?;
+
+            Ok(counter)
+        })
+    }
+
+    fn materialisation_log_stream(
+        &self,
+        s: impl Stream<Item = Result<(Offset, InsertMaterialisation), StreamError>>
+        + Unpin
+        + Send
+        + 'static,
+    ) -> JoinHandle<Result<usize, DBError>> {
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let mut chunk_stream = s
+                .bounded_wait_chunks(inner.max_variable_number / 3, TIMEOUT)
+                .boxed()
+                .track("log::materialisation");
+
+            let mut counter = 0;
+            while let Some(chunk) = chunk_stream.next().await {
+                let _cleanup_guard = inner.cleaner.periodic_cleanup(chunk.len()).await;
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!(
+                    "INSERT INTO latest_materialisations (path, blob_id, valid_from)
+                        VALUES {}
+                        ON CONFLICT(path) DO UPDATE SET
+                            blob_id  = excluded.blob_id,
+                            valid_from = excluded.valid_from
+                        WHERE excluded.valid_from > latest_materialisations.valid_from",
+                    placeholders
+                );
+
+                let mut query = sqlx::query(&query_str);
+
+                let mut max_offset = Offset(0);
+                for mat_w_offset in chunk {
+                    let (offset, mat) = mat_w_offset.map_err(DBError::from)?;
+                    query = query.bind(mat.path).bind(mat.blob_id).bind(mat.valid_from);
+                    max_offset = offset;
+                    counter += 1;
+                }
+                query.execute(&inner.pool).await.inspect_err(|e| {
+                    log::error!("Database::materialisation_log_stream failed: {e}")
+                })?;
+
+                sqlx::query(
+                    "INSERT INTO latest_reductions (table_name, offset)
+                         VALUES (?, ?)
+                         ON CONFLICT (table_name)
+                         DO UPDATE SET offset = excluded.offset;",
+                )
+                .bind("materialisations")
+                .bind(max_offset.0 as i64)
+                .execute(&inner.pool)
+                .await
+                .inspect_err(|e| {
+                    log::error!(
+                        "Database::materialisation_log_stream failed to update latest reduction: {e}"
+                    )
+                })?;
+            }
+
+            Ok(counter)
+        })
+    }
+
+    fn repository_name_log_stream(
+        &self,
+        s: impl Stream<Item = Result<(Offset, RepositoryName), StreamError>> + Unpin + Send + 'static,
+    ) -> JoinHandle<Result<usize, DBError>> {
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let mut chunk_stream = s
+                .bounded_wait_chunks(inner.max_variable_number / 3, TIMEOUT)
+                .boxed()
+                .track("log::repository_name");
+
+            let mut counter = 0;
+            while let Some(chunk) = chunk_stream.next().await {
+                let _cleanup_guard = inner.cleaner.periodic_cleanup(chunk.len()).await;
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                let placeholders = chunk
+                    .iter()
+                    .map(|_| "(?, ?, ?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let query_str = format!(
+                    "INSERT INTO latest_repository_names (repo_id, name, valid_from)
+                        VALUES {}
+                        ON CONFLICT(repo_id) DO UPDATE SET
+                            name  = excluded.name,
+                            valid_from = excluded.valid_from
+                        WHERE excluded.valid_from > latest_repository_names.valid_from",
+                    placeholders
+                );
+
+                let mut query = sqlx::query(&query_str);
+
+                let mut max_offset = Offset(0);
+                for name_w_offset in chunk {
+                    let (offset, mat) = name_w_offset.map_err(DBError::from)?;
+                    query = query.bind(mat.repo_id).bind(mat.name).bind(mat.valid_from);
+                    max_offset = offset;
+                    counter += 1;
+                }
+                query.execute(&inner.pool).await.inspect_err(|e| {
+                    log::error!("Database::repository_name_log_stream failed: {e}")
+                })?;
+
+                sqlx::query(
+                    "INSERT INTO latest_reductions (table_name, offset)
+                         VALUES (?, ?)
+                         ON CONFLICT (table_name)
+                         DO UPDATE SET offset = excluded.offset;",
+                )
+                    .bind("repository_names")
+                    .bind(max_offset.0 as i64)
+                    .execute(&inner.pool)
+                    .await
+                    .inspect_err(|e| {
+                        log::error!(
+                        "Database::repository_name_log_stream failed to update latest reduction: {e}"
+                    )
+                    })?;
+            }
+
+            Ok(counter)
+        })
     }
 }
 

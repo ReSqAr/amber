@@ -11,6 +11,7 @@ async-stream = "0.3"
 async-trait = "0.1"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22"
+behemoth = { git = "https://github.com/ReSqAr/behemoth.git", version = "0.1.0", rev = "79b4fc5e7ded2c9bdc43b7e1e9414bda97db74f6" }
 chrono = { version = "0.4", features = ["serde"] }
 cipher = { version = "0.4", features = ["rand_core"] }
 clap = { version = "4.5", features = ["derive", "color", "suggestions", "env"] }
@@ -38,6 +39,7 @@ rand_chacha = "0.9"
 rand_distr = "0.5"
 rayon = "1.11"
 reflink-copy = "0.1"
+roaring = "0.11"
 russh = "0.54"
 serde = { version = "1.0", features = ["derive", "std"] }
 serde_json = "1.0"
