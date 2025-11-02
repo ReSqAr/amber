@@ -1,5 +1,5 @@
 use crate::connection::EstablishedConnection;
-use crate::db::models::{Connection, ConnectionType};
+use crate::db::models::{Connection, ConnectionName, ConnectionType};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -36,7 +36,7 @@ pub async fn list(
 
         for connection in connections {
             table.add_row(vec![
-                connection.name,
+                connection.name.0,
                 render_connection_type(connection.connection_type),
             ]);
         }
@@ -61,7 +61,7 @@ pub async fn add(
         let mut init_obs = BaseObserver::without_id("init");
 
         let connection = add_connection(
-            name.clone(),
+            ConnectionName(name.clone()),
             connection_type.clone(),
             parameter,
             local_repository,
@@ -105,7 +105,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
 }
 
 async fn add_connection(
-    name: String,
+    name: ConnectionName,
     connection_type: ConnectionType,
     parameter: String,
     local_repository: LocalRepository,
@@ -126,7 +126,7 @@ async fn add_connection(
         parameter,
     };
 
-    local_repository.add(&connection).await?;
+    local_repository.add(connection).await?;
 
     Ok(established)
 }

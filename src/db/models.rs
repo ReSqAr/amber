@@ -1,84 +1,382 @@
+use crate::utils::redb_bridge::{impl_redb_bincode_key, impl_redb_bincode_value};
 use chrono::prelude::{DateTime, Utc};
-use sqlx::Type;
-use sqlx::sqlite::SqliteRow;
-use sqlx::{FromRow, Row};
+use std::path::PathBuf;
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+pub struct Path(pub(crate) String);
+impl_redb_bincode_key!(Path);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+pub struct BlobID(pub(crate) String);
+
+impl BlobID {
+    pub fn path(&self) -> PathBuf {
+        let blob_id = self.0.clone();
+        if blob_id.len() > 6 {
+            PathBuf::from(&blob_id[0..2])
+                .join(&blob_id[2..4])
+                .join(&blob_id[4..])
+        } else {
+            PathBuf::from(blob_id)
+        }
+    }
+}
+
+impl_redb_bincode_value!(BlobID);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+pub(crate) struct RepoID(pub(crate) String);
+impl_redb_bincode_key!(RepoID);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct BlobRef {
+    pub(crate) blob_id: BlobID,
+    pub(crate) repo_id: RepoID,
+}
+impl_redb_bincode_key!(BlobRef);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentBlob {
+    pub(crate) blob_size: u64,
+    pub(crate) blob_path: Option<Path>,
+    pub(crate) valid_from: DateTime<Utc>,
+}
+impl_redb_bincode_value!(CurrentBlob);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SizedBlobID {
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+}
+impl_redb_bincode_value!(SizedBlobID);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentFile {
+    pub(crate) blob_id: BlobID,
+    pub(crate) valid_from: DateTime<Utc>,
+}
+impl_redb_bincode_value!(CurrentFile);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentMaterialisation {
+    pub(crate) blob_id: BlobID,
+    pub(crate) valid_from: DateTime<Utc>,
+}
+impl_redb_bincode_value!(CurrentMaterialisation);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentRepositoryName {
+    pub(crate) name: String,
+    pub(crate) valid_from: DateTime<Utc>,
+}
+impl_redb_bincode_value!(CurrentRepositoryName);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentObservation {
+    pub(crate) fs_last_seen_id: i64,
+    pub(crate) fs_last_seen_dttm: i64,
+    pub(crate) fs_last_modified_dttm: i64,
+    pub(crate) fs_last_size: u64,
+}
+impl_redb_bincode_value!(CurrentObservation);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CurrentCheck {
+    pub(crate) check_last_dttm: i64,
+    pub(crate) check_last_hash: BlobID,
+}
+impl_redb_bincode_value!(CurrentCheck);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentRepository {
-    pub repo_id: String,
+    pub repo_id: RepoID,
+}
+impl_redb_bincode_value!(CurrentRepository);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepositoryMetadata {
+    pub last_file_index: Option<u64>,
+    pub last_blob_index: Option<u64>,
+    pub last_name_index: Option<u64>,
+}
+impl_redb_bincode_value!(RepositoryMetadata);
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
+pub struct ConnectionName(pub(crate) String);
+impl_redb_bincode_key!(ConnectionName);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConnectionMetadata {
+    pub connection_type: ConnectionType,
+    pub parameter: String,
+}
+impl_redb_bincode_value!(ConnectionMetadata);
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ConnectionType {
+    Local,
+    Ssh,
+    RClone,
+}
+#[derive(Debug, Clone)]
+pub struct Connection {
+    pub name: ConnectionName,
+    pub connection_type: ConnectionType,
+    pub parameter: String,
 }
 
-#[derive(Debug, FromRow, Clone)]
-pub struct Repository {
-    pub repo_id: String,
-    pub last_file_index: i64,
-    pub last_blob_index: i64,
-    pub last_name_index: i64,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+pub struct TableName(pub(crate) String);
+impl_redb_bincode_key!(TableName);
+
+impl From<&'static str> for TableName {
+    fn from(value: &'static str) -> Self {
+        Self(value.to_string())
+    }
 }
 
-#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct LogOffset(pub(crate) u64);
+impl_redb_bincode_value!(LogOffset);
+
+impl From<LogOffset> for behemoth::Offset {
+    fn from(o: LogOffset) -> Self {
+        o.0.into()
+    }
+}
+
+impl From<behemoth::Offset> for LogOffset {
+    fn from(o: behemoth::Offset) -> Self {
+        Self(o.into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlobTransferItem {
+    pub transfer_id: u32,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+    pub path: Path,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileTransferItem {
+    pub transfer_id: u32,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+    pub path: Path,
+}
+
+#[derive(Debug, Clone)]
+pub struct CopiedTransferItem {
+    pub transfer_id: u32,
+    pub path: Path,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum VirtualFileState {
+    New,
+    Ok {
+        file: CurrentFile,
+        #[allow(dead_code)]
+        blob: CurrentBlob,
+    },
+    OkMaterialisationMissing {
+        file: CurrentFile,
+        #[allow(dead_code)]
+        blob: CurrentBlob,
+    },
+    OkBlobMissing {
+        file: CurrentFile,
+    },
+    Altered {
+        file: CurrentFile,
+        blob: Option<CurrentBlob>,
+    },
+    Outdated {
+        file: Option<CurrentFile>,
+        blob: Option<CurrentBlob>,
+        #[allow(dead_code)]
+        mat: CurrentMaterialisation,
+    },
+    NeedsCheck,
+    CorruptionDetected {
+        file: CurrentFile,
+        #[allow(dead_code)]
+        blob: Option<CurrentBlob>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct VirtualFile {
+    pub file_seen: FileSeen,
+    pub current_file: Option<CurrentFile>,
+    pub current_blob: Option<CurrentBlob>,
+    pub current_materialisation: Option<CurrentMaterialisation>,
+    pub current_check: Option<CurrentCheck>,
+}
+
+impl VirtualFile {
+    pub(crate) fn state(&self) -> VirtualFileState {
+        if self.current_blob.is_none() && self.current_materialisation.is_none() {
+            VirtualFileState::New
+        } else if let Some(check) = &self.current_check
+            && self.file_seen.last_modified_dttm <= check.check_last_dttm
+        {
+            // we can trust the check
+            if let Some(file) = &self.current_file {
+                if check.check_last_hash != file.blob_id {
+                    // check says: they are not the same
+                    if let Some(mat) = &self.current_materialisation
+                        && check.check_last_hash == mat.blob_id
+                    {
+                        // previously materialised version
+                        VirtualFileState::Outdated {
+                            file: Some(file.clone()),
+                            blob: self.current_blob.clone(),
+                            mat: mat.clone(),
+                        }
+                    } else {
+                        VirtualFileState::Altered {
+                            file: file.clone(),
+                            blob: self.current_blob.clone(),
+                        }
+                    }
+                } else if let Some(blob) = &self.current_blob {
+                    if self.file_seen.size != blob.blob_size {
+                        // shouldn't have trusted the check that the blob ids are the same
+                        VirtualFileState::CorruptionDetected {
+                            file: file.clone(),
+                            blob: Some(blob.clone()),
+                        }
+                    } else if let Some(mat) = &self.current_materialisation
+                        && mat.blob_id != check.check_last_hash
+                    {
+                        // Ok: but materialisation needs to be recorded
+                        VirtualFileState::OkMaterialisationMissing {
+                            file: file.clone(),
+                            blob: blob.clone(),
+                        }
+                    } else {
+                        // Ok: hashes are the same and the sizes are the same
+                        VirtualFileState::Ok {
+                            file: file.clone(),
+                            blob: blob.clone(),
+                        }
+                    }
+                } else {
+                    // odd - we have the correct file & the materialisation, but the blob is missing?
+                    VirtualFileState::OkBlobMissing { file: file.clone() }
+                }
+            } else if let Some(mat) = &self.current_materialisation {
+                // previously materialised version of deleted file
+                VirtualFileState::Outdated {
+                    file: None,
+                    blob: self.current_blob.clone(),
+                    mat: mat.clone(),
+                }
+            } else {
+                VirtualFileState::New
+            }
+        } else {
+            // check not trustworthy, check again
+            VirtualFileState::NeedsCheck
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub uid: u64,
-    pub path: String,
-    pub blob_id: Option<String>,
+    pub path: Path,
+    pub blob_id: Option<BlobID>,
     pub valid_from: DateTime<Utc>,
+}
+
+impl File {
+    pub fn from_insert_file(file: InsertFile, uid: u64) -> Self {
+        Self {
+            uid,
+            path: file.path,
+            blob_id: file.blob_id,
+            valid_from: file.valid_from,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct InsertFile {
-    pub path: String,
-    pub blob_id: Option<String>,
+    pub path: Path,
+    pub blob_id: Option<BlobID>,
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Blob {
     pub uid: u64,
-    pub repo_id: String,
-    pub blob_id: String,
-    pub blob_size: i64,
+    pub repo_id: RepoID,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
     pub has_blob: bool,
-    pub path: Option<String>,
+    pub path: Option<Path>,
     pub valid_from: DateTime<Utc>,
+}
+
+impl Blob {
+    pub fn from_insert_blob(blob: InsertBlob, uid: u64) -> Self {
+        Self {
+            uid,
+            repo_id: blob.repo_id,
+            blob_id: blob.blob_id,
+            blob_size: blob.blob_size,
+            has_blob: blob.has_blob,
+            path: blob.path,
+            valid_from: blob.valid_from,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct InsertBlob {
-    pub repo_id: String,
-    pub blob_id: String,
-    pub blob_size: i64,
+    pub repo_id: RepoID,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
     pub has_blob: bool,
-    pub path: Option<String>,
+    pub path: Option<Path>,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ObservedBlob {
-    pub repo_id: String,
-    pub has_blob: bool,
-    pub path: String,
-    pub valid_from: DateTime<Utc>,
+pub struct Repository {
+    pub repo_id: RepoID,
+    pub last_file_index: Option<u64>,
+    pub last_blob_index: Option<u64>,
+    pub last_name_index: Option<u64>,
 }
 
-#[derive(Debug, FromRow, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepositoryName {
     pub uid: u64,
-    pub repo_id: String,
+    pub repo_id: RepoID,
     pub name: String,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InsertRepositoryName {
-    pub repo_id: String,
+    pub repo_id: RepoID,
     pub name: String,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InsertMaterialisation {
-    pub path: String,
-    pub blob_id: Option<String>,
+    pub path: Path,
+    pub blob_id: Option<BlobID>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -89,189 +387,40 @@ pub struct InsertFileBundle {
     pub materialisation: InsertMaterialisation,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct AvailableBlob {
-    pub repo_id: String,
-    pub blob_id: String,
-    pub blob_size: i64,
+    pub repo_id: RepoID,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
     pub path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BlobAssociatedToFiles {
-    pub blob_id: String,
-    pub paths: Vec<String>,
+    pub blob_id: BlobID,
+    pub path: Path,
     pub repositories_with_blob: Vec<String>,
 }
 
-impl<'r> FromRow<'r, SqliteRow> for BlobAssociatedToFiles {
-    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
-        let blob_id: String = row.try_get("blob_id")?;
-        let paths_json: String = row.try_get("paths")?;
-        let paths: Vec<String> = serde_json::from_str(&paths_json)
-            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        let repo_names_json: String = row.try_get("repositories_with_blob")?;
-        let repositories_with_blob: Vec<String> = serde_json::from_str(&repo_names_json)
-            .map_err(|e| sqlx::Error::Decode(format!("JSON decode error: {e}").into()))?;
-        Ok(BlobAssociatedToFiles {
-            blob_id,
-            paths,
-            repositories_with_blob,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
-pub enum VirtualFileState {
-    New,
-    Ok,
-    OkMaterialisationMissing,
-    Altered,
-    Outdated,
-    NeedsCheck,
-    CorruptionDetected,
-}
-
 #[derive(Debug, Clone)]
-pub enum Observation {
-    FileSeen(FileSeen),
-    FileCheck(FileCheck),
-}
-
-#[derive(Debug, FromRow, Clone)]
 pub struct FileSeen {
-    pub path: String,
+    pub path: Path,
     pub seen_id: i64,
     pub seen_dttm: i64,
     pub last_modified_dttm: i64,
-    pub size: i64,
+    pub size: u64,
 }
 
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct FileCheck {
-    pub path: String,
+    pub path: Path,
     pub check_dttm: i64,
-    pub hash: String,
+    pub hash: BlobID,
 }
 
-#[derive(Debug, FromRow, Clone)]
-pub struct VirtualFile {
-    pub path: String,
-    pub materialisation_last_blob_id: Option<String>,
-    pub local_has_target_blob: bool,
-    pub target_blob_id: Option<String>,
-    pub state: VirtualFileState,
-}
-
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, Clone)]
 pub struct MissingFile {
-    pub path: String,
-    pub target_blob_id: String,
+    pub path: Path,
+    pub target_blob_id: BlobID,
     pub local_has_target_blob: bool,
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
-pub enum ConnectionType {
-    Local,
-    Ssh,
-    RClone,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct Connection {
-    pub name: String,
-    pub connection_type: ConnectionType,
-    pub parameter: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct BlobTransferItem {
-    pub transfer_id: u32,
-    pub blob_id: String,
-    pub path: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct FileTransferItem {
-    pub transfer_id: u32,
-    pub blob_id: String,
-    pub blob_size: i64,
-    pub path: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct CopiedTransferItem {
-    pub transfer_id: u32,
-    pub path: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct WalCheckpoint {
-    #[allow(dead_code)]
-    pub busy: i64,
-    #[allow(dead_code)]
-    pub log: i64,
-    #[allow(dead_code)]
-    pub checkpointed: i64,
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Hash)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
-pub enum PathType {
-    File,
-    Dir,
-    Unknown,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct MoveInstr {
-    pub src_path: String,
-    pub dst_path: String,
-    pub blob_id: String,
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Copy, Hash)]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
-pub enum MoveViolationCode {
-    SourceNotFound,
-    DestinationExistsDb,
-    SourceEqualsDestination,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct MoveViolation {
-    pub code: MoveViolationCode,
-    pub detail: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum MoveEvent {
-    Violation(MoveViolation),
-    Instruction(MoveInstr),
-}
-
-#[derive(Debug, PartialEq, Eq, Type, Clone, Copy, Hash)]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
-pub enum RmViolationCode {
-    SourceNotFound,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct RmViolation {
-    pub code: RmViolationCode,
-    pub detail: String,
-}
-
-#[derive(Debug, FromRow, Clone)]
-pub struct RmInstr {
-    pub path: String,
-    pub target_blob_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum RmEvent {
-    Violation(RmViolation),
-    Instruction(RmInstr),
 }

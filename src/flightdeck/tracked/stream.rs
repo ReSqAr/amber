@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
 pub trait Tracker: Send + Sync + Clone + Unpin + 'static {
-    fn new(name: &str) -> Self;
+    fn new(name: impl Into<String>) -> Self;
     fn heartbeat(&mut self, count: u64);
     fn on_drop(&mut self, count: u64);
 }
@@ -23,9 +23,9 @@ pub struct TrackedStream<S, T: Tracker> {
 }
 
 impl<S, T: Tracker> TrackedStream<S, T> {
-    fn new(s: S, name: &str, duration: Duration) -> Self {
+    fn new(s: S, name: String, duration: Duration) -> Self {
         let counter = Arc::new(AtomicU64::new(0));
-        let tracker = T::new(name);
+        let tracker = T::new(name.clone());
 
         let counter_clone = counter.clone();
         let mut tracker_clone = tracker.clone();
@@ -39,7 +39,7 @@ impl<S, T: Tracker> TrackedStream<S, T> {
 
         Self {
             inner: s,
-            name: name.into(),
+            name,
             counter,
             tracker,
             heartbeat_handle: Some(heartbeat_handle),
@@ -85,7 +85,7 @@ pub struct Adapter {
 }
 
 impl Tracker for Adapter {
-    fn new(name: &str) -> Self {
+    fn new(name: impl Into<String>) -> Self {
         Adapter {
             inner: BaseObserver::with_id("stream", name),
         }
@@ -107,20 +107,28 @@ impl Tracker for Adapter {
 /// Extension trait to add the `.track()` method.
 pub trait Trackable: Stream + Sized {
     /// Wraps this stream in a tracking wrapper that logs periodic heartbeat messages.
-    fn track(self, name: &str) -> TrackedStream<Self, Adapter>;
-    fn track_with<O: Tracker>(self, name: &str, interval: Duration) -> TrackedStream<Self, O>;
+    fn track(self, name: impl Into<String>) -> TrackedStream<Self, Adapter>;
+    fn track_with<O: Tracker>(
+        self,
+        name: impl Into<String>,
+        interval: Duration,
+    ) -> TrackedStream<Self, O>;
 }
 
 impl<S> Trackable for S
 where
     S: Stream + Unpin + Send + 'static,
 {
-    fn track(self, name: &str) -> TrackedStream<Self, Adapter> {
-        self.track_with::<Adapter>(name, Duration::from_secs(1))
+    fn track(self, name: impl Into<String>) -> TrackedStream<Self, Adapter> {
+        self.track_with::<Adapter>(name.into(), Duration::from_secs(1))
     }
 
-    fn track_with<T: Tracker>(self, name: &str, duration: Duration) -> TrackedStream<Self, T> {
-        TrackedStream::new(self, name, duration)
+    fn track_with<T: Tracker>(
+        self,
+        name: impl Into<String>,
+        duration: Duration,
+    ) -> TrackedStream<Self, T> {
+        TrackedStream::new(self, name.into(), duration)
     }
 }
 
@@ -148,7 +156,7 @@ mod tests {
     }
 
     impl Tracker for DummyTracker {
-        fn new(_name: &str) -> Self {
+        fn new(_name: impl Into<String>) -> Self {
             Self::new_instance()
         }
         fn heartbeat(&mut self, count: u64) {

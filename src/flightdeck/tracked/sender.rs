@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 pub trait Tracker: Send + Sync + Clone + 'static {
-    fn new(name: &str) -> Self;
+    fn new(name: impl Into<String>) -> Self;
     fn heartbeat(&mut self, count: u64, delay_ns: u64);
     fn on_drop(&mut self, count: u64, delay_ns: u64);
 }
@@ -24,10 +24,11 @@ pub struct TrackedSenderInner<T: 'static + Send + Sync, ST: Tracker> {
 }
 
 impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
-    pub fn new(s: mpsc::Sender<T>, name: &str, duration: Duration) -> Self {
+    pub fn new(s: mpsc::Sender<T>, name: impl Into<String>, duration: Duration) -> Self {
         let counter = Arc::new(AtomicU64::new(0));
         let delay_ns = Arc::new(AtomicU64::new(0));
-        let tracker = ST::new(name);
+        let name = name.into();
+        let tracker = ST::new(name.clone());
 
         let counter_clone = counter.clone();
         let delay_ns_clone = delay_ns.clone();
@@ -46,7 +47,7 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
 
         Self {
             inner: s,
-            name: name.into(),
+            name,
             counter,
             delay_ns,
             tracker,
@@ -54,17 +55,19 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
         }
     }
 
-    pub async fn send(&self, msg: T) -> Result<(), SendError<T>> {
-        let start_time = time::Instant::now();
+    pub fn send(&self, msg: T) -> impl Future<Output = Result<(), SendError<T>>> + Send {
+        async {
+            let start_time = time::Instant::now();
 
-        let result = self.inner.send(msg).await;
+            let result = self.inner.send(msg).await;
 
-        let delay = start_time.elapsed();
-        self.counter.fetch_add(1, Ordering::Relaxed);
-        self.delay_ns
-            .fetch_add(delay.as_nanos() as u64, Ordering::Relaxed);
+            let delay = start_time.elapsed();
+            self.counter.fetch_add(1, Ordering::Relaxed);
+            self.delay_ns
+                .fetch_add(delay.as_nanos() as u64, Ordering::Relaxed);
 
-        result
+            result
+        }
     }
 
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {
@@ -80,14 +83,17 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
         result
     }
 
+    #[allow(dead_code)]
     pub(crate) fn capacity(&self) -> usize {
         self.inner.capacity()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn max_capacity(&self) -> usize {
         self.inner.max_capacity()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_closed(&self) -> bool {
         self.inner.is_closed()
     }
@@ -118,34 +124,37 @@ impl<T: 'static + Send + Sync, ST: Tracker> Clone for TrackedSender<T, ST> {
 }
 
 impl<T: 'static + Send + Sync> TrackedSender<T, Adapter> {
-    pub fn new(sender: mpsc::Sender<T>, name: &str) -> Self {
+    pub fn new(sender: mpsc::Sender<T>, name: impl Into<String>) -> Self {
         Self::with(sender, name, Duration::from_secs(1))
     }
 }
 
 impl<T: 'static + Send + Sync, ST: Tracker> TrackedSender<T, ST> {
-    pub fn with(sender: mpsc::Sender<T>, name: &str, duration: Duration) -> Self {
+    pub fn with(sender: mpsc::Sender<T>, name: impl Into<String>, duration: Duration) -> Self {
         Self {
             inner: Arc::new(TrackedSenderInner::new(sender, name, duration)),
         }
     }
 
-    pub async fn send(&self, msg: T) -> Result<(), SendError<T>> {
-        self.inner.send(msg).await
+    pub fn send(&self, msg: T) -> impl Future<Output = Result<(), SendError<T>>> + Send {
+        self.inner.send(msg)
     }
 
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {
         self.inner.blocking_send(msg)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn capacity(&self) -> usize {
         self.inner.capacity()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn max_capacity(&self) -> usize {
         self.inner.max_capacity()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_closed(&self) -> bool {
         self.inner.is_closed()
     }
@@ -157,7 +166,7 @@ pub struct Adapter {
 }
 
 impl Tracker for Adapter {
-    fn new(name: &str) -> Self {
+    fn new(name: impl Into<String>) -> Self {
         Adapter {
             inner: BaseObserver::with_id("sink", name),
         }
@@ -202,7 +211,7 @@ mod tests {
     }
 
     impl Tracker for DummyTracker {
-        fn new(_name: &str) -> Self {
+        fn new(_name: impl Into<String>) -> Self {
             Self::new_instance()
         }
 

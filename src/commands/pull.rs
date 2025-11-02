@@ -1,4 +1,4 @@
-use crate::db::models::{BlobTransferItem, FileTransferItem};
+use crate::db::models::{BlobTransferItem, ConnectionName, FileTransferItem};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -41,7 +41,9 @@ pub async fn pull(
         let mut sync_obs = BaseObserver::without_id("sync");
 
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
-        let connection = local.connect(connection_name.clone()).await?;
+        let connection = local
+            .connect(ConnectionName(connection_name.clone()))
+            .await?;
         let remote = connection.remote.clone();
         let remote_meta = remote.current().await?;
         connect_obs.observe_termination(log::Level::Info, "connected");

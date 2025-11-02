@@ -103,6 +103,7 @@ impl From<VirtualFileState> for State {
             VirtualFileState::Missing { .. } => Self::Missing,
             VirtualFileState::Ok { .. } => Self::Ok,
             VirtualFileState::OkMaterialisationMissing { .. } => Self::Incomplete,
+            VirtualFileState::OkBlobMissing { .. } => Self::Incomplete,
             VirtualFileState::Altered { .. } => Self::Altered,
             VirtualFileState::Outdated { .. } => Self::Outdated,
         }
@@ -124,7 +125,7 @@ pub async fn show_status(
         checker_obs.observe_position(log::Level::Trace, total_count);
 
         let file = file_result?;
-        let mut obs = BaseObserver::with_id("file", file.path.clone());
+        let mut obs = BaseObserver::with_id("file", file.path.0.clone());
 
         let state = file.state;
         *count.entry(state.clone().into()).or_insert(0) += 1;
@@ -135,6 +136,7 @@ pub async fn show_status(
             VirtualFileState::Altered { .. } => (log::Level::Error, "altered"),
             VirtualFileState::Ok { .. } => (log::Level::Debug, "verified"),
             VirtualFileState::OkMaterialisationMissing { .. } => (log::Level::Debug, "incomplete"),
+            VirtualFileState::OkBlobMissing { .. } => (log::Level::Debug, "incomplete"),
         };
         obs.observe_termination(level, state);
     }

@@ -1,3 +1,4 @@
+use crate::db::models::ConnectionName;
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{
@@ -117,7 +118,9 @@ async fn connect_sync_materialise(
 ) -> Result<(), InternalError> {
     if let Some(connection_name) = connection_name {
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
-        let connection = local.connect(connection_name.clone()).await?;
+        let connection = local
+            .connect(ConnectionName(connection_name.clone()))
+            .await?;
         let remote = connection.remote.clone();
         connect_obs.observe_termination(log::Level::Info, "connected");
 

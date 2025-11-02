@@ -1,20 +1,19 @@
 use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem, InsertBlob,
-    InsertRepositoryName,
+    InsertRepositoryName, RepoID,
 };
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{
     Adder, Availability, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::pipe::TryForwardIntoExt;
 use futures::{Stream, StreamExt, TryStreamExt, pin_mut, stream};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RCloneStore {
     local: LocalRepository,
-    repo_id: String,
+    repo_id: RepoID,
     name: String,
     path: String,
 }
@@ -25,7 +24,7 @@ impl RCloneStore {
         name: &str,
         path: &str,
     ) -> Result<Self, InternalError> {
-        let repo_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_ref()).to_string();
+        let repo_id = RepoID(Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_ref()).to_string());
         local
             .db()
             .add_repository_names(stream::iter([InsertRepositoryName {
@@ -47,7 +46,7 @@ impl RCloneStore {
 impl Metadata for RCloneStore {
     async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
         Ok(RepositoryMetadata {
-            id: Uuid::new_v5(&Uuid::NAMESPACE_OID, self.name.as_ref()).to_string(),
+            id: RepoID(Uuid::new_v5(&Uuid::NAMESPACE_OID, self.name.as_ref()).to_string()),
             name: self.name.clone(),
         })
     }
@@ -79,12 +78,12 @@ impl Receiver<FileTransferItem> for RCloneStore {
     async fn create_transfer_request(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        repo_id: RepoID,
         paths: Vec<String>,
     ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
         self.local
             .db()
-            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
+            .select_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
             .await
             .err_into()
             .boxed()
@@ -96,22 +95,15 @@ impl Receiver<FileTransferItem> for RCloneStore {
     ) -> Result<u64, InternalError> {
         let repo_id = self.repo_id.clone();
 
-        self.local
-            .db()
-            .select_files_transfer(s)
-            .await
-            .map_ok(move |i: FileTransferItem| InsertBlob {
-                repo_id: repo_id.clone(),
-                blob_id: i.blob_id,
-                blob_size: i.blob_size,
-                has_blob: true,
-                path: Some(i.path),
-                valid_from: chrono::Utc::now(),
-            })
-            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                self.local.add_blobs(s).await
-            })
-            .await
+        let s = s.map(move |i: CopiedTransferItem| InsertBlob {
+            repo_id: repo_id.clone(),
+            blob_id: i.blob_id,
+            blob_size: i.blob_size,
+            has_blob: true,
+            path: Some(i.path),
+            valid_from: chrono::Utc::now(),
+        });
+        Ok(self.local.add_blobs(s).await?)
     }
 }
 
@@ -125,13 +117,14 @@ impl Availability for RCloneStore {
             .err_into()
     }
 
-    fn missing(
+    async fn missing(
         &self,
     ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static
     {
         self.local
             .db()
             .missing_blobs(self.repo_id.clone())
+            .await
             .err_into()
     }
 }

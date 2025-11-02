@@ -1,7 +1,7 @@
 use crate::connection::local::{LocalConfig, LocalTarget};
 use crate::connection::rclone::{RCloneRemoteConfig, RCloneRemoteTarget};
 use crate::connection::ssh::{SshConfig, SshTarget};
-use crate::db::models::ConnectionType;
+use crate::db::models::{ConnectionName, ConnectionType};
 use crate::repository::local::LocalRepository;
 use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
@@ -32,7 +32,7 @@ impl Config {
     pub(crate) async fn connect(
         &self,
         local: &LocalRepository,
-        name: &str,
+        name: &ConnectionName,
     ) -> Result<WrappedRepository, InternalError> {
         match self {
             Config::Local(local_config) => {
@@ -40,7 +40,7 @@ impl Config {
                     .connect(local.app_folder().to_path_buf(), None)
                     .await
             }
-            Config::RClone(rclone_config) => rclone_config.connect(local, name).await,
+            Config::RClone(rclone_config) => rclone_config.connect(local, &name.0.clone()).await,
             Config::Ssh(ssh_config) => ssh_config.connect().await,
         }
     }

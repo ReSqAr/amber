@@ -190,12 +190,12 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
                     }
                     Some(CommandLine::EndSsh { repo })
                 }
-                "sql" => {
+                "redb" => {
                     if tokens.len() != 3 {
-                        panic!("Invalid sql command: {}", line);
+                        panic!("Invalid redb command: {}", line);
                     }
-                    let sql = tokens[2].to_string();
-                    Some(CommandLine::Sql { repo, sql })
+                    let action = tokens[2].to_string();
+                    Some(CommandLine::Redb { repo, action })
                 }
                 other => panic!("Unknown repository command '{}' in line: {}", other, line),
             }

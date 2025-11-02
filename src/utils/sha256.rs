@@ -1,3 +1,4 @@
+use crate::db::models::BlobID;
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
 use crate::utils::path::RepoPath;
@@ -7,7 +8,7 @@ use tokio::fs;
 use tokio::io::AsyncReadExt;
 
 pub(crate) struct HashWithSize {
-    pub(crate) hash: String,
+    pub(crate) hash: BlobID,
     pub(crate) size: u64,
 }
 
@@ -40,7 +41,7 @@ pub(crate) async fn compute_sha256_and_size(file_path: &RepoPath) -> io::Result<
 
     let hash = hasher.finalize();
     Ok(HashWithSize {
-        hash: format!("{:x}", hash),
+        hash: BlobID(format!("{:x}", hash)),
         size,
     })
 }
@@ -62,7 +63,7 @@ mod tests {
 
         let result = compute_sha256_and_size(&file_path).await.unwrap();
         assert_eq!(
-            result.hash,
+            result.hash.0,
             "c0535e4be2b79ffd93291305436bf889314e4a3faec05ecffcbb7df31ad9e51a"
         );
         assert_eq!(result.size, 12u64);

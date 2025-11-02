@@ -1,4 +1,4 @@
-use crate::db::models::InsertBlob;
+use crate::db::models::{BlobID, InsertBlob, RepoID};
 use crate::flightdeck::observer::Observer;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
@@ -14,18 +14,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 
-pub(crate) type BlobLockMap = Arc<DashMap<String, Arc<Mutex<()>>>>;
+pub(crate) type BlobLockMap = Arc<DashMap<BlobID, Arc<Mutex<()>>>>;
 
 #[derive(Debug)]
 pub struct Item {
     pub path: RepoPath,
-    pub expected_blob_id: Option<String>,
+    pub expected_blob_id: Option<BlobID>,
 }
 
 #[allow(clippy::collapsible_if)]
 async fn assimilate_blob(
     local: &impl Local,
-    repo_id: String,
+    repo_id: RepoID,
     item: Item,
     blob_locks: BlobLockMap,
 ) -> Result<InsertBlob, InternalError> {
@@ -61,7 +61,7 @@ async fn assimilate_blob(
         {
             files::assimilate(&file_path, &blob_path).await?;
         } else {
-            debug!("blob {blob_id} already exists, skipping");
+            debug!("blob {} already exists, skipping", blob_id.0);
         }
         // lock is released here as `_lock_guard` goes out of scope
     }
@@ -69,7 +69,7 @@ async fn assimilate_blob(
     Ok::<InsertBlob, InternalError>(InsertBlob {
         repo_id,
         blob_id,
-        blob_size: blob_size as i64,
+        blob_size,
         has_blob: true,
         path: None,
         valid_from: chrono::Utc::now(),

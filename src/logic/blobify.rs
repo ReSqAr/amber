@@ -1,3 +1,4 @@
+use crate::db::models::BlobID;
 use crate::logic::files;
 use crate::repository::traits::{Local, Metadata};
 use crate::utils::errors::InternalError;
@@ -8,10 +9,10 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::fs;
 
-pub(crate) type BlobLockMap = Arc<DashMap<String, Arc<Mutex<()>>>>;
+pub(crate) type BlobLockMap = Arc<DashMap<BlobID, Arc<Mutex<()>>>>;
 
 pub(crate) struct Blobify {
-    pub(crate) blob_id: String,
+    pub(crate) blob_id: BlobID,
     pub(crate) blob_size: u64,
 }
 

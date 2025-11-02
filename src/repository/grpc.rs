@@ -1,4 +1,5 @@
 use crate::db::models;
+use crate::db::models::RepoID;
 use crate::flightdeck;
 use crate::flightdeck::global::send;
 use crate::flightdeck::observation::Message;
@@ -148,20 +149,20 @@ impl Metadata for GRPCClient {
             .await?
             .into_inner();
         Ok(RepositoryMetadata {
-            id: meta.id,
+            id: RepoID(meta.id),
             name: meta.name,
         })
     }
 }
 
 impl LastIndicesSyncer for GRPCClient {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
+    async fn lookup(&self, repo_id: RepoID) -> Result<LastIndices, InternalError> {
         let LookupLastIndicesResponse { file, blob, name } = self
             .client
             .write()
             .await
             .lookup_last_indices(LookupLastIndicesRequest {
-                repo_id: repo_id.clone(),
+                repo_id: repo_id.0.clone(),
             })
             .await?
             .into_inner();
@@ -219,7 +220,7 @@ impl Syncer<models::Repository> for GRPCClient {
 impl Syncer<models::File> for GRPCClient {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::File, InternalError>>
                  + Unpin
@@ -257,7 +258,7 @@ impl Syncer<models::File> for GRPCClient {
 impl Syncer<models::Blob> for GRPCClient {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
                  + Unpin
@@ -295,7 +296,7 @@ impl Syncer<models::Blob> for GRPCClient {
 impl Syncer<models::RepositoryName> for GRPCClient {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
                  + Unpin
@@ -365,7 +366,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
     fn create_transfer_request(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        repo_id: RepoID,
         paths: Vec<String>,
     ) -> impl Future<
         Output = impl futures::Stream<Item = Result<models::BlobTransferItem, InternalError>>
@@ -379,7 +380,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
             guard
                 .create_transfer_request(CreateTransferRequestRequest {
                     transfer_id,
-                    repo_id,
+                    repo_id: repo_id.0,
                     paths,
                 })
                 .map_ok(tonic::Response::into_inner)

@@ -41,16 +41,16 @@ async fn fsck_blobs(
         async move {
             let blob = blob?;
             let blob_path = local.blob_path(&blob.blob_id);
-            let mut o = BaseObserver::with_id("fsck:blob", blob.blob_id.clone());
+            let mut o = BaseObserver::with_id("fsck:blob", blob.blob_id.0.clone());
 
             let result = sha256::compute_sha256_and_size(&blob_path).await?;
-            let matching = result.hash == blob.blob_id && result.size == blob.blob_size as u64;
+            let matching = result.hash == blob.blob_id && result.size == blob.blob_size;
 
             match matching {
                 true => o.observe_termination(log::Level::Debug, "checked"),
                 false => {
                     let quarantine_folder = local.repository_path().join("quarantine");
-                    let quarantine_filename = format!("{}.{}", result.hash, current_timestamp());
+                    let quarantine_filename = format!("{}.{}", result.hash.0, current_timestamp());
                     let quarantine_path = quarantine_folder.join(quarantine_filename);
                     o.observe_state_ext(
                         log::Level::Debug,
@@ -106,26 +106,11 @@ async fn fsck_blobs(
     Ok(())
 }
 
-async fn vfs_reset(local: &impl VirtualFilesystem) -> Result<(), InternalError> {
-    let start_time = tokio::time::Instant::now();
-    let mut vfs_obs = BaseObserver::without_id("vfs:reset");
-    vfs_obs.observe_state(log::Level::Debug, "resetting...");
-
-    local.reset().await?;
-
-    let duration = start_time.elapsed();
-    vfs_obs.observe_termination(log::Level::Debug, format!("reset in {:.2?}", duration));
-
-    Ok(())
-}
-
 async fn find_altered_files(
     local: &(impl Metadata + Config + Local + Adder + VirtualFilesystem + Clone + Send + Sync + 'static),
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut checker_obs = BaseObserver::without_id("status");
-
-    vfs_reset(local).await?;
 
     let (handle, mut stream) = state::state(local.clone(), WalkerConfig::default()).await?;
 
@@ -137,13 +122,17 @@ async fn find_altered_files(
         checker_obs.observe_position(log::Level::Trace, count);
 
         let file = file_result?;
-        BaseObserver::with_id("file", file.path.clone()).observe_termination(
+        BaseObserver::with_id("file", file.path.0.clone()).observe_termination(
             log::Level::Debug,
             match file.state {
                 VirtualFileState::New => "new",
                 VirtualFileState::Missing { .. } => "missing",
                 VirtualFileState::Ok { .. } => "ok",
                 VirtualFileState::OkMaterialisationMissing { .. } => {
+                    incomplete_count += 1;
+                    "incomplete"
+                }
+                VirtualFileState::OkBlobMissing { .. } => {
                     incomplete_count += 1;
                     "incomplete"
                 }

@@ -287,6 +287,9 @@ async fn integration_mv_dir() -> anyhow::Result<(), anyhow::Error> {
         @a amber sync b
         @b amber sync
 
+        @a amber status
+        @b amber status
+
         # assert
         @a assert_exists out/a.txt "A"
         @a assert_does_not_exist dir/a.txt
@@ -324,7 +327,7 @@ async fn integration_mv_no_files_to_move() -> anyhow::Result<(), anyhow::Error> 
 
         # action
         @a expect "move encountered errors" amber mv y.txt z.txt
-        assert_output_contains "found no files to move"
+        assert_output_contains "no files match selector"
 
         # assert
         @a assert_exists x.txt "X"
@@ -442,7 +445,7 @@ async fn integration_test_rm_not_existing_file() -> anyhow::Result<(), anyhow::E
 
         # action
         @a expect "remove encountered errors" amber rm --hard does-not-exist
-        assert_output_contains "source not found does-not-exist"
+        assert_output_contains "no files match selector does-not-exist"
     "#;
     dsl_definition::run_dsl_script(script).await
 }
@@ -543,7 +546,7 @@ async fn integration_rm_trailing_slash_dir_hint_in_db_conflict_file()
 
         # action
         @a expect "remove encountered errors" amber rm --hard actual_file/
-        assert_output_contains "source not found actual_file"
+        assert_output_contains "no files match selector actual_file"
 
         # then
         @a assert_exists actual_file "F"
@@ -562,7 +565,7 @@ async fn integration_rm_multi_input_partial_success() -> anyhow::Result<(), anyh
 
         # action
         @a expect "remove encountered errors" amber rm --hard del.txt does-not-exist
-        assert_output_contains "source not found does-not-exist"
+        assert_output_contains "no files match selector does-not-exist"
 
         # then
         @a assert_exists del.txt
