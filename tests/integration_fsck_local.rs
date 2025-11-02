@@ -117,9 +117,9 @@ async fn integration_test_fsck_quarantine_behavior_with_ref_links()
         assert_output_contains "missing empty.txt (lost - no known location)"
         assert_output_contains "detected 1 missing files and 1 missing blobs"
         
-        # Status should also show the file as materialised
+        # Status should also show the file as incomplete
         @a amber --prefer-ref-links status
-        assert_output_contains "detected 1 materialised files"
+        assert_output_contains "detected 1 incomplete files"
     "#;
     dsl_definition::run_dsl_script(script).await
 }

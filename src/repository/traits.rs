@@ -1,22 +1,24 @@
+use crate::db;
 use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
+use crate::db::models;
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, Connection, CopiedTransferItem, InsertFileBundle,
-    MissingFile, MoveEvent, Observation, PathType, RmEvent, VirtualFile,
+    AvailableBlob, BlobAssociatedToFiles, BlobID, Connection, ConnectionName, CopiedTransferItem,
+    CurrentFile, FileCheck, FileSeen, InsertFileBundle, MissingFile, RepoID, VirtualFile,
 };
 use crate::utils::errors::InternalError;
-use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::fs::Capability;
 use crate::utils::path::RepoPath;
-use chrono::{DateTime, Utc};
 use futures::Stream;
+use std::fmt::Debug;
 use std::future::Future;
+use std::pin::Pin;
 
 pub trait Local {
     fn root(&self) -> RepoPath;
     fn repository_path(&self) -> RepoPath;
     fn blobs_path(&self) -> RepoPath;
-    fn blob_path(&self, blob_id: &str) -> RepoPath;
+    fn blob_path(&self, blob_id: &BlobID) -> RepoPath;
     fn staging_path(&self) -> RepoPath;
     fn staging_id_path(&self, staging_id: u32) -> RepoPath;
     fn rclone_target_path(&self, staging_id: u32) -> RepoPath;
@@ -25,7 +27,7 @@ pub trait Local {
 }
 
 pub struct RepositoryMetadata {
-    pub id: String,
+    pub id: RepoID,
     pub name: String,
 }
 
@@ -60,7 +62,7 @@ pub trait Availability {
     fn available(
         &self,
     ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static;
-    fn missing(
+    async fn missing(
         &self,
     ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static;
 }
@@ -79,10 +81,6 @@ pub trait Adder {
     where
         S: Stream<Item = InsertFileBundle> + Unpin + Send;
 
-    fn observe_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = crate::db::models::ObservedBlob> + Unpin + Send;
-
     fn add_repository_names<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
     where
         S: Stream<Item = crate::db::models::InsertRepositoryName> + Unpin + Send;
@@ -94,15 +92,15 @@ pub trait Adder {
 
 #[derive(Debug)]
 pub struct LastIndices {
-    pub file: i64,
-    pub blob: i64,
-    pub name: i64,
+    pub file: Option<u64>,
+    pub blob: Option<u64>,
+    pub name: Option<u64>,
 }
 
 pub trait LastIndicesSyncer {
     fn lookup(
         &self,
-        repo_id: String,
+        repo_id: RepoID,
     ) -> impl Future<Output = Result<LastIndices, InternalError>> + Send;
     fn refresh(&self) -> impl Future<Output = Result<(), InternalError>> + Send;
 }
@@ -123,42 +121,56 @@ pub trait Syncer<T: SyncerParams> {
 }
 
 pub trait VirtualFilesystem {
-    async fn reset(&self) -> Result<(), DBError>;
-    async fn refresh(&self) -> Result<(), DBError>;
-    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), DBError>> + Send;
-
     fn select_missing_files(
         &self,
         last_seen_id: i64,
     ) -> impl Future<Output = DBOutputStream<'static, MissingFile>> + Send;
 
-    async fn add_observations(
+    fn add_checked_events(
         &self,
-        input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static;
+        s: impl Stream<Item = FileCheck> + Unpin + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
 
-    async fn move_files(
+    fn add_seen_events(
         &self,
-        src_raw: String,
-        dst_raw: String,
-        mv_type_hint: PathType,
-        now: DateTime<Utc>,
-    ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static;
+        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
 
-    async fn remove_files(
+    fn select_virtual_filesystem(
         &self,
-        files_with_hint: Vec<(String, PathType)>,
-        now: DateTime<Utc>,
-    ) -> impl Stream<Item = Result<RmEvent, DBError>> + Unpin + Send + 'static;
+        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = impl Stream<Item = Result<VirtualFile, DBError>> + Unpin + Send + 'static,
+                > + Send,
+        >,
+    >;
+    async fn select_current_files(
+        &self,
+        file_or_dir: String,
+    ) -> impl Stream<Item = Result<(models::Path, BlobID), DBError>> + Unpin + Send + 'static;
+
+    fn left_join_current_files<
+        K: Clone + Send + Sync + 'static,
+        E: From<DBError> + Debug + Send + Sync + 'static,
+    >(
+        &self,
+        s: impl Stream<Item = Result<K, E>> + Unpin + Send + 'static,
+        key_func: impl Fn(K) -> db::models::Path + Sync + Send + 'static,
+    ) -> impl Stream<Item = Result<(K, Option<CurrentFile>), E>> + Unpin + Send + 'static;
 }
 
 pub trait ConnectionManager {
-    async fn add(&self, connection: &Connection) -> Result<(), InternalError>;
-    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, InternalError>;
+    async fn add(&self, connection: Connection) -> Result<(), InternalError>;
+    async fn lookup_by_name(
+        &self,
+        name: ConnectionName,
+    ) -> Result<Option<Connection>, InternalError>;
     async fn list(&self) -> Result<Vec<Connection>, InternalError>;
     async fn connect(
         &self,
-        name: String,
+        name: ConnectionName,
     ) -> Result<crate::connection::EstablishedConnection, InternalError>;
 }
 
@@ -166,7 +178,8 @@ pub trait RcloneTargetPath {
     async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError>;
 }
 
-pub trait TransferItem: Send + Sync + Clone + 'static {
+pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'static {
+    fn new(path: models::Path, transfer_id: u32, sized: models::SizedBlobID) -> Self;
     fn path(&self) -> String;
 }
 
@@ -180,7 +193,7 @@ pub trait Receiver<T: TransferItem> {
     fn create_transfer_request(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        repo_id: RepoID,
         paths: Vec<String>,
     ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
 

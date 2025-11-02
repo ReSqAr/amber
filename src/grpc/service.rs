@@ -1,4 +1,5 @@
 use crate::db;
+use crate::db::models::RepoID;
 use crate::flightdeck::global::Flow;
 use crate::flightdeck::global::GLOBAL_LOGGER;
 use crate::grpc::definitions::{
@@ -55,7 +56,7 @@ where
     ) -> Result<Response<CurrentRepositoryMetadataResponse>, Status> {
         let RepositoryMetadata { id, name } = self.repository.current().await?;
         Ok(Response::new(CurrentRepositoryMetadataResponse {
-            id,
+            id: id.0,
             name,
         }))
     }
@@ -120,8 +121,10 @@ where
         &self,
         request: Request<LookupLastIndicesRequest>,
     ) -> Result<Response<LookupLastIndicesResponse>, Status> {
-        let LastIndices { file, blob, name } =
-            self.repository.lookup(request.into_inner().repo_id).await?;
+        let LastIndices { file, blob, name } = self
+            .repository
+            .lookup(RepoID(request.into_inner().repo_id))
+            .await?;
         Ok(Response::new(LookupLastIndicesResponse {
             file,
             blob,
@@ -222,7 +225,7 @@ where
         } = request.into_inner();
         let stream = self
             .repository
-            .create_transfer_request(transfer_id, repo_id, paths)
+            .create_transfer_request(transfer_id, RepoID(repo_id), paths)
             .await
             .err_into()
             .map_ok::<TransferItem, _>(models::BlobTransferItem::into);

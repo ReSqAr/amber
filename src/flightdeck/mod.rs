@@ -15,6 +15,7 @@ pub mod observation;
 pub mod observer;
 pub mod output;
 pub mod pipes;
+pub mod tracer;
 pub mod tracked;
 
 const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);

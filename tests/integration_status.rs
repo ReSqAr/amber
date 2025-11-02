@@ -211,7 +211,8 @@ async fn integration_test_force_altered_file_hard_links() -> Result<(), anyhow::
         @a write_file test.txt "User altered content"
 
         # action
-        @a expect "please run fsck: blob 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da (backing file test.txt) might be corrupted" amber --prefer-hard-links status
+        @a amber --prefer-hard-links status
+        assert_output_contains "altered test.txt"
 
         @a amber --prefer-hard-links fsck
         assert_output_contains "blob corrupted 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da"

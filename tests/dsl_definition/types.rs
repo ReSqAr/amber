@@ -61,9 +61,9 @@ pub(crate) enum CommandLine {
     EndSsh {
         repo: String,
     },
-    Sql {
+    Redb {
         repo: String,
-        sql: String,
+        action: String,
     },
 }
 

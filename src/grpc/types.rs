@@ -1,4 +1,5 @@
 use crate::db::models;
+use crate::db::models::{BlobID, RepoID};
 use crate::flightdeck;
 use crate::grpc::definitions::flightdeck_data::Value;
 use crate::grpc::definitions::{
@@ -24,10 +25,10 @@ fn timestamp_to_datetime(ts: &Option<Timestamp>) -> DateTime<Utc> {
 impl From<models::Repository> for Repository {
     fn from(repo: models::Repository) -> Self {
         Repository {
-            repo_id: repo.repo_id,
-            last_file_index: repo.last_file_index,
-            last_blob_index: repo.last_blob_index,
-            last_name_index: repo.last_name_index,
+            repo_id: repo.repo_id.0,
+            last_file_index: repo.last_file_index.map(Into::into),
+            last_blob_index: repo.last_blob_index.map(Into::into),
+            last_name_index: repo.last_name_index.map(Into::into),
         }
     }
 }
@@ -36,8 +37,8 @@ impl From<models::File> for File {
     fn from(file: models::File) -> Self {
         File {
             uid: file.uid,
-            path: file.path,
-            blob_id: file.blob_id,
+            path: file.path.0,
+            blob_id: file.blob_id.map(|b| b.0),
             valid_from: datetime_to_timestamp(&file.valid_from),
         }
     }
@@ -47,11 +48,11 @@ impl From<models::Blob> for Blob {
     fn from(blob: models::Blob) -> Self {
         Blob {
             uid: blob.uid,
-            repo_id: blob.repo_id,
-            blob_id: blob.blob_id,
+            repo_id: blob.repo_id.0,
+            blob_id: blob.blob_id.0,
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
-            path: blob.path,
+            path: blob.path.map(|p| p.0),
             valid_from: datetime_to_timestamp(&blob.valid_from),
         }
     }
@@ -61,7 +62,7 @@ impl From<models::RepositoryName> for RepositoryName {
     fn from(repo_name: models::RepositoryName) -> Self {
         RepositoryName {
             uid: repo_name.uid,
-            repo_id: repo_name.repo_id,
+            repo_id: repo_name.repo_id.0,
             name: repo_name.name,
             valid_from: datetime_to_timestamp(&repo_name.valid_from),
         }
@@ -71,7 +72,7 @@ impl From<models::RepositoryName> for RepositoryName {
 impl From<Repository> for models::Repository {
     fn from(repo: Repository) -> Self {
         models::Repository {
-            repo_id: repo.repo_id,
+            repo_id: RepoID(repo.repo_id),
             last_file_index: repo.last_file_index,
             last_blob_index: repo.last_blob_index,
             last_name_index: repo.last_name_index,
@@ -83,8 +84,8 @@ impl From<File> for models::File {
     fn from(file: File) -> Self {
         models::File {
             uid: file.uid,
-            path: file.path,
-            blob_id: file.blob_id,
+            path: models::Path(file.path),
+            blob_id: file.blob_id.map(BlobID),
             valid_from: timestamp_to_datetime(&file.valid_from),
         }
     }
@@ -94,11 +95,11 @@ impl From<Blob> for models::Blob {
     fn from(blob: Blob) -> Self {
         models::Blob {
             uid: blob.uid,
-            repo_id: blob.repo_id,
-            blob_id: blob.blob_id,
+            repo_id: RepoID(blob.repo_id),
+            blob_id: BlobID(blob.blob_id),
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
-            path: blob.path,
+            path: blob.path.map(models::Path),
             valid_from: timestamp_to_datetime(&blob.valid_from),
         }
     }
@@ -108,7 +109,7 @@ impl From<RepositoryName> for models::RepositoryName {
     fn from(repo_name: RepositoryName) -> Self {
         models::RepositoryName {
             uid: repo_name.uid,
-            repo_id: repo_name.repo_id,
+            repo_id: RepoID(repo_name.repo_id),
             name: repo_name.name,
             valid_from: timestamp_to_datetime(&repo_name.valid_from),
         }
@@ -119,8 +120,9 @@ impl From<TransferItem> for models::BlobTransferItem {
     fn from(i: TransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
-            blob_id: i.blob_id,
-            path: i.path,
+            blob_id: BlobID(i.blob_id),
+            blob_size: i.blob_size,
+            path: models::Path(i.path),
         }
     }
 }
@@ -129,8 +131,9 @@ impl From<models::BlobTransferItem> for TransferItem {
     fn from(i: models::BlobTransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
-            blob_id: i.blob_id,
-            path: i.path,
+            blob_id: i.blob_id.0,
+            blob_size: i.blob_size,
+            path: i.path.0,
         }
     }
 }
@@ -139,7 +142,9 @@ impl From<CopiedTransferItem> for models::CopiedTransferItem {
     fn from(i: CopiedTransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
-            path: i.path,
+            blob_id: BlobID(i.blob_id),
+            blob_size: i.blob_size,
+            path: models::Path(i.path),
         }
     }
 }
@@ -148,7 +153,9 @@ impl From<models::CopiedTransferItem> for CopiedTransferItem {
     fn from(i: models::CopiedTransferItem) -> Self {
         Self {
             transfer_id: i.transfer_id,
-            path: i.path,
+            blob_id: i.blob_id.0,
+            blob_size: i.blob_size,
+            path: i.path.0,
         }
     }
 }

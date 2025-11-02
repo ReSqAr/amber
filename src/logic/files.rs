@@ -1,3 +1,4 @@
+use crate::db::models::BlobID;
 use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use crate::utils::fs::{Capability, link};
@@ -56,14 +57,14 @@ pub async fn forced_atomic_link(
     local: &impl Local,
     source: &RepoPath,
     destination: &RepoPath,
-    blob_id: &str,
+    blob_id: &BlobID,
 ) -> Result<(), InternalError> {
     // compute staging_path using blob_id and a unique UUID
     // we use the staging file to set the permissions/file times
     // before atomically overwriting the user's file
     let staging_path = local
         .staging_path()
-        .join(format!("{}.{}", blob_id, Uuid::now_v7()));
+        .join(format!("{}.{}", blob_id.0, Uuid::now_v7()));
 
     link(source, &staging_path, local.capability()).await?;
     debug!(

@@ -1,5 +1,6 @@
 use crate::connection::EstablishedConnection;
-use crate::db::models::{AvailableBlob, ObservedBlob};
+use crate::db::models::{AvailableBlob, InsertBlob, RepoID, SizedBlobID};
+use crate::db::{models, scratch};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
@@ -9,11 +10,13 @@ use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
 use crate::utils::errors::InternalError;
+use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
     Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
 };
 use crate::utils::stream::BoundedWaitChunksExt;
 use crate::utils::units;
+use chrono::{DateTime, Utc};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,6 +30,14 @@ use tokio::{fs, time};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 
+#[derive(Debug, Clone)]
+pub struct ObservedBlob {
+    pub repo_id: RepoID,
+    pub has_blob: bool,
+    pub path: models::Path,
+    pub valid_from: DateTime<Utc>,
+}
+
 pub(crate) async fn fsck_remote(
     local: &(impl Config + Local + Adder + Sync + Send + Clone + 'static),
     remote: &(impl Metadata + Availability + RcloneTargetPath),
@@ -39,6 +50,8 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
+    let redb =
+        scratch::ScratchKVStore::<SizedBlobID>::new(fsck_path.join("scratch.redb").as_ref())?;
     let rclone_source =
         connection.local_rclone_target(fsck_files_path.abs().to_string_lossy().into());
     let rclone_destination = connection.remote_rclone_target(remote.rclone_path(staging_id).await?);
@@ -47,20 +60,26 @@ pub(crate) async fn fsck_remote(
         let (writing_task, tx) =
             write_rclone_files_fsck_clone(local, rclone_files.clone().abs().clone());
 
+        let mut obs = BaseObserver::without_id("fsck:files:materialise");
         let stream = remote.available();
         let local_clone = local.clone();
         let fsck_files_path_clone = fsck_files_path.clone();
         let skipped = Arc::new(AtomicU64::new(0));
         let skipped_clone = skipped.clone();
+        let count = Arc::new(AtomicU64::new(0));
+        let count_clone = count.clone();
+        let obs_clone = obs.clone();
         let stream = StreamExt::map(stream, move |blob: Result<AvailableBlob, InternalError>| {
             let local = local_clone.clone();
             let fsck_files_path = fsck_files_path_clone.clone();
             let tx = tx.clone();
             let skipped = skipped_clone.clone();
+            let count = count_clone.clone();
+            let mut obs = obs_clone.clone();
             async move {
                 let blob = blob?;
                 let blob_path = local.blob_path(&blob.blob_id);
-                let mut o = BaseObserver::with_id("fsck:file:materialise", blob.blob_id.clone());
+                let mut o = BaseObserver::with_id("fsck:file:materialise", blob.blob_id.0.clone());
 
                 if fs::metadata(&blob_path)
                     .await
@@ -74,43 +93,41 @@ pub(crate) async fn fsck_remote(
                             local.capability(),
                         )
                         .await?;
-                        tx.send(path).await?;
+                        tx.send(path.clone()).await?;
                         o.observe_termination(log::Level::Debug, "materialised");
-                        Ok::<_, InternalError>(true)
+                        let new_count = count.fetch_add(1, Ordering::Relaxed) + 1;
+                        obs.observe_position(log::Level::Trace, new_count);
+                        Ok::<Option<(models::Path, SizedBlobID)>, InternalError>(Some((
+                            models::Path(path),
+                            SizedBlobID {
+                                blob_id: blob.blob_id,
+                                blob_size: blob.blob_size,
+                            },
+                        )))
                     } else {
                         o.observe_termination(log::Level::Debug, "skipped (orphaned)");
                         skipped.fetch_add(1, Ordering::Relaxed);
-                        Ok(false)
+                        Ok::<_, InternalError>(None)
                     }
                 } else {
                     o.observe_termination(log::Level::Info, "skipped (blob missing)");
                     skipped.fetch_add(1, Ordering::Relaxed);
-                    Ok(false)
+                    Ok::<_, InternalError>(None)
                 }
             }
         });
 
-        let mut stream = futures::StreamExt::buffer_unordered(
+        let stream = futures::StreamExt::buffer_unordered(
             stream,
             local.buffer_size(BufferType::FsckMaterialiseBufferParallelism),
         );
+        redb.insert(StreamExt::filter_map(stream, Result::transpose))
+            .await?;
 
-        let mut count = 0u64;
-        let mut obs = BaseObserver::without_id("fsck:files:materialise");
-        while let Some(result) = stream.next().await {
-            if let Ok(is_materialised) = result
-                && is_materialised
-            {
-                count += 1;
-            }
-            obs.observe_position(log::Level::Trace, count);
-            result?;
-        }
-
-        drop(stream);
         writing_task.await??;
 
         let duration = start_time.elapsed();
+        let count = count.load(Ordering::Relaxed);
         let mut parts = vec![format!("materialised {count} blobs")];
         let skipped = skipped.load(Ordering::SeqCst);
         if skipped > 0 {
@@ -126,30 +143,46 @@ pub(crate) async fn fsck_remote(
     let local_clone = local.clone();
     let repo_id = remote.current().await?.id;
     let result_handler = tokio::spawn(async move {
-        let stream = UnboundedReceiverStream::new(rx).track("fsck_remote::rx");
-        let stream = stream.map(|r: RCloneResult| match r {
+        let s = UnboundedReceiverStream::new(rx).track("fsck_remote::rx");
+        let s = StreamExt::map(s, move |r: RCloneResult| match r {
             RCloneResult::Success(object) => {
                 BaseObserver::with_id("rclone:check", object.clone())
                     .observe_termination(log::Level::Debug, "OK");
-                ObservedBlob {
+                Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: true,
-                    path: object,
+                    path: models::Path(object),
                     valid_from: chrono::Utc::now(),
-                }
+                })
             }
             RCloneResult::Failure(object) => {
                 BaseObserver::with_id("rclone:check", object.clone())
                     .observe_termination(log::Level::Error, "altered");
-                ObservedBlob {
+                Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: false,
-                    path: object,
+                    path: models::Path(object),
                     valid_from: chrono::Utc::now(),
-                }
+                })
             }
         });
-        local_clone.observe_blobs(stream).await?;
+        let (s, bg) = redb.left_join(s, |e: ObservedBlob| e.path);
+        let s = StreamExt::map(s, |r| {
+            r.map(|(o, b)| {
+                let b = b.unwrap();
+                InsertBlob {
+                    repo_id: o.repo_id,
+                    blob_id: b.blob_id,
+                    blob_size: b.blob_size,
+                    has_blob: o.has_blob,
+                    path: Some(o.path),
+                    valid_from: o.valid_from,
+                }
+            })
+        });
+        s.try_forward_into::<_, _, _, _, InternalError>(|s| local_clone.add_blobs(s))
+            .await?;
+        bg.await??;
 
         Ok::<(), InternalError>(())
     });

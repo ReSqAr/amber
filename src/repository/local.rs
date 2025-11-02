@@ -4,9 +4,9 @@ use crate::db::database::{DBOutputStream, Database};
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobTransferItem, Connection, CopiedTransferItem,
-    File, FileTransferItem, MissingFile, MoveEvent, Observation, ObservedBlob, PathType,
-    Repository, RepositoryName, RmEvent, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
+    ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
+    MissingFile, RepoID, Repository, RepositoryName, SizedBlobID, VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
@@ -17,18 +17,17 @@ use crate::repository::traits::{
     TransferItem, VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
-use crate::utils::flow::{ExtFlow, Flow};
 use crate::utils::fs::{Capability, capability_check, link};
 use crate::utils::path::RepoPath;
-use crate::utils::pipe::TryForwardIntoExt;
-use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
 use log::debug;
 use rand::Rng;
 use rand::distr::Alphanumeric;
+use std::fmt::Debug;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
@@ -38,7 +37,7 @@ use tokio::{fs, task};
 pub(crate) struct LocalRepository {
     root: PathBuf,
     app_folder: PathBuf,
-    repo_id: String,
+    repo_id: RepoID,
     db: Database,
     capability: Capability,
     _lock: Arc<std::fs::File>,
@@ -211,6 +210,8 @@ impl LocalRepository {
         }]))
         .await?;
 
+        drop(db);
+
         Self::new(LocalRepositoryConfig {
             maybe_root: Some(root),
             app_folder,
@@ -241,15 +242,8 @@ impl Local for LocalRepository {
         self.repository_path().join("blobs")
     }
 
-    fn blob_path(&self, blob_id: &str) -> RepoPath {
-        if blob_id.len() > 6 {
-            self.blobs_path()
-                .join(&blob_id[0..2])
-                .join(&blob_id[2..4])
-                .join(&blob_id[4..])
-        } else {
-            self.blobs_path().join(blob_id)
-        }
+    fn blob_path(&self, blob_id: &BlobID) -> RepoPath {
+        self.blobs_path().join(blob_id.path())
     }
 
     fn staging_path(&self) -> RepoPath {
@@ -329,11 +323,11 @@ impl Availability for LocalRepository {
         self.db.available_blobs(self.repo_id.clone()).err_into()
     }
 
-    fn missing(
+    async fn missing(
         &self,
     ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static
     {
-        self.db.missing_blobs(self.repo_id.clone()).err_into()
+        self.db.missing_blobs(self.repo_id.clone()).await.err_into()
     }
 }
 
@@ -359,13 +353,6 @@ impl Adder for LocalRepository {
         self.db.add_file_bundles(s).await
     }
 
-    async fn observe_blobs<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = ObservedBlob> + Unpin + Send,
-    {
-        self.db.observe_blobs(s).await
-    }
-
     async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
     where
         S: Stream<Item = models::InsertRepositoryName> + Unpin + Send,
@@ -382,7 +369,7 @@ impl Adder for LocalRepository {
 }
 
 impl LastIndicesSyncer for LocalRepository {
-    async fn lookup(&self, repo_id: String) -> Result<LastIndices, InternalError> {
+    async fn lookup(&self, repo_id: RepoID) -> Result<LastIndices, InternalError> {
         let Repository {
             last_file_index,
             last_blob_index,
@@ -425,13 +412,13 @@ impl Syncer<Repository> for LocalRepository {
 }
 
 impl SyncerParams for File {
-    type Params = i64;
+    type Params = Option<u64>;
 }
 
 impl Syncer<File> for LocalRepository {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static,
     > + Send {
@@ -447,13 +434,13 @@ impl Syncer<File> for LocalRepository {
 }
 
 impl SyncerParams for Blob {
-    type Params = i64;
+    type Params = Option<u64>;
 }
 
 impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static,
     > + Send {
@@ -468,13 +455,13 @@ impl Syncer<Blob> for LocalRepository {
     }
 }
 impl SyncerParams for RepositoryName {
-    type Params = i64;
+    type Params = Option<u64>;
 }
 
 impl Syncer<RepositoryName> for LocalRepository {
     fn select(
         &self,
-        last_index: i64,
+        last_index: Option<u64>,
     ) -> impl Future<
         Output = impl Stream<Item = Result<RepositoryName, InternalError>> + Unpin + Send + 'static,
     > + Send {
@@ -492,18 +479,6 @@ impl Syncer<RepositoryName> for LocalRepository {
 }
 
 impl VirtualFilesystem for LocalRepository {
-    async fn reset(&self) -> Result<(), DBError> {
-        self.db.truncate_virtual_filesystem().await
-    }
-
-    async fn refresh(&self) -> Result<(), DBError> {
-        self.db.refresh_virtual_filesystem().await
-    }
-
-    fn cleanup(&self, last_seen_id: i64) -> impl Future<Output = Result<(), DBError>> + Send {
-        self.db.cleanup_virtual_filesystem(last_seen_id)
-    }
-
     fn select_missing_files(
         &self,
         last_seen_id: i64,
@@ -512,43 +487,71 @@ impl VirtualFilesystem for LocalRepository {
             .select_missing_files_on_virtual_filesystem(last_seen_id)
     }
 
-    async fn add_observations(
+    fn add_checked_events(
         &self,
-        input_stream: impl Stream<Item = Flow<Observation>> + Unpin + Send + 'static,
-    ) -> impl Stream<Item = ExtFlow<Result<Vec<VirtualFile>, DBError>>> + Unpin + Send + 'static
-    {
-        self.db
-            .add_virtual_filesystem_observations(input_stream)
-            .await
+        s: impl Stream<Item = FileCheck> + Unpin + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
+        let db = self.db.clone();
+        Box::pin(async move { db.add_virtual_filesystem_file_checked_events(s).await })
     }
 
-    async fn move_files(
+    fn add_seen_events(
         &self,
-        src_raw: String,
-        dst_raw: String,
-        mv_type_hint: PathType,
-        now: DateTime<Utc>,
-    ) -> impl Stream<Item = Result<MoveEvent, DBError>> + Unpin + Send + 'static {
-        self.db
-            .move_files(src_raw, dst_raw, mv_type_hint, now)
-            .await
+        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
+        let db = self.db.clone();
+        Box::pin(async move { db.add_virtual_filesystem_file_seen_events(s).await })
     }
 
-    async fn remove_files(
+    fn select_virtual_filesystem(
         &self,
-        files_with_hint: Vec<(String, PathType)>,
-        now: DateTime<Utc>,
-    ) -> impl Stream<Item = Result<RmEvent, DBError>> + Unpin + Send + 'static {
-        self.db.remove_files(files_with_hint, now).await
+        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = impl Stream<Item = Result<VirtualFile, DBError>> + Unpin + Send + 'static,
+                > + Send
+                + 'static,
+        >,
+    > {
+        let db = self.db.clone();
+        Box::pin(async move {
+            let repo = match db.get_or_create_current_repository().await {
+                Ok(id) => id,
+                Err(err) => return stream::iter([Err(err)]).boxed(),
+            };
+            Box::pin(db.select_virtual_filesystem(s, repo.repo_id))
+        })
+    }
+
+    async fn select_current_files(
+        &self,
+        file_or_dir: String,
+    ) -> impl Stream<Item = Result<(models::Path, BlobID), DBError>> + Unpin + Send + 'static {
+        self.db.select_current_files(file_or_dir).await
+    }
+
+    fn left_join_current_files<
+        K: Clone + Send + Sync + 'static,
+        E: From<DBError> + Debug + Send + Sync + 'static,
+    >(
+        &self,
+        s: impl Stream<Item = Result<K, E>> + Unpin + Send + 'static,
+        key_func: impl Fn(K) -> models::Path + Sync + Send + 'static,
+    ) -> impl Stream<Item = Result<(K, Option<CurrentFile>), E>> + Unpin + Send + 'static {
+        self.db.left_join_current_files(s, key_func)
     }
 }
 
 impl ConnectionManager for LocalRepository {
-    async fn add(&self, connection: &Connection) -> Result<(), InternalError> {
+    async fn add(&self, connection: Connection) -> Result<(), InternalError> {
         self.db.add_connection(connection).await.map_err(Into::into)
     }
 
-    async fn lookup_by_name(&self, name: &str) -> Result<Option<Connection>, InternalError> {
+    async fn lookup_by_name(
+        &self,
+        name: ConnectionName,
+    ) -> Result<Option<Connection>, InternalError> {
         self.db.connection_by_name(name).await.map_err(Into::into)
     }
 
@@ -556,12 +559,12 @@ impl ConnectionManager for LocalRepository {
         self.db.list_all_connections().await.map_err(Into::into)
     }
 
-    async fn connect(&self, name: String) -> Result<EstablishedConnection, InternalError> {
+    async fn connect(&self, name: ConnectionName) -> Result<EstablishedConnection, InternalError> {
         if let Ok(Some(Connection {
             connection_type,
             parameter,
             ..
-        })) = self.lookup_by_name(&name).await
+        })) = self.lookup_by_name(name.clone()).await
         {
             EstablishedConnection::new(self.clone(), name, connection_type, parameter).await
         } else {
@@ -570,9 +573,27 @@ impl ConnectionManager for LocalRepository {
     }
 }
 
+impl Into<SizedBlobID> for BlobTransferItem {
+    fn into(self) -> SizedBlobID {
+        SizedBlobID {
+            blob_id: self.blob_id.clone(),
+            blob_size: self.blob_size,
+        }
+    }
+}
+
 impl TransferItem for BlobTransferItem {
+    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+        Self {
+            transfer_id,
+            blob_id: sized.blob_id,
+            blob_size: sized.blob_size,
+            path,
+        }
+    }
+
     fn path(&self) -> String {
-        self.path.clone()
+        self.path.0.clone()
     }
 }
 
@@ -593,7 +614,7 @@ impl Sender<BlobTransferItem> for LocalRepository {
     {
         let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| async move {
             let blob_path = self.blob_path(&item.blob_id);
-            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path);
+            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);
             if let Some(parent) = transfer_path.abs().parent() {
                 fs::create_dir_all(parent).await?;
             }
@@ -625,7 +646,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
     async fn create_transfer_request(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        repo_id: RepoID,
         paths: Vec<String>,
     ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
         let rclone_target_path = self.rclone_target_path(transfer_id);
@@ -634,7 +655,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
         }
 
         self.db
-            .populate_missing_blobs_for_transfer(transfer_id, repo_id, paths)
+            .select_missing_blobs_for_transfer(transfer_id, repo_id, paths)
             .await
             .err_into()
             .boxed()
@@ -646,23 +667,36 @@ impl Receiver<BlobTransferItem> for LocalRepository {
     ) -> Result<u64, InternalError> {
         let local = self.clone();
         let assimilation = self.clone();
-        let db = self.db.clone();
-        db.select_blobs_transfer(s)
-            .await
-            .map_ok(move |r| Item {
-                path: local.rclone_target_path(r.transfer_id).join(r.path),
-                expected_blob_id: Some(r.blob_id),
-            })
-            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate::assimilate(&assimilation, s).await
-            })
-            .await
+        let s = s.map(move |r| Item {
+            path: local.rclone_target_path(r.transfer_id).join(r.path.0),
+            expected_blob_id: Some(r.blob_id),
+        });
+
+        assimilate::assimilate(&assimilation, s).await
     }
 }
 
 impl TransferItem for FileTransferItem {
+    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+        Self {
+            transfer_id,
+            blob_id: sized.blob_id,
+            blob_size: sized.blob_size,
+            path,
+        }
+    }
+
     fn path(&self) -> String {
-        self.path.clone()
+        self.path.0.clone()
+    }
+}
+
+impl Into<SizedBlobID> for FileTransferItem {
+    fn into(self) -> SizedBlobID {
+        SizedBlobID {
+            blob_id: self.blob_id.clone(),
+            blob_size: self.blob_size,
+        }
     }
 }
 
@@ -673,7 +707,7 @@ impl Sender<FileTransferItem> for LocalRepository {
     {
         let stream = tokio_stream::StreamExt::map(s, |item: FileTransferItem| async move {
             let blob_path = self.blob_path(&item.blob_id);
-            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path);
+            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);
             if let Some(parent) = transfer_path.abs().parent() {
                 fs::create_dir_all(parent).await?;
             }
@@ -705,7 +739,7 @@ impl Receiver<FileTransferItem> for LocalRepository {
     async fn create_transfer_request(
         &self,
         transfer_id: u32,
-        repo_id: String,
+        repo_id: RepoID,
         paths: Vec<String>,
     ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
         let rclone_target_path = self.rclone_target_path(transfer_id);
@@ -714,7 +748,7 @@ impl Receiver<FileTransferItem> for LocalRepository {
         }
 
         self.db
-            .populate_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
+            .select_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
             .await
             .err_into()
             .boxed()
@@ -726,16 +760,12 @@ impl Receiver<FileTransferItem> for LocalRepository {
     ) -> Result<u64, InternalError> {
         let local = self.clone();
         let assimilation = self.clone();
-        let db = self.db.clone();
-        db.select_files_transfer(s)
-            .await
-            .map_ok(move |r| Item {
-                path: local.rclone_target_path(r.transfer_id).join(r.path),
-                expected_blob_id: Some(r.blob_id),
-            })
-            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                assimilate::assimilate(&assimilation, s).await
-            })
-            .await
+
+        let s = s.map(move |r| Item {
+            path: local.rclone_target_path(r.transfer_id).join(r.path.0),
+            expected_blob_id: Some(r.blob_id),
+        });
+
+        assimilate::assimilate(&assimilation, s).await
     }
 }

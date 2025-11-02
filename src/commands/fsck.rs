@@ -1,3 +1,4 @@
+use crate::db::models::ConnectionName;
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
@@ -26,7 +27,9 @@ pub async fn fsck(
 
     let wrapped = async {
         if let Some(connection_name) = connection_name {
-            let connection = local.connect(connection_name.clone()).await?;
+            let connection = local
+                .connect(ConnectionName(connection_name.clone()))
+                .await?;
             let remote = connection.remote.clone();
             match remote {
                 WrappedRepository::Local(_) | WrappedRepository::Grpc(_) => {

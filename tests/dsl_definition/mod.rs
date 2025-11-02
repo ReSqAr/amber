@@ -7,9 +7,9 @@ use types::{CommandLine, RepoInstance, TestEnv};
 
 mod amber;
 mod asserts;
-mod db;
 mod fs;
 mod parser;
+mod redb;
 mod ssh;
 mod types;
 mod writer;
@@ -224,11 +224,12 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                         s.await
                     }
                 }
-                CommandLine::Sql { repo, sql } => {
-                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
-                        anyhow!("Repository {} not found for start_ssh command", repo)
-                    })?;
-                    db::run_sql(&repo_instance.path, sql).await?;
+                CommandLine::Redb { repo, action } => {
+                    let repo_instance = env
+                        .repos
+                        .get(&repo)
+                        .ok_or_else(|| anyhow!("Repository {} not found for redb command", repo))?;
+                    redb::run_action(&repo_instance.path, action).await?;
                 }
             }
         }

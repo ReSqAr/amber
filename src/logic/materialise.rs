@@ -1,4 +1,5 @@
-use crate::db::models::InsertMaterialisation;
+use crate::db::models;
+use crate::db::models::{BlobID, InsertMaterialisation};
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
 use crate::logic::state::VirtualFileState;
@@ -32,8 +33,8 @@ pub async fn materialise(
         let (state_handle, stream) = state::state(local.clone(), WalkerConfig::default()).await?;
 
         struct ToMaterialise {
-            path: String,
-            target_blob_id: Option<String>,
+            path: models::Path,
+            target_blob_id: Option<BlobID>,
         }
 
         let stream = futures::StreamExt::filter_map(stream, |file_result| async move {
@@ -46,24 +47,16 @@ pub async fn materialise(
             match state {
                 VirtualFileState::New => None,
                 VirtualFileState::Ok { .. } => None,
-                VirtualFileState::OkMaterialisationMissing {
-                    target_blob_id,
-                    local_has_target_blob,
-                } => match (local_has_target_blob, target_blob_id) {
-                    (true, Some(target_blob_id)) => Some(Ok(ToMaterialise {
+                VirtualFileState::OkMaterialisationMissing { target_blob_id } => {
+                    Some(Ok(ToMaterialise {
                         path,
                         target_blob_id: Some(target_blob_id),
-                    })),
-                    (_, None) => Some(Ok(ToMaterialise {
-                        path,
-                        target_blob_id: None,
-                    })),
-                    (false, Some(_)) => {
-                        BaseObserver::with_id("materialise:file", path)
-                            .observe_termination(log::Level::Warn, "unavailable");
-                        None
-                    }
-                },
+                    }))
+                }
+                VirtualFileState::OkBlobMissing { target_blob_id } => Some(Ok(ToMaterialise {
+                    path,
+                    target_blob_id: Some(target_blob_id),
+                })),
                 VirtualFileState::Missing {
                     target_blob_id,
                     local_has_target_blob,
@@ -73,7 +66,7 @@ pub async fn materialise(
                         target_blob_id: Some(target_blob_id),
                     })),
                     false => {
-                        BaseObserver::with_id("materialise:file", path)
+                        BaseObserver::with_id("materialise:file", path.0)
                             .observe_termination(log::Level::Warn, "unavailable");
                         None
                     }
@@ -93,7 +86,7 @@ pub async fn materialise(
                         target_blob_id: None,
                     })),
                     (false, Some(_)) => {
-                        BaseObserver::with_id("materialise:file", path)
+                        BaseObserver::with_id("materialise:file", path.0)
                             .observe_termination(log::Level::Warn, "unavailable");
                         None
                     }
@@ -116,8 +109,8 @@ pub async fn materialise(
                         path,
                         target_blob_id,
                     } = file_result?;
-                    let target_path = local.root().join(path.clone());
-                    let mut o = BaseObserver::with_id("materialise:file", path.clone());
+                    let target_path = local.root().join(path.0.clone());
+                    let mut o = BaseObserver::with_id("materialise:file", path.0.clone());
 
                     let action = match target_blob_id.clone() {
                         Some(target_blob_id) => {
@@ -142,7 +135,7 @@ pub async fn materialise(
                             o.observe_termination_ext(
                                 log::Level::Info,
                                 "materialised",
-                                [("blob_id".into(), target_blob_id.clone())],
+                                [("blob_id".into(), target_blob_id.0.clone())],
                             );
 
                             Action::Materialised

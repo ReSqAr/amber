@@ -1,3 +1,4 @@
+use crate::db::models;
 use crate::db::models::{InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation};
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
@@ -59,12 +60,14 @@ pub(crate) async fn add_files(
                 VirtualFileState::Missing { .. } => false,
                 VirtualFileState::Ok { .. } => false,
                 VirtualFileState::OkMaterialisationMissing { .. } => true,
+                VirtualFileState::OkBlobMissing { .. } => true,
                 VirtualFileState::Altered { .. } => false,
                 VirtualFileState::Outdated { .. } => false,
             }
         }
     });
 
+    let repo_id = repository.current().await?.id;
     let mut count = 0;
     {
         // scope to isolate the effects of the below wild channel cloning
@@ -76,8 +79,9 @@ pub(crate) async fn add_files(
                 let bundle_tx = bundle_tx.clone();
                 let local_repository_clone = repository.clone();
                 let blob_locks_clone = blob_locks.clone();
+                let repo_id = repo_id.clone();
                 async move {
-                    let path = local_repository_clone.root().join(file_result?.path);
+                    let path = local_repository_clone.root().join(file_result?.path.0);
                     let Blobify { blob_id, blob_size } =
                         blobify::blobify(&local_repository_clone, &path, blob_locks_clone)
                             .await
@@ -85,20 +89,20 @@ pub(crate) async fn add_files(
 
                     let valid_from = chrono::Utc::now();
                     let file = InsertFile {
-                        path: path.rel().to_string_lossy().to_string(),
+                        path: models::Path(path.rel().to_string_lossy().to_string()),
                         blob_id: Some(blob_id.clone()),
                         valid_from,
                     };
                     let blob = InsertBlob {
-                        repo_id: local_repository_clone.current().await?.id,
+                        repo_id,
                         blob_id: blob_id.clone(),
-                        blob_size: blob_size as i64,
+                        blob_size,
                         has_blob: true,
                         path: None,
                         valid_from,
                     };
                     let mat = InsertMaterialisation {
-                        path: path.rel().to_string_lossy().to_string(),
+                        path: models::Path(path.rel().to_string_lossy().to_string()),
                         blob_id: Some(blob_id.clone()),
                         valid_from,
                     };

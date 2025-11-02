@@ -1,5 +1,5 @@
 use crate::connection::local::LocalTarget;
-use crate::db::models::ConnectionType;
+use crate::db::models::{ConnectionName, ConnectionType};
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::Metadata;
 use crate::repository::wrapper::WrappedRepository;
@@ -14,7 +14,7 @@ pub(crate) mod ssh;
 
 pub struct EstablishedConnection {
     #[allow(dead_code)]
-    pub name: String,
+    pub name: ConnectionName,
     pub config: Config,
     #[allow(dead_code)]
     pub local: LocalRepository,
@@ -24,14 +24,14 @@ pub struct EstablishedConnection {
 impl EstablishedConnection {
     pub async fn new(
         local: LocalRepository,
-        name: String,
+        name: ConnectionName,
         connection_type: ConnectionType,
         parameter: String,
     ) -> Result<Self, InternalError> {
         let config = Config::parse(connection_type, parameter)?;
         let remote = config.connect(&local, &name).await?;
         let meta = remote.current().await?;
-        debug!("connected to repository via {name} to {}", meta.name);
+        debug!("connected to repository via {} to {}", name.0, meta.name);
         Ok(Self {
             local,
             name,

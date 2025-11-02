@@ -1,15 +1,20 @@
 use crate::db::error::DBError;
+use crate::db::models;
+use crate::db::models::{BlobID, ConnectionName};
 use crate::utils::walker;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("blob {path} failed to be verified: expected: {expected} actual: {actual}")]
+    #[error("blob {path} failed to be verified: expected: {expected_hash} actual: {actual_hash}",
+        expected_hash=expected.0,
+        actual_hash=actual.0,
+    )]
     UnexpectedBlobId {
         path: String,
-        expected: String,
-        actual: String,
+        expected: BlobID,
+        actual: BlobID,
     },
     #[error("connection {connection_name} does not support '{operation}'")]
     UnsupportedOperation {
@@ -20,8 +25,8 @@ pub enum AppError {
     RepositoryNotInitialised(),
     #[error("the repository is already initialised")]
     RepositoryAlreadyInitialised(),
-    #[error("connection {0} not found")]
-    ConnectionNotFound(String),
+    #[error("connection {name} not found", name=.0.0)]
+    ConnectionNotFound(ConnectionName),
     #[error("file {0} is not part of the repository")]
     FileNotPartOfRepository(String),
     #[error("unable to parse '{raw}': {message}")]
@@ -44,14 +49,13 @@ pub enum AppError {
         "the transfer was incomplete: expected {expected_count} files but only {count} files were copied"
     )]
     IncompleteTransfer { count: u64, expected_count: u64 },
-    #[error(
-        "please run fsck: blob {blob} (backing file {path}) might be corrupted",
-        blob = .blob_id.as_deref().unwrap_or("<unknown>")
-    )]
+    #[error("please run fsck: blob {b} (backing file {p}) might be corrupted", b = blob_id.0, p = path.0)]
     CorruptionDetected {
-        blob_id: Option<String>,
-        path: String,
+        blob_id: models::BlobID,
+        path: models::Path,
     },
+    #[error("please run fsck: state of file {p} cannot be determined", p = path.0)]
+    FileStateCannotBeDetermined { path: models::Path },
 }
 
 #[derive(Error, Debug)]

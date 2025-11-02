@@ -1,4 +1,4 @@
-use crate::db::models::BlobAssociatedToFiles;
+use crate::db::models::{BlobAssociatedToFiles, ConnectionName};
 use crate::flightdeck;
 use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
@@ -20,7 +20,9 @@ pub async fn missing(
 
     let wrapped = async {
         if let Some(connection_name) = connection_name {
-            let connection = local.connect(connection_name.clone()).await?;
+            let connection = local
+                .connect(ConnectionName(connection_name.clone()))
+                .await?;
             let remote = connection.remote.clone();
             match remote {
                 WrappedRepository::Local(_) | WrappedRepository::Grpc(_) => {
@@ -68,17 +70,17 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
     let start_time = tokio::time::Instant::now();
     let mut missing_obs = BaseObserver::without_id("missing");
 
-    let mut missing_blobs = repository.missing();
+    let mut missing_blobs = repository.missing().await;
 
     let mut count_files = 0usize;
     let mut count_blobs = 0usize;
     while let Some(blob_result) = missing_blobs.next().await {
         let BlobAssociatedToFiles {
-            paths,
+            path,
             blob_id,
             mut repositories_with_blob,
         } = blob_result?;
-        count_files += paths.len();
+        count_files += 1;
         count_blobs += 1;
         missing_obs.observe_position(log::Level::Trace, count_blobs as u64);
 
@@ -90,21 +92,19 @@ pub async fn list_missing_blobs(repository: impl Availability) -> Result<(), Int
             "(lost - no known location)".into()
         };
 
-        for path in paths {
-            let mut file_obs = BaseObserver::with_id("file", path);
-            file_obs.observe_termination_ext(
-                log::Level::Info,
-                "missing",
-                [
-                    ("detail".into(), detail.clone()),
-                    ("blob_id".into(), blob_id.clone()),
-                    (
-                        "repositories_with_blob".into(),
-                        repositories_with_blob.join(","),
-                    ),
-                ],
-            );
-        }
+        let mut file_obs = BaseObserver::with_id("file", path.0);
+        file_obs.observe_termination_ext(
+            log::Level::Info,
+            "missing",
+            [
+                ("detail".into(), detail.clone()),
+                ("blob_id".into(), blob_id.0.clone()),
+                (
+                    "repositories_with_blob".into(),
+                    repositories_with_blob.join(","),
+                ),
+            ],
+        );
     }
 
     let final_msg = generate_final_message(count_files, count_blobs, start_time);

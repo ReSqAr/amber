@@ -34,7 +34,7 @@ pub enum Error {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileObservation {
     pub rel_path: PathBuf,
-    pub size: i64,
+    pub size: u64,
     pub last_modified_ns: i64,
 }
 
@@ -87,7 +87,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     };
     Some(Ok(FileObservation {
         rel_path,
-        size: size as i64,
+        size,
         last_modified_ns,
     }))
 }
