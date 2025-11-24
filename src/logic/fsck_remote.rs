@@ -14,7 +14,6 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
     Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
 };
-use crate::utils::stream::BoundedWaitChunksExt;
 use crate::utils::units;
 use chrono::{DateTime, Utc};
 use rand::Rng;
@@ -222,7 +221,7 @@ fn write_rclone_files_fsck_clone(
         let mut chunked_stream = futures::StreamExt::boxed(
             ReceiverStream::new(rx)
                 .track("write_rclone_files_fsck_clone::rx")
-                .bounded_wait_chunks(writer_buffer_size, TIMEOUT),
+                .chunks_timeout(writer_buffer_size, TIMEOUT),
         );
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, path| {
