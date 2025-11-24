@@ -1,9 +1,9 @@
 use crate::db::models::BlobID;
 use crate::logic::files;
 use crate::repository::traits::{Local, Metadata};
+use crate::utils::blake3;
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
-use crate::utils::sha256;
 use async_lock::Mutex;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -21,10 +21,10 @@ pub(crate) async fn blobify(
     path: &RepoPath,
     blob_locks: BlobLockMap,
 ) -> Result<Blobify, InternalError> {
-    let sha256::HashWithSize {
+    let blake3::HashWithSize {
         hash: blob_id,
         size: blob_size,
-    } = sha256::compute_sha256_and_size(path).await?;
+    } = blake3::compute_blake3_and_size(path).await?;
     let result = Blobify {
         blob_id: blob_id.clone(),
         blob_size,

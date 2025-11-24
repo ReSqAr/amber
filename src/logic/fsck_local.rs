@@ -5,9 +5,9 @@ use crate::logic::state::VirtualFileState;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, VirtualFilesystem,
 };
+use crate::utils::blake3;
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::sha256;
 use crate::utils::walker::WalkerConfig;
 use std::sync::Arc;
 use tokio::fs;
@@ -43,7 +43,7 @@ async fn fsck_blobs(
             let blob_path = local.blob_path(&blob.blob_id);
             let mut o = BaseObserver::with_id("fsck:blob", blob.blob_id.0.clone());
 
-            let result = sha256::compute_sha256_and_size(&blob_path).await?;
+            let result = blake3::compute_blake3_and_size(&blob_path).await?;
             let matching = result.hash == blob.blob_id && result.size == blob.blob_size;
 
             match matching {

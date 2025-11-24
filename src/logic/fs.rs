@@ -5,10 +5,10 @@ use crate::flightdeck::base::BaseObserver;
 use crate::logic::{files, unblobify};
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{Adder, BufferType, Config, Local, VirtualFilesystem};
+use crate::utils::blake3;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::sha256;
 use chrono::Utc;
 use futures::{StreamExt, TryStreamExt, stream};
 use rand::Rng;
@@ -168,7 +168,7 @@ pub(crate) async fn rm(
 
                         if is_file {
                             if hard {
-                                let hash = sha256::compute_sha256_and_size(&p).await?;
+                                let hash = blake3::compute_blake3_and_size(&p).await?;
                                 if hash.hash == blob_id {
                                     if let Err(e) = fs::remove_file(&p).await {
                                         error_count.fetch_add(1, Ordering::Relaxed);

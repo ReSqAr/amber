@@ -2,10 +2,10 @@ use crate::db::models::{BlobID, InsertBlob, RepoID};
 use crate::flightdeck::observer::Observer;
 use crate::logic::files;
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata};
+use crate::utils::blake3;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use crate::utils::sha256;
 use async_lock::Mutex;
 use dashmap::DashMap;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -30,10 +30,10 @@ async fn assimilate_blob(
     blob_locks: BlobLockMap,
 ) -> Result<InsertBlob, InternalError> {
     let file_path = item.path;
-    let sha256::HashWithSize {
+    let blake3::HashWithSize {
         hash: blob_id,
         size: blob_size,
-    } = sha256::compute_sha256_and_size(&file_path).await?;
+    } = blake3::compute_blake3_and_size(&file_path).await?;
     if let Some(expected_blob_id) = item.expected_blob_id {
         if expected_blob_id != blob_id {
             return Err(AppError::UnexpectedBlobId {
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(count, 1);
 
         let blob_file = repo_path
-            .join(".amb/blobs/c0/53/5e4be2b79ffd93291305436bf889314e4a3faec05ecffcbb7df31ad9e51a");
+            .join(".amb/blobs/79/3c/10bc0b28c378330d39edace7260af9da81d603b8ffede2706a21eda893f4");
         let buf = fs::read(&blob_file).await?;
         assert_eq!(buf, b"Hello world!");
 
