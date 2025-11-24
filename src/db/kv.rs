@@ -14,6 +14,7 @@ use parking_lot::RwLock;
 use redb::{Database, Key, ReadableDatabase, TableDefinition, TableHandle, Value};
 use std::borrow::Borrow;
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::create_dir_all;
 use tokio::sync::mpsc;
@@ -212,63 +213,61 @@ pub(crate) struct KVStores {
 }
 
 impl KVStores {
-    pub(crate) async fn new(base_path: &std::path::Path) -> Result<Self, DBError> {
-        create_dir_all(base_path).await?;
+    pub(crate) async fn new(base_path: PathBuf) -> Result<Self, DBError> {
+        create_dir_all(&base_path).await?;
 
-        let current_blobs = KVStore::new(&base_path.join("current_blobs.redb"), CURRENT_BLOBS)
-            .await
-            .inspect_err(|e| log::error!("Redb::new blobs failed: {e}"))?;
+        let tracer = Tracer::new_on("KVStores::new");
 
-        let current_files = KVStore::new(&base_path.join("current_files.redb"), CURRENT_FILES)
-            .await
-            .inspect_err(|e| log::error!("Redb::new files failed: {e}"))?;
-
+        let current_blobs = KVStore::new(base_path.join("current_blobs.redb"), CURRENT_BLOBS);
+        let current_files = KVStore::new(base_path.join("current_files.redb"), CURRENT_FILES);
         let current_materialisations = KVStore::new(
-            &base_path.join("current_materialisations.redb"),
+            base_path.join("current_materialisations.redb"),
             CURRENT_MATERIALISATIONS,
-        )
-        .await
-        .inspect_err(|e| log::error!("Redb::new materialisations failed: {e}"))?;
-
+        );
         let current_repository_names = KVStore::new(
-            &base_path.join("current_repository_names.redb"),
+            base_path.join("current_repository_names.redb"),
             CURRENT_REPOSITORY_NAMES,
-        )
-        .await
-        .inspect_err(|e| log::error!("Redb::new repository names failed: {e}"))?;
-
+        );
         let current_observations = KVStore::new(
-            &base_path.join("current_observations.redb"),
+            base_path.join("current_observations.redb"),
             CURRENT_OBSERVATIONS,
-        )
-        .await
-        .inspect_err(|e| log::error!("Redb::new observations failed: {e}"))?;
-
-        let current_checks = KVStore::new(&base_path.join("current_checks.redb"), CURRENT_CHECKS)
-            .await
-            .inspect_err(|e| log::error!("Redb::new checks failed: {e}"))?;
-
+        );
+        let current_checks = KVStore::new(base_path.join("current_checks.redb"), CURRENT_CHECKS);
         let current_repository = KVStore::new(
-            &base_path.join("current_repository.redb"),
+            base_path.join("current_repository.redb"),
             CURRENT_REPOSITORY,
-        )
-        .await
-        .inspect_err(|e| log::error!("Redb::new current repo failed: {e}"))?;
-
-        let repositories = KVStore::new(&base_path.join("repositories.redb"), REPOSITORIES)
-            .await
-            .inspect_err(|e| log::error!("Redb::new repositories failed: {e}"))?;
-
-        let connections = KVStore::new(&base_path.join("connections.redb"), CONNECTIONS)
-            .await
-            .inspect_err(|e| log::error!("Redb::new repositories failed: {e}"))?;
-
+        );
+        let repositories = KVStore::new(base_path.join("repositories.redb"), REPOSITORIES);
+        let connections = KVStore::new(base_path.join("connections.redb"), CONNECTIONS);
         let current_reductions = KVStore::new(
-            &base_path.join("current_reductions.redb"),
+            base_path.join("current_reductions.redb"),
             CURRENT_REDUCTIONS,
-        )
-        .await
-        .inspect_err(|e| log::error!("Redb::new current reductions failed: {e}"))?;
+        );
+
+        let (
+            current_blobs,
+            current_files,
+            current_materialisations,
+            current_repository_names,
+            current_observations,
+            current_checks,
+            current_repository,
+            repositories,
+            connections,
+            current_reductions,
+        ) = tokio::try_join!(
+            current_blobs,
+            current_files,
+            current_materialisations,
+            current_repository_names,
+            current_observations,
+            current_checks,
+            current_repository,
+            repositories,
+            connections,
+            current_reductions,
+        )?;
+        tracer.measure();
 
         Ok(Self {
             current_blobs,
@@ -606,10 +605,9 @@ where
     VO: Send + Sync + Clone + 'static,
 {
     pub(crate) async fn new(
-        path: &std::path::Path,
+        path: PathBuf,
         table: TableDefinition<'static, K, V>,
     ) -> Result<Self, DBError> {
-        let path = path.to_owned();
         task::spawn_blocking(move || {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -702,6 +700,7 @@ where
             let mut count = 0u64;
             {
                 while let Some(item) = rx.blocking_recv() {
+                    count += 1;
                     let (key, value) = item?;
                     tracer.on();
                     match value {
@@ -709,13 +708,14 @@ where
                         Some(v) => table.insert(key, v)?,
                     };
                     tracer.off();
-                    count += 1;
                 }
             }
 
             tracer.on();
             drop(table);
-            txn.commit()?;
+            if count > 0 {
+                txn.commit()?;
+            }
             tracer.measure();
 
             Ok(count)
@@ -755,6 +755,7 @@ where
             let mut count = 0u64;
             {
                 while let Some(item) = rx.blocking_recv() {
+                    count += 1;
                     let item: U = item?;
                     let key = item.key();
                     tracer.on();
@@ -778,13 +779,14 @@ where
                         table.remove(key)?;
                     }
                     tracer.off();
-                    count += 1;
                 }
             }
 
             tracer.on();
             drop(table);
-            txn.commit()?;
+            if count > 0 {
+                txn.commit()?;
+            }
             tracer.measure();
 
             Ok(count)
