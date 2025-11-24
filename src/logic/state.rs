@@ -131,7 +131,7 @@ async fn check(vfs: &impl Local, vf: &models::VirtualFile) -> Result<FileCheck, 
 
     Ok(FileCheck {
         path: vf.file_seen.path.clone(),
-        check_dttm: current_timestamp_ns(),
+        check_dttm: chrono::Utc::now(),
         hash,
     })
 }
@@ -229,10 +229,10 @@ pub async fn state(
     let walker_rx = walker_rx.map(move |e| {
         e.map(|fo: FileObservation| FileSeen {
             path: models::Path(fo.rel_path.to_string_lossy().to_string()),
-            last_modified_dttm: fo.last_modified_ns,
+            last_modified_dttm: fo.last_modified,
             size: fo.size,
             seen_id: last_seen_id,
-            seen_dttm: current_timestamp_ns(),
+            seen_dttm: chrono::Utc::now(),
         })
     });
     let tx_clone = tx.clone();

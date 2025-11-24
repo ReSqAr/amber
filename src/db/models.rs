@@ -74,15 +74,15 @@ impl_redb_bincode_value!(CurrentRepositoryName);
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentObservation {
     pub(crate) fs_last_seen_id: i64,
-    pub(crate) fs_last_seen_dttm: i64,
-    pub(crate) fs_last_modified_dttm: i64,
+    pub(crate) fs_last_seen_dttm: DateTime<Utc>,
+    pub(crate) fs_last_modified_dttm: DateTime<Utc>,
     pub(crate) fs_last_size: u64,
 }
 impl_redb_bincode_value!(CurrentObservation);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentCheck {
-    pub(crate) check_last_dttm: i64,
+    pub(crate) check_last_dttm: DateTime<Utc>,
     pub(crate) check_last_hash: BlobID,
 }
 impl_redb_bincode_value!(CurrentCheck);
@@ -406,15 +406,15 @@ pub struct BlobAssociatedToFiles {
 pub struct FileSeen {
     pub path: Path,
     pub seen_id: i64,
-    pub seen_dttm: i64,
-    pub last_modified_dttm: i64,
+    pub seen_dttm: DateTime<Utc>,
+    pub last_modified_dttm: DateTime<Utc>,
     pub size: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct FileCheck {
     pub path: Path,
-    pub check_dttm: i64,
+    pub check_dttm: DateTime<Utc>,
     pub hash: BlobID,
 }
 

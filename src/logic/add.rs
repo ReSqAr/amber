@@ -70,16 +70,15 @@ pub(crate) async fn add_files(
     let repo_id = repository.current().await?.id;
     let mut count = 0;
     {
-        // scope to isolate the effects of the below wild channel cloning
         let blob_locks: BlobLockMap = Arc::new(DashMap::new());
         let bundle_tx = bundle_tx.clone();
         let stream = tokio_stream::StreamExt::map(
             stream,
             |file_result: Result<VirtualFile, InternalError>| {
-                let bundle_tx = bundle_tx.clone();
+                let repo_id = repo_id.clone();
                 let local_repository_clone = repository.clone();
                 let blob_locks_clone = blob_locks.clone();
-                let repo_id = repo_id.clone();
+                let bundle_tx = bundle_tx.clone();
                 async move {
                     let path = local_repository_clone.root().join(file_result?.path.0);
                     let Blobify { blob_id, blob_size } =
@@ -87,11 +86,12 @@ pub(crate) async fn add_files(
                             .await
                             .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
 
-                    let valid_from = chrono::Utc::now();
+                    let now = chrono::Utc::now();
+                    let p = models::Path(path.rel().to_string_lossy().to_string());
                     let file = InsertFile {
-                        path: models::Path(path.rel().to_string_lossy().to_string()),
+                        path: p.clone(),
                         blob_id: Some(blob_id.clone()),
-                        valid_from,
+                        valid_from: now,
                     };
                     let blob = InsertBlob {
                         repo_id,
@@ -99,12 +99,12 @@ pub(crate) async fn add_files(
                         blob_size,
                         has_blob: true,
                         path: None,
-                        valid_from,
+                        valid_from: now,
                     };
                     let mat = InsertMaterialisation {
-                        path: models::Path(path.rel().to_string_lossy().to_string()),
+                        path: p.clone(),
                         blob_id: Some(blob_id.clone()),
-                        valid_from,
+                        valid_from: now,
                     };
 
                     let bundle = InsertFileBundle {

@@ -1,5 +1,6 @@
 use crate::flightdeck;
 use crate::utils::errors::InternalError;
+use chrono::{DateTime, Utc};
 use futures::Stream;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
@@ -35,7 +36,7 @@ pub enum Error {
 pub struct FileObservation {
     pub rel_path: PathBuf,
     pub size: u64,
-    pub last_modified_ns: i64,
+    pub last_modified: DateTime<Utc>,
 }
 
 fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObservation, Error>> {
@@ -66,17 +67,8 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     };
 
     let size = metadata.len();
-    let last_modified_ns = match metadata.modified() {
-        Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
-            Ok(dur) => dur.as_nanos() as i64,
-            Err(e) => {
-                return Some(Err(Error::Observer(format!(
-                    "SystemTime before UNIX_EPOCH for {}: {}",
-                    rel_path.display(),
-                    e
-                ))));
-            }
-        },
+    let last_modified = match metadata.modified() {
+        Ok(time) => time.into(),
         Err(e) => {
             return Some(Err(Error::Observer(format!(
                 "Failed to get modified time for {}: {}",
@@ -88,7 +80,7 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     Some(Ok(FileObservation {
         rel_path,
         size,
-        last_modified_ns,
+        last_modified,
     }))
 }
 
