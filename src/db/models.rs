@@ -137,7 +137,9 @@ impl From<&'static str> for TableName {
     }
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Ord, PartialOrd,
+)]
 pub struct LogOffset(pub(crate) u64);
 impl_redb_bincode_value!(LogOffset);
 
