@@ -167,6 +167,29 @@ impl Upsert for UpsertRepositoryName {
     }
 }
 
+struct UpsertCurrentReduction(TableName, LogOffset);
+impl Upsert for UpsertCurrentReduction {
+    type K = TableName;
+    type V = LogOffset;
+
+    fn key(&self) -> TableName {
+        self.0.clone()
+    }
+
+    fn upsert(self, v: Option<LogOffset>) -> UpsertAction<LogOffset> {
+        match v {
+            None => UpsertAction::Change(self.1),
+            Some(o) => {
+                if self.1 > o {
+                    UpsertAction::Change(self.1)
+                } else {
+                    UpsertAction::NoChange
+                }
+            }
+        }
+    }
+}
+
 struct UpsertRepositoryMetadata(Repository);
 impl Upsert for UpsertRepositoryMetadata {
     type K = RepoID;
@@ -377,8 +400,8 @@ impl KVStores {
         &self,
         s: impl Stream<Item = (TableName, LogOffset)> + Send + 'static,
     ) -> Result<u64, DBError> {
-        let s = s.map(|(t, o)| Ok((t, Some(o))));
-        self.current_reductions.apply(s).await
+        let s = s.map(|(t, o)| Ok(UpsertCurrentReduction(t, o)));
+        self.current_reductions.upsert(s).await
     }
 
     pub(crate) async fn store_connection(
@@ -755,13 +778,13 @@ where
             let mut count = 0u64;
             {
                 while let Some(item) = rx.blocking_recv() {
-                    count += 1;
                     let item: U = item?;
                     let key = item.key();
                     tracer.on();
                     let delete_key = match table.get_mut(item.key())? {
                         Some(mut guard) => match item.upsert(Some(guard.value())) {
                             UpsertAction::Change(v) => {
+                                count += 1;
                                 guard.insert(v)?;
                                 false
                             }
@@ -770,12 +793,14 @@ where
                         },
                         None => {
                             if let UpsertAction::Change(v) = item.upsert(None) {
+                                count += 1;
                                 table.insert(key.clone(), v)?;
                             }
                             false
                         }
                     };
                     if delete_key {
+                        count += 1;
                         table.remove(key)?;
                     }
                     tracer.off();

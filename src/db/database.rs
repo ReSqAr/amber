@@ -1037,16 +1037,19 @@ impl Database {
             });
             inner.kv.apply_blobs(s).await?;
 
-            let max_offset = max_offset.load(Ordering::SeqCst);
-            inner
-                .kv
-                .apply_current_reductions(stream::iter([(
-                    BLOB_TABLE_NAME.into(),
-                    LogOffset(max_offset),
-                )]))
-                .await?;
+            let counter = counter.load(Ordering::Relaxed);
+            if counter > 0 {
+                let max_offset = max_offset.load(Ordering::SeqCst);
+                inner
+                    .kv
+                    .apply_current_reductions(stream::iter([(
+                        BLOB_TABLE_NAME.into(),
+                        LogOffset(max_offset),
+                    )]))
+                    .await?;
+            }
 
-            Ok(counter.load(Ordering::Relaxed))
+            Ok(counter)
         })
     }
 
@@ -1073,16 +1076,19 @@ impl Database {
             });
             inner.kv.apply_files(s).await?;
 
-            let max_offset = max_offset.load(Ordering::SeqCst);
-            inner
-                .kv
-                .apply_current_reductions(stream::iter([(
-                    FILE_TABLE_NAME.into(),
-                    LogOffset(max_offset),
-                )]))
-                .await?;
+            let counter = counter.load(Ordering::Relaxed);
+            if counter > 0 {
+                let max_offset = max_offset.load(Ordering::SeqCst);
+                inner
+                    .kv
+                    .apply_current_reductions(stream::iter([(
+                        FILE_TABLE_NAME.into(),
+                        LogOffset(max_offset),
+                    )]))
+                    .await?;
+            }
 
-            Ok(counter.load(Ordering::Relaxed))
+            Ok(counter)
         })
     }
 
@@ -1112,16 +1118,19 @@ impl Database {
             });
             inner.kv.apply_materialisations(s).await?;
 
-            let max_offset = max_offset.load(Ordering::SeqCst);
-            inner
-                .kv
-                .apply_current_reductions(stream::iter([(
-                    MAT_TABLE_NAME.into(),
-                    LogOffset(max_offset),
-                )]))
-                .await?;
+            let counter = counter.load(Ordering::Relaxed);
+            if counter > 0 {
+                let max_offset = max_offset.load(Ordering::SeqCst);
+                inner
+                    .kv
+                    .apply_current_reductions(stream::iter([(
+                        MAT_TABLE_NAME.into(),
+                        LogOffset(max_offset),
+                    )]))
+                    .await?;
+            }
 
-            Ok(counter.load(Ordering::Relaxed))
+            Ok(counter)
         })
     }
 
@@ -1148,16 +1157,19 @@ impl Database {
             });
             inner.kv.apply_repository_names(s).await?;
 
-            let max_offset = max_offset.load(Ordering::SeqCst);
-            inner
-                .kv
-                .apply_current_reductions(stream::iter([(
-                    NAME_TABLE_NAME.into(),
-                    LogOffset(max_offset),
-                )]))
-                .await?;
+            let counter = counter.load(Ordering::Relaxed);
+            if counter > 0 {
+                let max_offset = max_offset.load(Ordering::SeqCst);
+                inner
+                    .kv
+                    .apply_current_reductions(stream::iter([(
+                        NAME_TABLE_NAME.into(),
+                        LogOffset(max_offset),
+                    )]))
+                    .await?;
+            }
 
-            Ok(counter.load(Ordering::Relaxed))
+            Ok(counter)
         })
     }
 }
