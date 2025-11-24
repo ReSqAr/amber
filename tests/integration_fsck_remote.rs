@@ -105,7 +105,7 @@ async fn integration_test_rclone_fsck_local_no_files() -> anyhow::Result<(), any
 
         # action
         @b amber fsck store
-        assert_output_contains "skipped (blob missing) 3f4f64821ca6e2aab5340bdad149483637d88e9aef4756d5a280faa03f05ae9b"
+        assert_output_contains "skipped (blob missing) 45aea9fdc1ae70402a3d5cc314d6cc8070676a1bc9ffdd49dcbec58ecab7e928"
         assert_output_contains "materialised 0 blobs and skipped 1 blobs"
         assert_output_contains "no files to verify"
     "#;

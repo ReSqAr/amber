@@ -7,8 +7,8 @@ use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::tracked::sender;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
+use crate::utils::blake3;
 use crate::utils::errors::{AppError, InternalError};
-use crate::utils::sha256;
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
 use futures::{Stream, StreamExt};
 use log::{debug, error};
@@ -127,7 +127,7 @@ impl From<MissingFile> for VirtualFile {
 async fn check(vfs: &impl Local, vf: &models::VirtualFile) -> Result<FileCheck, InternalError> {
     let path = vfs.root().join(vf.file_seen.path.0.clone());
 
-    let sha256::HashWithSize { hash, .. } = sha256::compute_sha256_and_size(&path).await?;
+    let blake3::HashWithSize { hash, .. } = blake3::compute_blake3_and_size(&path).await?;
 
     Ok(FileCheck {
         path: vf.file_seen.path.clone(),

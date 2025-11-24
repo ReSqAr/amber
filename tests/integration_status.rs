@@ -215,7 +215,7 @@ async fn integration_test_force_altered_file_hard_links() -> Result<(), anyhow::
         assert_output_contains "altered test.txt"
 
         @a amber --prefer-hard-links fsck
-        assert_output_contains "blob corrupted 3949e2daad0ba297363644e75de69a60f35024d5004d0b5b02a31626fb4254da"
+        assert_output_contains "blob corrupted 61017bd620d17d2acf4c9c1d69699be27dfaaae9a517677f84d038a58f033f0d"
 
         @a amber --prefer-hard-links status
         assert_output_contains "altered test.txt"

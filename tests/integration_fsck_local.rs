@@ -34,12 +34,12 @@ async fn integration_test_fsck_quarantine_behavior_with_hard_links()
         assert_output_contains "no files missing"
         
         # Locate the blob file for our empty file
-        # The SHA-256 hash of an empty file is:
-        # e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-        @a assert_exists .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        # The Blake3 hash of an empty file is:
+        # af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+        @a assert_exists .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
         
         # Corrupt the blob by overwriting it with different content
-        @a write_file .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 "corrupted content"
+        @a write_file .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 "corrupted content"
         
         # Run fsck to detect the corruption (should move the corrupt file to quarantine)
         @a amber --prefer-hard-links fsck
@@ -48,7 +48,7 @@ async fn integration_test_fsck_quarantine_behavior_with_hard_links()
         assert_output_contains "blob corrupted"
         
         # Check that the original blob no longer exists
-        @a assert_does_not_exist .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        @a assert_does_not_exist .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
         
         # Verify that a quarantine file exists
         # File name pattern is <actual_hash>.<timestamp>
@@ -90,12 +90,12 @@ async fn integration_test_fsck_quarantine_behavior_with_ref_links()
         assert_output_contains "no files missing"
         
         # Locate the blob file for our empty file
-        # The SHA-256 hash of an empty file is:
-        # e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-        @a assert_exists .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        # The Blake3 hash of an empty file is:
+        # af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+        @a assert_exists .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
         
         # Corrupt the blob by overwriting it with different content
-        @a write_file .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 "corrupted content"
+        @a write_file .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 "corrupted content"
         
         # Run fsck to detect the corruption (should move the corrupt file to quarantine)
         @a amber --prefer-ref-links fsck
@@ -104,7 +104,7 @@ async fn integration_test_fsck_quarantine_behavior_with_ref_links()
         assert_output_contains "blob corrupted"
         
         # Check that the original blob no longer exists
-        @a assert_does_not_exist .amb/blobs/e3/b0/c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        @a assert_does_not_exist .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
         
         # Verify that a quarantine file exists
         # File name pattern is <actual_hash>.<timestamp>
