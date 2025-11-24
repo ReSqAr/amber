@@ -412,7 +412,13 @@ pub async fn state_with_checks(
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
     let bg_final = tokio::spawn(async move {
-        match tokio::try_join!(bg_walker, bg_split_seen, bg_split_vfs, bg_check, bg_seen_persist) {
+        match tokio::try_join!(
+            bg_walker,
+            bg_split_seen,
+            bg_split_vfs,
+            bg_check,
+            bg_seen_persist
+        ) {
             Ok(((), (), (), (), ())) => {
                 close(tx_clone, vfs_clone, last_seen_id)
                     .await
