@@ -15,7 +15,6 @@ use crate::utils::pipe::TryForwardIntoExt;
 use crate::utils::rclone::{
     Operation, RCloneConfig, RCloneTarget, RcloneEvent, RcloneStats, run_rclone,
 };
-use crate::utils::stream::BoundedWaitChunksExt;
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
@@ -57,7 +56,8 @@ fn write_rclone_files_clone<T: TransferItem>(
             .map_err(InternalError::IO)?;
         let mut writer = BufWriter::new(file);
 
-        let mut chunked_stream = rx.bounded_wait_chunks(writer_buffer_size, TIMEOUT).boxed();
+        let mut chunked_stream =
+            tokio_stream::StreamExt::chunks_timeout(rx, writer_buffer_size, TIMEOUT).boxed();
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
                 acc.push_str(&(item.path() + "\n"));
