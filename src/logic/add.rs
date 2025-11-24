@@ -1,5 +1,7 @@
 use crate::db::models;
-use crate::db::models::{InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation};
+use crate::db::models::{
+    FileCheck, InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation,
+};
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
 use crate::logic::blobify::{BlobLockMap, Blobify};
@@ -10,7 +12,7 @@ use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
 use dashmap::DashMap;
-use futures::pin_mut;
+use futures::{pin_mut, stream};
 use std::sync::Arc;
 use tokio::fs;
 
@@ -33,7 +35,7 @@ pub(crate) async fn add_files(
         "add_files::bundle",
         repository.buffer_size(BufferType::AddFilesDBAddFilesChannelSize),
     );
-    let db_bundle_handle = {
+    let bg_db_bundle = {
         let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
@@ -43,10 +45,22 @@ pub(crate) async fn add_files(
         })
     };
 
+    let (check_tx, check_rx) = flightdeck::tracked::mpsc_channel(
+        "add_files::check",
+        repository.buffer_size(BufferType::AddFilesDBAddFilesChannelSize),
+    );
+
     fs::create_dir_all(&repository.staging_path())
         .await
         .inspect_err(|e| log::error!("add_files: create_dir_all failed: {e}"))?;
-    let (state_handle, stream) = state::state(repository.clone(), WalkerConfig::default()).await?;
+    let (state_handle, stream, state_checks) =
+        state::state_with_checks(repository.clone(), WalkerConfig::default()).await?;
+
+    let local_repository = repository.clone();
+    let bg_persist_check = tokio::spawn(async move {
+        let fc = stream::select(state_checks, check_rx);
+        local_repository.add_checked_events(fc).await
+    });
 
     let mut scan_count = 0;
     let stream = futures::TryStreamExt::try_filter(stream, |file_result| {
@@ -72,55 +86,66 @@ pub(crate) async fn add_files(
     {
         let blob_locks: BlobLockMap = Arc::new(DashMap::new());
         let bundle_tx = bundle_tx.clone();
-        let stream = tokio_stream::StreamExt::map(
-            stream,
-            |file_result: Result<VirtualFile, InternalError>| {
-                let repo_id = repo_id.clone();
-                let local_repository_clone = repository.clone();
-                let blob_locks_clone = blob_locks.clone();
-                let bundle_tx = bundle_tx.clone();
-                async move {
-                    let path = local_repository_clone.root().join(file_result?.path.0);
-                    let Blobify { blob_id, blob_size } =
-                        blobify::blobify(&local_repository_clone, &path, blob_locks_clone)
-                            .await
-                            .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
+        let check_tx = check_tx.clone();
+        let stream =
+            tokio_stream::StreamExt::map(
+                stream,
+                |file_result: Result<VirtualFile, InternalError>| {
+                    let repo_id = repo_id.clone();
+                    let local_repository_clone = repository.clone();
+                    let blob_locks_clone = blob_locks.clone();
+                    let bundle_tx = bundle_tx.clone();
+                    let check_tx = check_tx.clone();
+                    async move {
+                        let path = local_repository_clone.root().join(file_result?.path.0);
+                        let Blobify { blob_id, blob_size } =
+                            blobify::blobify(&local_repository_clone, &path, blob_locks_clone)
+                                .await
+                                .inspect_err(|e| log::error!("add_files: blobify failed: {e}"))?;
 
-                    let now = chrono::Utc::now();
-                    let p = models::Path(path.rel().to_string_lossy().to_string());
-                    let file = InsertFile {
-                        path: p.clone(),
-                        blob_id: Some(blob_id.clone()),
-                        valid_from: now,
-                    };
-                    let blob = InsertBlob {
-                        repo_id,
-                        blob_id: blob_id.clone(),
-                        blob_size,
-                        has_blob: true,
-                        path: None,
-                        valid_from: now,
-                    };
-                    let mat = InsertMaterialisation {
-                        path: p.clone(),
-                        blob_id: Some(blob_id.clone()),
-                        valid_from: now,
-                    };
+                        let now = chrono::Utc::now();
+                        let p = models::Path(path.rel().to_string_lossy().to_string());
+                        let file = InsertFile {
+                            path: p.clone(),
+                            blob_id: Some(blob_id.clone()),
+                            valid_from: now,
+                        };
+                        let blob = InsertBlob {
+                            repo_id,
+                            blob_id: blob_id.clone(),
+                            blob_size,
+                            has_blob: true,
+                            path: None,
+                            valid_from: now,
+                        };
+                        let mat = InsertMaterialisation {
+                            path: p.clone(),
+                            blob_id: Some(blob_id.clone()),
+                            valid_from: now,
+                        };
 
-                    let bundle = InsertFileBundle {
-                        file,
-                        blob,
-                        materialisation: mat,
-                    };
+                        let bundle = InsertFileBundle {
+                            file,
+                            blob,
+                            materialisation: mat,
+                        };
 
-                    bundle_tx
-                        .send(bundle)
-                        .await
-                        .inspect_err(|e| log::error!("add_files: send on bundle_tx failed: {e}"))?;
-                    Ok::<RepoPath, InternalError>(path)
-                }
-            },
-        );
+                        let check = FileCheck {
+                            path: p,
+                            check_dttm: now,
+                            hash: blob_id.clone(),
+                        };
+
+                        bundle_tx.send(bundle).await.inspect_err(|e| {
+                            log::error!("add_files: send on bundle_tx failed: {e}")
+                        })?;
+                        check_tx.send(check).await.inspect_err(|e| {
+                            log::error!("add_files: send on check_tx failed: {e}")
+                        })?;
+                        Ok::<RepoPath, InternalError>(path)
+                    }
+                },
+            );
 
         // allow multiple blobify operations to run concurrently
         let stream = futures::StreamExt::buffer_unordered(
@@ -143,7 +168,9 @@ pub(crate) async fn add_files(
     }
 
     drop(bundle_tx);
-    db_bundle_handle.await??;
+    drop(check_tx);
+    bg_db_bundle.await??;
+    bg_persist_check.await??;
 
     let duration = start_time.elapsed();
     let msg = if count > 0 {

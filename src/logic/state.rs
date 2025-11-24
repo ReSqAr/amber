@@ -175,6 +175,30 @@ pub async fn state(
     ),
     InternalError,
 > {
+    let vfs_clone = vfs.clone();
+
+    let (bg, s, fc) = state_with_checks(vfs, config).await?;
+
+    let bg = tokio::spawn(async move {
+        vfs_clone.add_checked_events(fc).await?;
+
+        bg.await?
+    });
+
+    Ok((bg, s))
+}
+
+pub async fn state_with_checks(
+    vfs: impl VirtualFilesystem + Local + Config + Send + Sync + Clone + 'static,
+    config: WalkerConfig,
+) -> Result<
+    (
+        JoinHandle<Result<(), InternalError>>,
+        impl Stream<Item = Result<VirtualFile, InternalError>>,
+        impl Stream<Item = FileCheck>,
+    ),
+    InternalError,
+> {
     let root = vfs.root();
     let last_seen_id = current_timestamp_ns();
 
@@ -210,17 +234,6 @@ pub async fn state(
         }
     });
 
-    let vfs_clone = vfs.clone();
-    let tx_clone = tx.clone();
-    let bg_checked_persist: JoinHandle<()> = tokio::spawn(async move {
-        if let Err(e) = vfs_clone.add_checked_events(check_db_rx).await {
-            tx_clone
-                .send(Err(e.into()))
-                .await
-                .expect("failed to send error to output stream");
-        }
-    });
-
     // enrich and split walker stream
     let walker_buffer_size = vfs.buffer_size(BufferType::WalkerChannelSize);
     let (bg_walker, walker_rx) = walk(root.abs().clone(), config, walker_buffer_size)
@@ -236,7 +249,7 @@ pub async fn state(
         })
     });
     let tx_clone = tx.clone();
-    let bg_walker2: JoinHandle<()> = tokio::spawn(async move {
+    let bg_split_seen: JoinHandle<()> = tokio::spawn(async move {
         let mut walker_rx = walker_rx;
         while let Some(fs) = walker_rx.next().await {
             match fs {
@@ -265,7 +278,7 @@ pub async fn state(
     // enrich file seen stream & split it
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
-    let splitter_handle: JoinHandle<()> = tokio::spawn(async move {
+    let bg_split_vfs: JoinHandle<()> = tokio::spawn(async move {
         let mut vfs_stream = vfs_clone.select_virtual_filesystem(seen_rx).await.boxed();
         while let Some(vf) = vfs_stream.next().await {
             match vf {
@@ -314,7 +327,7 @@ pub async fn state(
     // check recently altered files
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
-    let checker_handle: JoinHandle<()> = tokio::spawn(async move {
+    let bg_check: JoinHandle<()> = tokio::spawn(async move {
         needs_check_rx
             .map(|vf| {
                 let vfs_clone = vfs_clone.clone();
@@ -398,16 +411,9 @@ pub async fn state(
 
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
-    let final_handle = tokio::spawn(async move {
-        match tokio::try_join!(
-            bg_seen_persist,
-            bg_checked_persist,
-            bg_walker,
-            bg_walker2,
-            splitter_handle,
-            checker_handle,
-        ) {
-            Ok(((), (), (), (), (), ())) => {
+    let bg_final = tokio::spawn(async move {
+        match tokio::try_join!(bg_walker, bg_split_seen, bg_split_vfs, bg_check, bg_seen_persist) {
+            Ok(((), (), (), (), ())) => {
                 close(tx_clone, vfs_clone, last_seen_id)
                     .await
                     .inspect_err(|e| log::error!("state: close failed: {e}"))?;
@@ -423,5 +429,5 @@ pub async fn state(
         }
     });
 
-    Ok((final_handle, rx))
+    Ok((bg_final, rx, check_db_rx))
 }
