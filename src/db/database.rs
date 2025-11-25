@@ -133,10 +133,10 @@ impl Database {
         Ok(result.map(|r| r.name))
     }
 
-    pub async fn add_files<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = InsertFile> + Send + Unpin,
-    {
+    pub async fn add_files(
+        &self,
+        s: impl Stream<Item = InsertFile> + Send + Unpin,
+    ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
@@ -175,10 +175,10 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_blobs<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = InsertBlob> + Send + Unpin,
-    {
+    pub async fn add_blobs(
+        &self,
+        s: impl Stream<Item = InsertBlob> + Send + Unpin,
+    ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.blobs_writer.transaction()?;
@@ -218,10 +218,10 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_file_bundles<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = InsertFileBundle> + Send + Unpin,
-    {
+    pub async fn add_file_bundles(
+        &self,
+        s: impl Stream<Item = InsertFileBundle> + Send + Unpin,
+    ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
 
@@ -338,10 +338,10 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = InsertRepositoryName> + Send + Unpin,
-    {
+    pub async fn add_repository_names(
+        &self,
+        s: impl Stream<Item = InsertRepositoryName> + Send + Unpin,
+    ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.repository_names_writer.transaction()?;
@@ -464,18 +464,18 @@ impl Database {
             .boxed()
     }
 
-    pub async fn merge_repositories<S>(&self, s: S) -> Result<(), DBError>
-    where
-        S: Stream<Item = Repository> + Unpin + Send + 'static,
-    {
+    pub async fn merge_repositories(
+        &self,
+        s: impl Stream<Item = Repository> + Unpin + Send + 'static,
+    ) -> Result<(), DBError> {
         self.kv.apply_repositories(s.map(Ok)).await?;
         Ok(())
     }
 
-    pub async fn merge_files<S>(&self, s: S) -> Result<(), DBError>
-    where
-        S: Stream<Item = File> + Unpin + Send,
-    {
+    pub async fn merge_files(
+        &self,
+        s: impl Stream<Item = File> + Unpin + Send,
+    ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
@@ -507,9 +507,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_blobs<S>(&self, s: S) -> Result<(), DBError>
-    where
-        S: Stream<Item = Blob> + Unpin + Send,
+    pub async fn merge_blobs(&self, s: impl Stream<Item = Blob> + Unpin + Send) -> Result<(), DBError>
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -542,9 +540,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_repository_names<S>(&self, s: S) -> Result<(), DBError>
-    where
-        S: Stream<Item = RepositoryName> + Unpin + Send,
+    pub async fn merge_repository_names(&self, s: impl Stream<Item = RepositoryName> + Unpin + Send) -> Result<(), DBError>
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -717,9 +713,7 @@ impl Database {
         s
     }
 
-    pub async fn add_materialisations<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = InsertMaterialisation> + Send + Unpin,
+    pub async fn add_materialisations(&self, s: impl Stream<Item = InsertMaterialisation> + Send + Unpin) -> Result<u64, DBError>
     {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;

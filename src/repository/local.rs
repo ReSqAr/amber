@@ -337,38 +337,38 @@ impl Availability for LocalRepository {
 }
 
 impl Adder for LocalRepository {
-    async fn add_files<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = models::InsertFile> + Unpin + Send,
-    {
+    async fn add_files(
+        &self,
+        s: impl Stream<Item = models::InsertFile> + Unpin + Send,
+    ) -> Result<u64, DBError> {
         self.db.add_files(s).await
     }
 
-    async fn add_blobs<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = models::InsertBlob> + Unpin + Send,
-    {
+    async fn add_blobs(
+        &self,
+        s: impl Stream<Item = models::InsertBlob> + Unpin + Send,
+    ) -> Result<u64, DBError> {
         self.db.add_blobs(s).await
     }
 
-    async fn add_file_bundles<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = models::InsertFileBundle> + Unpin + Send,
-    {
+    async fn add_file_bundles(
+        &self,
+        s: impl Stream<Item = models::InsertFileBundle> + Unpin + Send,
+    ) -> Result<u64, DBError> {
         self.db.add_file_bundles(s).await
     }
 
-    async fn add_repository_names<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = models::InsertRepositoryName> + Unpin + Send,
-    {
+    async fn add_repository_names(
+        &self,
+        s: impl Stream<Item = models::InsertRepositoryName> + Unpin + Send,
+    ) -> Result<u64, DBError> {
         self.db.add_repository_names(s).await
     }
 
-    async fn add_materialisation<S>(&self, s: S) -> Result<u64, DBError>
-    where
-        S: Stream<Item = models::InsertMaterialisation> + Unpin + Send,
-    {
+    async fn add_materialisation(
+        &self,
+        s: impl Stream<Item = models::InsertMaterialisation> + Unpin + Send,
+    ) -> Result<u64, DBError> {
         self.db.add_materialisations(s).await
     }
 }
@@ -408,10 +408,10 @@ impl Syncer<Repository> for LocalRepository {
         self.db.select_repositories().map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: Stream<Item = Repository> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = Repository> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         self.db.merge_repositories(s).err_into()
     }
 }
@@ -430,10 +430,10 @@ impl Syncer<File> for LocalRepository {
         self.db.select_files(last_index).map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: Stream<Item = File> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = File> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         self.db.merge_files(s).err_into()
     }
 }
@@ -452,10 +452,10 @@ impl Syncer<Blob> for LocalRepository {
         self.db.select_blobs(last_index).map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: Stream<Item = Blob> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = Blob> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         self.db.merge_blobs(s).err_into()
     }
 }
@@ -475,10 +475,10 @@ impl Syncer<RepositoryName> for LocalRepository {
             .map(|s| s.err_into())
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: Stream<Item = RepositoryName> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = RepositoryName> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         self.db.merge_repository_names(s).err_into()
     }
 }
@@ -613,10 +613,10 @@ impl RcloneTargetPath for LocalRepository {
 }
 
 impl Sender<BlobTransferItem> for LocalRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
-    where
-        S: Stream<Item = BlobTransferItem> + Unpin + Send + 'static,
-    {
+    async fn prepare_transfer(
+        &self,
+        s: impl Stream<Item = BlobTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
         let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| async move {
             let blob_path = self.blob_path(&item.blob_id);
             let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);
@@ -706,10 +706,10 @@ impl Into<SizedBlobID> for FileTransferItem {
 }
 
 impl Sender<FileTransferItem> for LocalRepository {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
-    where
-        S: Stream<Item = FileTransferItem> + Unpin + Send + 'static,
-    {
+    async fn prepare_transfer(
+        &self,
+        s: impl Stream<Item = FileTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
         let stream = tokio_stream::StreamExt::map(s, |item: FileTransferItem| async move {
             let blob_path = self.blob_path(&item.blob_id);
             let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);

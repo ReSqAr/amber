@@ -63,10 +63,10 @@ impl RcloneTargetPath for RCloneStore {
 }
 
 impl Sender<FileTransferItem> for RCloneStore {
-    async fn prepare_transfer<S>(&self, s: S) -> Result<u64, InternalError>
-    where
-        S: Stream<Item = FileTransferItem> + Unpin + Send + 'static,
-    {
+    async fn prepare_transfer(
+        &self,
+        s: impl Stream<Item = FileTransferItem> + Unpin + Send + 'static,
+    ) -> Result<u64, InternalError> {
         let stream = s;
         let mut count = 0;
         pin_mut!(stream);

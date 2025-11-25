@@ -69,25 +69,30 @@ pub trait Availability {
 
 pub trait Adder {
     #[allow(dead_code)]
-    fn add_files<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = crate::db::models::InsertFile> + Unpin + Send;
+    fn add_files(
+        &self,
+        s: impl Stream<Item = models::InsertFile> + Unpin + Send,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send;
 
-    fn add_blobs<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = crate::db::models::InsertBlob> + Unpin + Send;
+    fn add_blobs(
+        &self,
+        s: impl Stream<Item = models::InsertBlob> + Unpin + Send,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send;
 
-    fn add_file_bundles<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = InsertFileBundle> + Unpin + Send;
+    fn add_file_bundles(
+        &self,
+        s: impl Stream<Item = InsertFileBundle> + Unpin + Send,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send;
 
-    fn add_repository_names<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = crate::db::models::InsertRepositoryName> + Unpin + Send;
+    fn add_repository_names(
+        &self,
+        s: impl Stream<Item = models::InsertRepositoryName> + Unpin + Send,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send;
 
-    fn add_materialisation<S>(&self, s: S) -> impl Future<Output = Result<u64, DBError>> + Send
-    where
-        S: Stream<Item = crate::db::models::InsertMaterialisation> + Unpin + Send;
+    fn add_materialisation(
+        &self,
+        s: impl Stream<Item = models::InsertMaterialisation> + Unpin + Send,
+    ) -> impl Future<Output = Result<u64, DBError>> + Send;
 }
 
 #[derive(Debug)]
@@ -115,9 +120,10 @@ pub trait Syncer<T: SyncerParams> {
         params: <T as SyncerParams>::Params,
     ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: Stream<Item = T> + Unpin + Send + 'static;
+    fn merge(
+        &self,
+        s: impl Stream<Item = T> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send;
 }
 
 pub trait VirtualFilesystem {
@@ -184,9 +190,10 @@ pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'stati
 }
 
 pub trait Sender<T: TransferItem> {
-    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
-    where
-        S: Stream<Item = T> + Unpin + Send + 'static;
+    fn prepare_transfer(
+        &self,
+        s: impl Stream<Item = T> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<u64, InternalError>> + Send;
 }
 
 pub trait Receiver<T: TransferItem> {
