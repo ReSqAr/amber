@@ -306,16 +306,36 @@ impl KVStores {
         })
     }
 
+    pub(crate) async fn close(&self) -> Result<(), DBError> {
+        tokio::try_join!(
+            self.current_blobs.close(),
+            self.current_files.close(),
+            self.current_materialisations.close(),
+            self.current_repository_names.close(),
+            self.current_observations.close(),
+            self.current_checks.close(),
+            self.current_repository.close(),
+            self.repositories.close(),
+            self.connections.close(),
+            self.current_reductions.close(),
+        )?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     async fn compact(&self) -> Result<(), DBError> {
         tokio::try_join!(
             self.current_blobs.compact(),
             self.current_files.compact(),
             self.current_materialisations.compact(),
+            self.current_repository_names.compact(),
             self.current_observations.compact(),
             self.current_checks.compact(),
+            self.current_repository.compact(),
+            self.repositories.compact(),
+            self.connections.compact(),
+            self.current_reductions.compact(),
         )?;
-
         Ok(())
     }
 
@@ -592,6 +612,48 @@ impl KVStores {
     }
 }
 
+pub struct DatabaseGuard {
+    pub(crate) name: String,
+    pub(crate) db: Option<Database>,
+}
+
+impl DatabaseGuard {
+    fn close_sync(&mut self) {
+        let db = self.db.take();
+        let name = self.name.clone();
+        let tracer = Tracer::new_on(format!("RedbTable({})::close", name));
+        drop(db);
+        tracer.measure();
+    }
+}
+
+impl std::ops::Deref for DatabaseGuard {
+    type Target = Option<Database>;
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+impl std::ops::DerefMut for DatabaseGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.db
+    }
+}
+impl Drop for DatabaseGuard {
+    fn drop(&mut self) {
+        if let Some(_db) = self.db.take() {
+            #[cfg(debug_assertions)]
+            panic!("Use ::close instead of relying on the default Drop behaviour");
+
+            #[cfg(not(debug_assertions))]
+            {
+                let tracer = Tracer::new_on(format!("RedbTable({})::drop", self.name));
+                drop(_db);
+                tracer.measure();
+            }
+        }
+    }
+}
+
 pub(crate) struct KVStore<K, V, KO, VO>
 where
     K: Key + 'static,
@@ -599,7 +661,7 @@ where
     for<'a> K::SelfType<'a>: ToOwned<Owned = KO>,
     for<'a> V::SelfType<'a>: ToOwned<Owned = VO>,
 {
-    db: Arc<RwLock<Database>>,
+    db: Arc<RwLock<DatabaseGuard>>,
     table: TableDefinition<'static, K, V>,
 }
 
@@ -639,21 +701,34 @@ where
             let db = if path.exists() {
                 Database::open(path)?
             } else {
-                Database::create(path)?
+                let db = Database::create(path)?;
+                {
+                    let txn = db.begin_write()?;
+                    {
+                        let _ = txn.open_table(table)?;
+                    }
+                    txn.commit()?;
+                }
+                db
             };
 
-            let db = Arc::new(RwLock::new(db));
-            {
-                let txn = db.read().begin_write()?;
-                {
-                    let _ = txn.open_table(table)?;
-                }
-                txn.commit()?;
-            }
-
+            let db = Arc::new(RwLock::new(DatabaseGuard {
+                db: Some(db),
+                name: table.name().to_owned(),
+            }));
             Ok(Self { db, table })
         })
         .await?
+    }
+
+    async fn close(&self) -> Result<(), DBError> {
+        let db = self.db.clone();
+        task::spawn_blocking(move || {
+            let mut guard = db.write();
+            guard.close_sync();
+        })
+        .await?;
+        Ok(())
     }
 
     async fn compact(&self) -> Result<(), DBError> {
@@ -661,7 +736,7 @@ where
         let db = self.db.clone();
         task::spawn_blocking(move || {
             let mut guard = db.write();
-            guard.compact()
+            Ok::<_, DBError>(guard.as_mut().ok_or(DBError::AccessAfterDrop)?.compact()?)
         })
         .await??;
         tracer.measure();
@@ -678,7 +753,11 @@ where
         task::spawn_blocking(move || {
             let work: Result<(), DBError> = (|| {
                 let tracer = Tracer::new_on(format!("RedbTable({})::stream::acq", table.name()));
-                let txn = db.read().begin_read()?;
+                let txn = db
+                    .read()
+                    .as_ref()
+                    .ok_or(DBError::AccessAfterDrop)?
+                    .begin_read()?;
                 tracer.measure();
 
                 let table = txn.open_table(table)?;
@@ -715,7 +794,10 @@ where
             tracer.measure();
 
             let tracer = Tracer::new_on(format!("RedbTable({})::apply::open", table.name()));
-            let txn = guard.begin_write()?;
+            let txn = guard
+                .as_ref()
+                .ok_or(DBError::AccessAfterDrop)?
+                .begin_write()?;
             let mut table = txn.open_table(table)?;
             tracer.measure();
 
@@ -770,7 +852,10 @@ where
             tracer.measure();
 
             let tracer = Tracer::new_on(format!("RedbTable({})::upsert::open", table.name()));
-            let txn = guard.begin_write()?;
+            let txn = guard
+                .as_ref()
+                .ok_or(DBError::AccessAfterDrop)?
+                .begin_write()?;
             let mut table = txn.open_table(table)?;
             tracer.measure();
 
@@ -854,7 +939,11 @@ where
 
                 let tracer =
                     Tracer::new_on(format!("RedbTable({})::left_join::open", table.name()));
-                let txn = guard.begin_read().map_err(Into::<DBError>::into)?;
+                let txn = guard
+                    .as_ref()
+                    .ok_or(DBError::AccessAfterDrop)?
+                    .begin_read()
+                    .map_err(Into::<DBError>::into)?;
                 let table = txn.open_table(table).map_err(Into::<DBError>::into)?;
                 tracer.measure();
 

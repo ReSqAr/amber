@@ -37,6 +37,16 @@ pub(crate) struct GRPCClient {
     shutdown: ShutdownFn,
 }
 
+impl GRPCClient {
+    pub(crate) async fn close(&self) -> Result<(), InternalError> {
+        let mut guard = self.shutdown.write().unwrap();
+        if let Some(shutdown) = guard.take() {
+            shutdown()
+        };
+        Ok(())
+    }
+}
+
 impl Drop for GRPCClient {
     fn drop(&mut self) {
         let mut guard = self.shutdown.write().unwrap();

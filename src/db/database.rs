@@ -94,6 +94,11 @@ impl Database {
         Ok(())
     }
 
+    pub async fn close(&self) -> Result<(), DBError> {
+        self.kv.close().await?;
+        Ok(())
+    }
+
     fn next_offset(i: Option<impl Into<Offset>>) -> Offset {
         match i {
             None => Offset::start(),

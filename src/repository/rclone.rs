@@ -41,6 +41,10 @@ impl RCloneStore {
             path: path.into(),
         })
     }
+    pub(crate) async fn close(&self) -> Result<(), InternalError> {
+        self.local.close().await?;
+        Ok(())
+    }
 }
 
 impl Metadata for RCloneStore {

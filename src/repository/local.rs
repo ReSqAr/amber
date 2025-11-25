@@ -210,6 +210,7 @@ impl LocalRepository {
         }]))
         .await?;
 
+        db.close().await?;
         drop(db);
 
         Self::new(LocalRepositoryConfig {
@@ -220,6 +221,10 @@ impl LocalRepository {
         .await
     }
 
+    pub(crate) async fn close(&self) -> Result<(), InternalError> {
+        self.db.close().await?;
+        Ok(())
+    }
     pub(crate) fn db(&self) -> &Database {
         &self.db
     }

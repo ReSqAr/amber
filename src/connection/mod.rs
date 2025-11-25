@@ -46,4 +46,9 @@ impl EstablishedConnection {
     pub(crate) fn remote_rclone_target(&self, remote_path: String) -> ConnectionTarget {
         self.config.as_rclone_target(remote_path)
     }
+
+    pub(crate) async fn close(&self) -> Result<(), InternalError> {
+        self.remote.close().await?;
+        Ok(())
+    }
 }

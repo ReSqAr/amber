@@ -23,5 +23,6 @@ pub async fn set_name(
 
     output.println(format!("renamed repository to {}", name));
 
+    local_repository.close().await?;
     Ok(())
 }

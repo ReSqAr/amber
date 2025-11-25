@@ -43,10 +43,13 @@ pub async fn fsck(
                     fsck_remote::fsck_remote(&local, &remote, &connection, config).await?;
                 }
             };
+
+            connection.close().await?;
         } else {
             fsck_local::fsck_local(&local).await?;
         }
 
+        local.close().await?;
         Ok::<(), InternalError>(())
     };
 

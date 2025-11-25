@@ -36,10 +36,13 @@ pub async fn missing(
                     list_missing_blobs(remote).await?;
                 }
             };
+
+            connection.close().await?;
         } else {
-            list_missing_blobs(local).await?;
+            list_missing_blobs(local.clone()).await?;
         }
 
+        local.close().await?;
         Ok::<(), InternalError>(())
     };
 

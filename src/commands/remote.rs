@@ -44,6 +44,7 @@ pub async fn list(
         output.println(format!("{table}"));
     }
 
+    local_repository.close().await?;
     Ok(())
 }
 
@@ -64,7 +65,7 @@ pub async fn add(
             ConnectionName(name.clone()),
             connection_type.clone(),
             parameter,
-            local_repository,
+            local_repository.clone(),
         )
         .await?;
         let remote_meta = connection.remote.current().await?;
@@ -78,6 +79,8 @@ pub async fn add(
         );
         init_obs.observe_termination(log::Level::Info, msg);
 
+        local_repository.close().await?;
+        connection.close().await?;
         Ok::<(), InternalError>(())
     };
 
@@ -128,5 +131,6 @@ async fn add_connection(
 
     local_repository.add(connection).await?;
 
+    local_repository.close().await?;
     Ok(established)
 }
