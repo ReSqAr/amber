@@ -76,13 +76,10 @@ async fn assimilate_blob(
     })
 }
 
-pub(crate) async fn assimilate<S>(
+pub(crate) async fn assimilate(
     local: &(impl Local + Metadata + Adder + Send + Sync + Config),
-    stream: S,
-) -> Result<u64, InternalError>
-where
-    S: Stream<Item = Item> + Unpin + Send + 'static,
-{
+    stream: impl Stream<Item = Item> + Unpin + Send + 'static,
+) -> Result<u64, InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut obs = Observer::without_id("assimilate");
     let blob_locks: BlobLockMap = Arc::new(DashMap::new());

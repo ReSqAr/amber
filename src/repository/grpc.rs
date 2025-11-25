@@ -211,10 +211,10 @@ impl Syncer<models::Repository> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: futures::Stream<Item = models::Repository> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = models::Repository> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -249,10 +249,10 @@ impl Syncer<models::File> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: futures::Stream<Item = models::File> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = models::File> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -287,10 +287,10 @@ impl Syncer<models::Blob> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: futures::Stream<Item = models::Blob> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = models::Blob> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -325,10 +325,10 @@ impl Syncer<models::RepositoryName> for GRPCClient {
         }
     }
 
-    fn merge<S>(&self, s: S) -> impl Future<Output = Result<(), InternalError>> + Send
-    where
-        S: futures::Stream<Item = models::RepositoryName> + Unpin + Send + 'static,
-    {
+    fn merge(
+        &self,
+        s: impl Stream<Item = models::RepositoryName> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<(), InternalError>> + Send {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -356,10 +356,10 @@ impl RcloneTargetPath for GRPCClient {
 }
 
 impl Sender<models::BlobTransferItem> for GRPCClient {
-    fn prepare_transfer<S>(&self, s: S) -> impl Future<Output = Result<u64, InternalError>> + Send
-    where
-        S: futures::Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
-    {
+    fn prepare_transfer(
+        &self,
+        s: impl Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
+    ) -> impl Future<Output = Result<u64, InternalError>> + Send {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
