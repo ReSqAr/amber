@@ -24,6 +24,7 @@ pub async fn init_repository(
         );
         init_obs.observe_termination(log::Level::Info, msg);
 
+        local.close().await?;
         Ok::<(), InternalError>(())
     };
 

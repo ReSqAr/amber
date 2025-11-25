@@ -23,7 +23,7 @@ pub async fn sync(
         let start_time = tokio::time::Instant::now();
         let mut sync_obs = BaseObserver::without_id("sync");
 
-        connect_sync_materialise(local_repository, connection_name.clone()).await?;
+        connect_sync_materialise(local_repository.clone(), connection_name.clone()).await?;
 
         let duration = start_time.elapsed();
         let msg = match connection_name {
@@ -34,6 +34,7 @@ pub async fn sync(
         };
         sync_obs.observe_termination(log::Level::Info, msg);
 
+        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 
@@ -138,6 +139,8 @@ async fn connect_sync_materialise(
                 }));
             }
         };
+
+        connection.close().await?;
     }
 
     materialise::materialise(&local).await?;

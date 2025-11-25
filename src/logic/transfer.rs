@@ -191,7 +191,7 @@ pub async fn transfer<T: TransferItem>(
     local: &(impl Metadata + Local + Send + Sync + Clone + Config + 'static),
     source: &(impl Metadata + Sender<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
     destination: &(impl Metadata + Receiver<T> + RcloneTargetPath + Send + Sync + Clone + 'static),
-    connection: EstablishedConnection,
+    connection: &EstablishedConnection,
     paths: Vec<RepoPath>,
     config: RCloneConfig,
 ) -> Result<u64, InternalError> {

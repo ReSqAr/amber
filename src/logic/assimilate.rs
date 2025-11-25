@@ -152,6 +152,7 @@ mod tests {
         let buf = fs::read(&blob_file).await?;
         assert_eq!(buf, b"Hello world!");
 
+        local.close().await?;
         Ok(())
     }
 }

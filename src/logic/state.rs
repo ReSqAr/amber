@@ -181,6 +181,7 @@ pub async fn state(
 
     let bg = tokio::spawn(async move {
         vfs_clone.add_checked_events(fc).await?;
+        drop(vfs_clone);
 
         let tracer = Tracer::new_on("state::bg::await");
         let result = bg.await?;

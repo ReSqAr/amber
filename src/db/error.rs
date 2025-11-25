@@ -27,4 +27,6 @@ pub enum DBError {
     Serialization(#[from] bincode::Error),
     #[error("send error: {0}")]
     SendError(String),
+    #[error("database accessed after close")]
+    AccessAfterDrop,
 }

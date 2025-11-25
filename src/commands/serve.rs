@@ -111,7 +111,7 @@ pub async fn serve_on_port(
 
     debug!("listening on {}", addr);
     let auth_interceptor = ServerAuth::new(auth_key);
-    let service = Service::new(local_repository);
+    let service = Service::new(local_repository.clone());
     let service = definitions::grpc_server::GrpcServer::with_interceptor(service, auth_interceptor);
     let server = Server::builder()
         .add_service(service)
@@ -122,5 +122,6 @@ pub async fn serve_on_port(
     files::cleanup_staging(&staging_path).await?;
     debug!("deleted staging {}", staging_path.display());
 
+    local_repository.close().await?;
     Ok(())
 }

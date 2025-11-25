@@ -20,9 +20,9 @@ pub(crate) async fn rm(
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        fs::rm(&local, paths, hard).await?;
-
-        Ok(())
+        let result = fs::rm(&local, paths, hard).await;
+        local.close().await?;
+        result
     };
 
     flightdeck::flightdeck(
@@ -71,9 +71,9 @@ pub(crate) async fn mv(
     let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        fs::mv(&local, &source, &destination).await?;
-
-        Ok(())
+        let result = fs::mv(&local, &source, &destination).await;
+        local.close().await?;
+        result
     };
 
     flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await

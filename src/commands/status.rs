@@ -21,7 +21,9 @@ pub async fn status(
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
-        show_status(local_repository).await?;
+        show_status(local_repository.clone()).await?;
+
+        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 

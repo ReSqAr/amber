@@ -17,7 +17,9 @@ pub async fn add(
     let log_path = local_repository.log_path().abs().clone();
 
     let wrapped = async {
-        add::add_files(local_repository).await?;
+        add::add_files(local_repository.clone()).await?;
+
+        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 

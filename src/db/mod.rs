@@ -11,10 +11,10 @@ use crate::utils::errors::InternalError;
 use std::path::Path;
 
 pub async fn open(repository_path: &Path) -> Result<Database, InternalError> {
+    let kv = KVStores::new(repository_path.join("kv"));
     let logs = logs::Logs::new(repository_path);
-    let redb = KVStores::new(repository_path.join("redb"));
-    let (logs, redb) = tokio::try_join!(logs, redb)?;
-    let db = Database::new(redb, logs);
+    let (kv, logs) = tokio::try_join!(kv, logs)?;
+    let db = Database::new(kv, logs);
 
     db.clean().await?;
 

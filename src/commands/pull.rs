@@ -51,16 +51,16 @@ pub async fn pull(
         let count = match remote {
             WrappedRepository::Local(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &remote, &local, connection, paths, config)
+                transfer::<BlobTransferItem>(&local, &remote, &local, &connection, paths, config)
                     .await?
             }
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &remote, &local, connection, paths, config)
+                transfer::<BlobTransferItem>(&local, &remote, &local, &connection, paths, config)
                     .await?
             }
             WrappedRepository::RClone(remote) => {
-                transfer::<FileTransferItem>(&local, &remote, &local, connection, paths, config)
+                transfer::<FileTransferItem>(&local, &remote, &local, &connection, paths, config)
                     .await?
             }
         };
@@ -76,6 +76,8 @@ pub async fn pull(
         );
         sync_obs.observe_termination(log::Level::Info, msg);
 
+        local.close().await?;
+        connection.close().await?;
         Ok::<(), InternalError>(())
     };
 
