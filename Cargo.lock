@@ -420,7 +420,7 @@ dependencies = [
 [[package]]
 name = "behemoth"
 version = "0.1.0"
-source = "git+https://github.com/ReSqAr/behemoth.git?rev=e135d96a3b17252518a2c22ad4d026d4c531f528#e135d96a3b17252518a2c22ad4d026d4c531f528"
+source = "git+https://github.com/ReSqAr/behemoth.git?rev=f4fce492937baa6e869534b2f179072af930396b#f4fce492937baa6e869534b2f179072af930396b"
 dependencies = [
  "async-stream",
  "bincode 2.0.1",
