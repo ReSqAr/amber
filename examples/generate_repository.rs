@@ -450,7 +450,7 @@ fn main() -> io::Result<()> {
     let (tasks, accumulated) = collect_tasks(total_target, &sizes, &weights, &mut rng, &folders);
     let total_tasks = tasks.len();
     println!(
-        "Placing {} files with a total of {} bytes (target was {} bytes)...",
+        "Placing {} files with a total of {} bytes (target was {})...",
         total_tasks,
         human_readable_size(accumulated),
         human_readable_size(accumulated)

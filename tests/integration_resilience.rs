@@ -1,9 +1,6 @@
-use serial_test::serial;
-
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_resilience_missing_files() -> Result<(), anyhow::Error> {
     let script = r#"
         # when

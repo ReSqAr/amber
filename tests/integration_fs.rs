@@ -1,8 +1,6 @@
-use serial_test::serial;
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_mv() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -36,7 +34,6 @@ async fn integration_test_mv() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_mv_detect_changed_file() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -58,7 +55,6 @@ async fn integration_test_mv_detect_changed_file() -> anyhow::Result<(), anyhow:
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_dir_to_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -95,7 +91,6 @@ async fn integration_mv_dir_to_dir() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_not_yet_pushed_file() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -131,7 +126,6 @@ async fn integration_mv_not_yet_pushed_file() -> anyhow::Result<(), anyhow::Erro
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_not_yet_pushed_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -174,7 +168,6 @@ async fn integration_mv_not_yet_pushed_dir() -> anyhow::Result<(), anyhow::Error
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_destination_file_exists() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -193,7 +186,6 @@ async fn integration_mv_destination_file_exists() -> anyhow::Result<(), anyhow::
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_source_equals_destination() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -210,7 +202,6 @@ async fn integration_mv_source_equals_destination() -> anyhow::Result<(), anyhow
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_recursive_dir_into_subdir_allowed() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -240,7 +231,6 @@ async fn integration_mv_recursive_dir_into_subdir_allowed() -> anyhow::Result<()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_trailing_slash_dir_hint() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -269,7 +259,6 @@ async fn integration_mv_trailing_slash_dir_hint() -> anyhow::Result<(), anyhow::
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -301,7 +290,6 @@ async fn integration_mv_dir() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_file_into_dir_forbidden() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -318,7 +306,6 @@ async fn integration_mv_file_into_dir_forbidden() -> anyhow::Result<(), anyhow::
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_no_files_to_move() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -336,7 +323,6 @@ async fn integration_mv_no_files_to_move() -> anyhow::Result<(), anyhow::Error> 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_protect_tracked_files() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -375,7 +361,6 @@ async fn integration_mv_protect_tracked_files() -> anyhow::Result<(), anyhow::Er
     dsl_definition::run_dsl_script(script).await
 }
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_mv_protect_existing_files() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -397,7 +382,6 @@ async fn integration_mv_protect_existing_files() -> anyhow::Result<(), anyhow::E
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rm() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -416,7 +400,6 @@ async fn integration_test_rm() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rm_soft() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -437,7 +420,6 @@ async fn integration_test_rm_soft() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rm_not_existing_file() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -451,7 +433,6 @@ async fn integration_test_rm_not_existing_file() -> anyhow::Result<(), anyhow::E
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_dir_prefix() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -472,7 +453,6 @@ async fn integration_rm_dir_prefix() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_db_only_file() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -493,7 +473,6 @@ async fn integration_rm_db_only_file() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_trailing_slash_dir_hint() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -513,7 +492,6 @@ async fn integration_rm_trailing_slash_dir_hint() -> anyhow::Result<(), anyhow::
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_trailing_slash_dir_hint_in_db() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -536,7 +514,6 @@ async fn integration_rm_trailing_slash_dir_hint_in_db() -> anyhow::Result<(), an
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_trailing_slash_dir_hint_in_db_conflict_file()
 -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -555,7 +532,6 @@ async fn integration_rm_trailing_slash_dir_hint_in_db_conflict_file()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_multi_input_partial_success() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -575,7 +551,6 @@ async fn integration_rm_multi_input_partial_success() -> anyhow::Result<(), anyh
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_overlapping_inputs_dir_and_child() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -592,7 +567,6 @@ async fn integration_rm_overlapping_inputs_dir_and_child() -> anyhow::Result<(),
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_hard_keeps_modified_file() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -617,7 +591,6 @@ async fn integration_rm_hard_keeps_modified_file() -> anyhow::Result<(), anyhow:
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_hard_keeps_modified_file_within_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -643,7 +616,6 @@ async fn integration_rm_hard_keeps_modified_file_within_dir() -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_hard_keeps_modified_file_after_status() -> anyhow::Result<(), anyhow::Error>
 {
     let script = r#"
@@ -670,7 +642,6 @@ async fn integration_rm_hard_keeps_modified_file_after_status() -> anyhow::Resul
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_hard_keeps_modified_file_within_dir_after_status()
 -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -698,7 +669,6 @@ async fn integration_rm_hard_keeps_modified_file_within_dir_after_status()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_soft_dir() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -721,7 +691,6 @@ async fn integration_rm_soft_dir() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_rm_push_sync_propagation() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -747,7 +716,6 @@ async fn integration_rm_push_sync_propagation() -> anyhow::Result<(), anyhow::Er
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_mv_changed_file_and_then_delete() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a

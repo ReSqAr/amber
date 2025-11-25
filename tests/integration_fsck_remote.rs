@@ -1,8 +1,6 @@
-use serial_test::serial;
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rclone_repo_fsck() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -20,7 +18,6 @@ async fn integration_test_rclone_repo_fsck() -> anyhow::Result<(), anyhow::Error
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rclone_repo_fsck_missing_file_detection()
 -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -46,7 +43,6 @@ async fn integration_test_rclone_repo_fsck_missing_file_detection()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rclone_repo_fsck_corrupted_file_detection()
 -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -72,7 +68,6 @@ async fn integration_test_rclone_repo_fsck_corrupted_file_detection()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rclone_repo_fsck_no_files() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -87,7 +82,6 @@ async fn integration_test_rclone_repo_fsck_no_files() -> anyhow::Result<(), anyh
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_rclone_fsck_local_no_files() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when

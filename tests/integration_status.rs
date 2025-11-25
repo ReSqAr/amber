@@ -1,9 +1,6 @@
-use serial_test::serial;
-
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_new_file_state() -> Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
@@ -16,7 +13,6 @@ async fn integration_test_new_file_state() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_altered_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -40,7 +36,6 @@ async fn integration_test_altered_file() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_outdated_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -71,7 +66,6 @@ async fn integration_test_outdated_file() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_missing_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -100,7 +94,6 @@ async fn integration_test_missing_file() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -156,7 +149,6 @@ async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -200,7 +192,6 @@ async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error>
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_force_altered_file_hard_links() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -228,7 +219,6 @@ async fn integration_test_force_altered_file_hard_links() -> Result<(), anyhow::
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_force_altered_file_ref_links() -> Result<(), anyhow::Error> {
     if !dsl_definition::capability_check_ref_link().await? {
         eprintln!("Skipping test: ref links are not supported");
