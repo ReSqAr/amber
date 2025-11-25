@@ -156,8 +156,7 @@ where
                         .get(&key)
                         .map_err(DBError::from)?
                         .map(|v| v.value().to_owned());
-                    tx.blocking_send(Ok((key_like, value)))
-                        .map_err(|e| DBError::SendError(format!("{:?}", e)))?;
+                    tx.blocking_send(Ok((key_like, value)))?;
                 }
 
                 Ok(())
@@ -176,10 +175,7 @@ where
             while let Some(item) = s.next().await {
                 if let Err(e) = tx_in.send(item).await {
                     log::error!("failed to lookup({}) in redb: {}", table.name(), e);
-                    return Err(InternalError::DBError(DBError::SendError(format!(
-                        "{:?}",
-                        e
-                    ))));
+                    return Err(InternalError::DBError(e.into()));
                 }
                 count += 1;
             }
@@ -203,8 +199,7 @@ where
                     let (key, value) = item?;
                     let key_owned: Path = key.value().to_owned();
                     let value_owned: VO = value.value().to_owned();
-                    tx.blocking_send(Ok((key_owned, value_owned)))
-                        .map_err(|e| DBError::SendError(format!("{:?}", e)))?;
+                    tx.blocking_send(Ok((key_owned, value_owned)))?;
                 }
                 Ok(())
             })();
@@ -251,8 +246,7 @@ where
                             path_like: key_like,
                             current_value: value,
                             previous_value: previous_value.map(|v| v.value().to_owned()),
-                        }))
-                        .map_err(|e| DBError::SendError(format!("{:?}", e)))?;
+                        }))?;
                     }
                 }
 
@@ -273,10 +267,7 @@ where
             while let Some(item) = s.next().await {
                 if let Err(e) = tx_in.send(item).await {
                     log::error!("failed to lookup({}) in redb: {}", table.name(), e);
-                    return Err(InternalError::DBError(DBError::SendError(format!(
-                        "{:?}",
-                        e
-                    ))));
+                    return Err(InternalError::DBError(e.into()));
                 }
                 count += 1;
             }

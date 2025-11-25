@@ -56,7 +56,7 @@ pub async fn push(
             }
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &local, &remote,& connection, paths, config)
+                transfer::<BlobTransferItem>(&local, &local, &remote, &connection, paths, config)
                     .await?
             }
             WrappedRepository::RClone(remote) => {

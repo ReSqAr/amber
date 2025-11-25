@@ -10,6 +10,7 @@ use crate::db::models::{
 };
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::tracer::Tracer;
+use crate::flightdeck::tracked::mpsc_channel;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::stream::group_by_key;
 use behemoth::{Offset, StreamError, TailFrom};
@@ -17,7 +18,6 @@ use chrono::Utc;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use log::debug;
-use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future;
@@ -31,6 +31,8 @@ pub struct Database {
     kv: KVStores,
     logs: Logs,
 }
+
+const UID_BUFFER: usize = 100;
 
 pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
@@ -48,49 +50,49 @@ impl Database {
         let reductions: HashMap<_, _> = self.kv.stream_current_reductions().try_collect().await?;
         let tracer = Tracer::new_on("clean");
 
-        let mut of = BaseObserver::without_id("Database::clean::files");
-        let file_offset = Self::next_offset(reductions.get(&FILE_TABLE_NAME.into()).copied());
-        let f = self.file_log_stream(self.logs.files_writer.reader().from(file_offset));
         let mut ob = BaseObserver::without_id("Database::clean::blobs");
-        let blob_offset = Self::next_offset(reductions.get(&BLOB_TABLE_NAME.into()).copied());
-        let b = self.blob_log_stream(self.logs.blobs_writer.reader().from(blob_offset));
+        let mut of = BaseObserver::without_id("Database::clean::files");
         let mut om = BaseObserver::without_id("Database::clean::materialisations");
-        let mat_offset = Self::next_offset(reductions.get(&MAT_TABLE_NAME.into()).copied());
-        let mat_reader = self.logs.materialisations_writer.reader();
-        let m = self.materialisation_log_stream(mat_reader.from(mat_offset));
         let mut orn = BaseObserver::without_id("Database::clean::repository_names");
+
+        let blob_offset = Self::next_offset(reductions.get(&BLOB_TABLE_NAME.into()).copied());
+        let file_offset = Self::next_offset(reductions.get(&FILE_TABLE_NAME.into()).copied());
+        let mat_offset = Self::next_offset(reductions.get(&MAT_TABLE_NAME.into()).copied());
         let name_offset = Self::next_offset(reductions.get(&NAME_TABLE_NAME.into()).copied());
-        let repo_name_reader = self.logs.repository_names_writer.reader();
-        let rn = self.repository_name_log_stream(repo_name_reader.from(name_offset));
 
-        let f_count = f.await??;
-        let b_count = b.await??;
-        let m_count = m.await??;
-        let rn_count = rn.await??;
+        let b_reader = self.logs.blobs_writer.reader();
+        let f_reader = self.logs.files_writer.reader();
+        let m_reader = self.logs.materialisations_writer.reader();
+        let rn_reader = self.logs.repository_names_writer.reader();
 
-        of.observe_termination_ext(
-            log::Level::Debug,
-            "reduced",
-            [("count".into(), f_count as u64)],
-        );
+        let b = self.blob_log_stream(b_reader.from(blob_offset));
+        let f = self.file_log_stream(f_reader.from(file_offset));
+        let m = self.materialisation_log_stream(m_reader.from(mat_offset));
+        let rn = self.repository_name_log_stream(rn_reader.from(name_offset));
+
+        let (b_count, f_count, m_count, rn_count) = tokio::try_join!(b, f, m, rn)?;
         ob.observe_termination_ext(
             log::Level::Debug,
             "reduced",
-            [("count".into(), b_count as u64)],
+            [("count".into(), b_count? as u64)],
+        );
+        of.observe_termination_ext(
+            log::Level::Debug,
+            "reduced",
+            [("count".into(), f_count? as u64)],
         );
         om.observe_termination_ext(
             log::Level::Debug,
             "reduced",
-            [("count".into(), m_count as u64)],
+            [("count".into(), m_count? as u64)],
         );
         orn.observe_termination_ext(
             log::Level::Debug,
             "reduced",
-            [("count".into(), rn_count as u64)],
+            [("count".into(), rn_count? as u64)],
         );
 
         tracer.measure();
-
         Ok(())
     }
 
@@ -149,7 +151,7 @@ impl Database {
         let mut s = s.enumerate();
         while let Some((i, file)) = s.next().await {
             total_attempted += 1;
-            let uid = ts + (i as u64);
+            let uid = (ts + (i as u64)).into();
             txn.push(&File {
                 uid,
                 path: file.path.clone(),
@@ -189,7 +191,7 @@ impl Database {
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
             total_attempted += 1;
-            let uid = ts + (i as u64);
+            let uid = (ts + (i as u64)).into();
             txn.push(&Blob {
                 uid,
                 repo_id: blob.repo_id.clone(),
@@ -242,12 +244,11 @@ impl Database {
         let file_bg = self.file_log_stream(file_tail);
         let mat_bg = self.materialisation_log_stream(mat_tail);
 
-        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
-
         let mut tracer_b = Tracer::new_off("add_file_bundles::blob_txn::push");
         let mut tracer_f = Tracer::new_off("add_file_bundles::file_txn::push");
         let mut tracer_m = Tracer::new_off("add_file_bundles::mat_txn::push");
 
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
         while let Some((i, bundle)) = s.next().await {
             total_attempted += 1;
@@ -257,7 +258,7 @@ impl Database {
                 materialisation,
             } = bundle;
 
-            let uid = ts + (i as u64);
+            let uid = (ts + (i as u64)).into();
 
             tracer_b.on();
             blob_txn
@@ -291,13 +292,13 @@ impl Database {
                 blob_txn.flush().await?;
                 tracer_b.off();
 
-                tracer_b.on();
+                tracer_f.on();
                 file_txn.flush().await?;
-                tracer_b.off();
+                tracer_f.off();
 
-                tracer_b.on();
+                tracer_m.on();
                 mat_txn.flush().await?;
-                tracer_b.off();
+                tracer_m.off();
             }
         }
 
@@ -326,7 +327,7 @@ impl Database {
         file_bg.await??;
         tracer.measure();
 
-        let tracer = Tracer::new_on("add_file_bundles::file_bg::wait");
+        let tracer = Tracer::new_on("add_file_bundles::mat_bg::wait");
         mat_bg.await??;
         tracer.measure();
 
@@ -354,7 +355,7 @@ impl Database {
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
             total_attempted += 1;
-            let uid = ts + (i as u64);
+            let uid = (ts + (i as u64)).into();
             txn.push(&RepositoryName {
                 uid,
                 repo_id: blob.repo_id.clone(),
@@ -474,7 +475,7 @@ impl Database {
 
     pub async fn merge_files(
         &self,
-        s: impl Stream<Item = File> + Unpin + Send,
+        s: impl Stream<Item = File> + Unpin + Send + 'static,
     ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -482,11 +483,15 @@ impl Database {
         let tail = txn.tail(TailFrom::Head).track("merge_files::log_stream");
         let bg = self.file_log_stream(tail);
 
-        let mut rb = RoaringTreemap::new();
+        let s = self
+            .kv
+            .left_join_known_file_uids(s.map(Ok), |f: File| f.uid)
+            .boxed();
         let mut s = s.enumerate();
         while let Some((i, file)) = s.next().await {
+            let (file, is_known) = file?;
             total_attempted += 1;
-            if rb.insert(file.uid) {
+            if is_known.is_none() {
                 txn.push(&file)
                     .await
                     .inspect_err(|e| log::error!("Database::merge_files failed to add log: {e}"))?;
@@ -507,19 +512,25 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_blobs(&self, s: impl Stream<Item = Blob> + Unpin + Send) -> Result<(), DBError>
-    {
+    pub async fn merge_blobs(
+        &self,
+        s: impl Stream<Item = Blob> + Unpin + Send + 'static,
+    ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.blobs_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("merge_blobs::log_stream");
         let bg = self.blob_log_stream(tail);
 
-        let mut rb = RoaringTreemap::new();
+        let s = self
+            .kv
+            .left_join_known_blob_uids(s.map(Ok), |b: Blob| b.uid)
+            .boxed();
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
+            let (blob, is_known) = blob?;
             total_attempted += 1;
-            if rb.insert(blob.uid) {
+            if is_known.is_none() {
                 txn.push(&blob)
                     .await
                     .inspect_err(|e| log::error!("Database::merge_blobs failed to add log: {e}"))?;
@@ -540,8 +551,10 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_repository_names(&self, s: impl Stream<Item = RepositoryName> + Unpin + Send) -> Result<(), DBError>
-    {
+    pub async fn merge_repository_names(
+        &self,
+        s: impl Stream<Item = RepositoryName> + Unpin + Send + 'static,
+    ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.repository_names_writer.transaction()?;
@@ -550,11 +563,15 @@ impl Database {
             .track("merge_repository_names::log_stream");
         let bg = self.repository_name_log_stream(tail);
 
-        let mut rb = RoaringTreemap::new();
+        let s = self
+            .kv
+            .left_join_known_repository_name_uids(s.map(Ok), |rn: RepositoryName| rn.uid)
+            .boxed();
         let mut s = s.enumerate();
         while let Some((i, repository_name)) = s.next().await {
+            let (repository_name, is_known) = repository_name?;
             total_attempted += 1;
-            if rb.insert(repository_name.uid) {
+            if is_known.is_none() {
                 txn.push(&repository_name).await.inspect_err(|e| {
                     log::error!("Database::merge_repository_names failed to add log: {e}")
                 })?;
@@ -713,8 +730,10 @@ impl Database {
         s
     }
 
-    pub async fn add_materialisations(&self, s: impl Stream<Item = InsertMaterialisation> + Send + Unpin) -> Result<u64, DBError>
-    {
+    pub async fn add_materialisations(
+        &self,
+        s: impl Stream<Item = InsertMaterialisation> + Send + Unpin,
+    ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.materialisations_writer.transaction()?;
@@ -1021,20 +1040,33 @@ impl Database {
 
         let inner = self.clone();
         tokio::spawn(async move {
+            let (uid_tx, uid_rx) = mpsc_channel("blob_log_stream::uid", UID_BUFFER);
             let counter = Arc::new(AtomicUsize::new(0));
             let max_offset = Arc::new(AtomicU64::new(0));
 
             let counter_clone = counter.clone();
             let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::map(s, move |e| match e {
-                Ok((o, b)) => {
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                    max_offset_clone.store(o.into(), Ordering::SeqCst);
-                    Ok(b)
+            let s = TokioStreamExt::then(s, move |e: Result<(Offset, Blob), StreamError>| {
+                let uid_tx = uid_tx.clone();
+                let counter_clone = counter_clone.clone();
+                let max_offset_clone = max_offset_clone.clone();
+                async move {
+                    match e {
+                        Ok((o, b)) => {
+                            counter_clone.fetch_add(1, Ordering::Relaxed);
+                            max_offset_clone.store(o.into(), Ordering::SeqCst);
+                            uid_tx.send(Ok(b.uid)).await?;
+                            Ok(b)
+                        }
+                        Err(e) => Err::<_, DBError>(e.into()),
+                    }
                 }
-                Err(e) => Err(e.into()),
             });
-            inner.kv.apply_blobs(s).await?;
+
+            tokio::try_join!(
+                inner.kv.apply_blobs(s),
+                inner.kv.apply_known_blob_uids(uid_rx),
+            )?;
 
             let counter = counter.load(Ordering::Relaxed);
             if counter > 0 {
@@ -1060,20 +1092,33 @@ impl Database {
 
         let inner = self.clone();
         tokio::spawn(async move {
+            let (uid_tx, uid_rx) = mpsc_channel("file_log_stream::uid", UID_BUFFER);
             let counter = Arc::new(AtomicUsize::new(0));
             let max_offset = Arc::new(AtomicU64::new(0));
 
             let counter_clone = counter.clone();
             let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::map(s, move |e| match e {
-                Ok((o, f)) => {
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                    max_offset_clone.store(o.into(), Ordering::SeqCst);
-                    Ok(f)
+            let s = TokioStreamExt::then(s, move |e: Result<(Offset, File), StreamError>| {
+                let uid_tx = uid_tx.clone();
+                let counter_clone = counter_clone.clone();
+                let max_offset_clone = max_offset_clone.clone();
+                async move {
+                    match e {
+                        Ok((o, f)) => {
+                            counter_clone.fetch_add(1, Ordering::Relaxed);
+                            max_offset_clone.store(o.into(), Ordering::SeqCst);
+                            uid_tx.send(Ok(f.uid)).await?;
+                            Ok(f)
+                        }
+                        Err(e) => Err::<_, DBError>(e.into()),
+                    }
                 }
-                Err(e) => Err(e.into()),
             });
-            inner.kv.apply_files(s).await?;
+
+            tokio::try_join!(
+                inner.kv.apply_files(s),
+                inner.kv.apply_known_file_uids(uid_rx),
+            )?;
 
             let counter = counter.load(Ordering::Relaxed);
             if counter > 0 {
@@ -1141,20 +1186,36 @@ impl Database {
 
         let inner = self.clone();
         tokio::spawn(async move {
+            let (uid_tx, uid_rx) = mpsc_channel("repository_name_log_stream::uid", UID_BUFFER);
             let counter = Arc::new(AtomicUsize::new(0));
             let max_offset = Arc::new(AtomicU64::new(0));
 
             let counter_clone = counter.clone();
             let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::map(s, move |e| match e {
-                Ok((o, r)) => {
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                    max_offset_clone.store(o.into(), Ordering::SeqCst);
-                    Ok(r)
-                }
-                Err(e) => Err(e.into()),
-            });
-            inner.kv.apply_repository_names(s).await?;
+            let s = TokioStreamExt::then(
+                s,
+                move |e: Result<(Offset, RepositoryName), StreamError>| {
+                    let uid_tx = uid_tx.clone();
+                    let counter_clone = counter_clone.clone();
+                    let max_offset_clone = max_offset_clone.clone();
+                    async move {
+                        match e {
+                            Ok((o, rn)) => {
+                                counter_clone.fetch_add(1, Ordering::Relaxed);
+                                max_offset_clone.store(o.into(), Ordering::SeqCst);
+                                uid_tx.send(Ok(rn.uid)).await?;
+                                Ok(rn)
+                            }
+                            Err(e) => Err::<_, DBError>(e.into()),
+                        }
+                    }
+                },
+            );
+
+            tokio::try_join!(
+                inner.kv.apply_repository_names(s),
+                inner.kv.apply_known_repository_name_uids(uid_rx),
+            )?;
 
             let counter = counter.load(Ordering::Relaxed);
             if counter > 0 {
