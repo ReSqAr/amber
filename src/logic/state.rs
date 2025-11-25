@@ -5,6 +5,7 @@ use crate::db::models::{
 };
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::tracer::Tracer;
 use crate::flightdeck::tracked::sender;
 use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils::blake3;
@@ -143,7 +144,7 @@ async fn close(
 ) -> Result<(), InternalError> {
     debug!("close: closing virtual filesystem");
 
-    let start_time = tokio::time::Instant::now();
+    let tracer = Tracer::new_on("state::close");
 
     let mut deleted_files = vfs.select_missing_files(last_seen_id).await;
     while let Some(r) = deleted_files.next().await {
@@ -159,8 +160,7 @@ async fn close(
         }
     }
 
-    let duration = start_time.elapsed();
-    debug!("deleted: {:.2?}", duration);
+    tracer.measure();
 
     Ok(())
 }
@@ -182,7 +182,10 @@ pub async fn state(
     let bg = tokio::spawn(async move {
         vfs_clone.add_checked_events(fc).await?;
 
-        bg.await?
+        let tracer = Tracer::new_on("state::bg::await");
+        let result = bg.await?;
+        tracer.measure();
+        result
     });
 
     Ok((bg, s))

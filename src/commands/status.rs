@@ -2,6 +2,7 @@ use crate::flightdeck;
 use crate::flightdeck::base::{BaseLayoutBuilderBuilder, BaseObserver, TerminationAction};
 use crate::flightdeck::base::{StateTransformer, Style};
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::flightdeck::tracer::Tracer;
 use crate::logic::state;
 use crate::logic::state::VirtualFileState;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
@@ -141,7 +142,9 @@ pub async fn show_status(
         obs.observe_termination(level, state);
     }
 
+    let tracer = Tracer::new_on("show_status::state_handle::await");
     handle.await??;
+    tracer.measure();
 
     let final_msg = generate_final_message(&mut count, start_time);
     checker_obs.observe_termination(log::Level::Info, final_msg);

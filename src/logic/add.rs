@@ -4,6 +4,7 @@ use crate::db::models::{
 };
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::tracer::Tracer;
 use crate::logic::blobify::{BlobLockMap, Blobify};
 use crate::logic::state::{VirtualFile, VirtualFileState};
 use crate::logic::{blobify, state};
@@ -164,13 +165,19 @@ pub(crate) async fn add_files(
             adder_obs.observe_position(log::Level::Trace, count);
         }
 
+        let tracer = Tracer::new_on("add_files::state_handle::await");
         state_handle.await??;
+        tracer.measure();
     }
 
     drop(bundle_tx);
     drop(check_tx);
+    let tracer = Tracer::new_on("add_files::bg_db_bundle::await");
     bg_db_bundle.await??;
+    tracer.measure();
+    let tracer = Tracer::new_on("add_files::bg_persist_check::await");
     bg_persist_check.await??;
+    tracer.measure();
 
     let duration = start_time.elapsed();
     let msg = if count > 0 {
