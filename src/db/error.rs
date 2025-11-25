@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinError;
 
 #[derive(Error, Debug)]
@@ -29,4 +30,10 @@ pub enum DBError {
     SendError(String),
     #[error("database accessed after close")]
     AccessAfterDrop,
+}
+
+impl<T> From<SendError<T>> for DBError {
+    fn from(e: SendError<T>) -> Self {
+        DBError::SendError(format!("{:?}", e))
+    }
 }

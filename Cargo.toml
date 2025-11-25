@@ -39,7 +39,6 @@ prost-types = "0.14"
 rand = "0.9"
 redb = "3.1.0"
 reflink-copy = "0.1"
-roaring = "0.11"
 russh = "0.54"
 serde = { version = "1.0", features = ["derive", "std"] }
 serde_json = "1.0"

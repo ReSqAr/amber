@@ -3,7 +3,7 @@ use crate::db::models::{
     Blob, BlobRef, Connection, ConnectionMetadata, ConnectionName, CurrentBlob, CurrentCheck,
     CurrentFile, CurrentMaterialisation, CurrentObservation, CurrentRepository,
     CurrentRepositoryName, File, FileCheck, FileSeen, InsertMaterialisation, LogOffset, Path,
-    RepoID, Repository, RepositoryMetadata, RepositoryName, TableName,
+    RepoID, Repository, RepositoryMetadata, RepositoryName, TableName, Uid,
 };
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
@@ -21,6 +21,11 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 const DEFAULT_BUFFER_SIZE: usize = 100;
+
+const KNOWN_BLOB_UIDS: TableDefinition<Uid, ()> = TableDefinition::new("known_blob_uids");
+const KNOWN_FILE_UIDS: TableDefinition<Uid, ()> = TableDefinition::new("known_file_uids");
+const KNOWN_REPOSITORY_NAME_UIDS: TableDefinition<Uid, ()> =
+    TableDefinition::new("known_repository_name_uids");
 
 const CURRENT_BLOBS: TableDefinition<BlobRef, CurrentBlob> = TableDefinition::new("current_blobs");
 
@@ -223,6 +228,9 @@ impl Upsert for UpsertRepositoryMetadata {
 
 #[derive(Clone)]
 pub(crate) struct KVStores {
+    known_blob_uids: KVStore<Uid, (), Uid, ()>,
+    known_file_uids: KVStore<Uid, (), Uid, ()>,
+    known_repository_name_uids: KVStore<Uid, (), Uid, ()>,
     current_blobs: KVStore<BlobRef, CurrentBlob, BlobRef, CurrentBlob>,
     current_files: KVStore<Path, CurrentFile, Path, CurrentFile>,
     current_materialisations: KVStore<Path, CurrentMaterialisation, Path, CurrentMaterialisation>,
@@ -241,6 +249,12 @@ impl KVStores {
 
         let tracer = Tracer::new_on("KVStores::new");
 
+        let known_blob_uids = KVStore::new(base_path.join("known_blob_uids.redb"), KNOWN_BLOB_UIDS);
+        let known_file_uids = KVStore::new(base_path.join("known_file_uids.redb"), KNOWN_FILE_UIDS);
+        let known_repository_name_uids = KVStore::new(
+            base_path.join("known_repository_name_uids.redb"),
+            KNOWN_REPOSITORY_NAME_UIDS,
+        );
         let current_blobs = KVStore::new(base_path.join("current_blobs.redb"), CURRENT_BLOBS);
         let current_files = KVStore::new(base_path.join("current_files.redb"), CURRENT_FILES);
         let current_materialisations = KVStore::new(
@@ -268,6 +282,9 @@ impl KVStores {
         );
 
         let (
+            known_blob_uids,
+            known_file_uids,
+            known_repository_name_uids,
             current_blobs,
             current_files,
             current_materialisations,
@@ -279,6 +296,9 @@ impl KVStores {
             connections,
             current_reductions,
         ) = tokio::try_join!(
+            known_blob_uids,
+            known_file_uids,
+            known_repository_name_uids,
             current_blobs,
             current_files,
             current_materialisations,
@@ -293,6 +313,9 @@ impl KVStores {
         tracer.measure();
 
         Ok(Self {
+            known_blob_uids,
+            known_file_uids,
+            known_repository_name_uids,
             current_blobs,
             current_files,
             current_materialisations,
@@ -308,6 +331,9 @@ impl KVStores {
 
     pub(crate) async fn close(&self) -> Result<(), DBError> {
         tokio::try_join!(
+            self.known_blob_uids.close(),
+            self.known_file_uids.close(),
+            self.known_repository_name_uids.close(),
             self.current_blobs.close(),
             self.current_files.close(),
             self.current_materialisations.close(),
@@ -325,6 +351,9 @@ impl KVStores {
     #[allow(dead_code)]
     async fn compact(&self) -> Result<(), DBError> {
         tokio::try_join!(
+            self.known_blob_uids.compact(),
+            self.known_file_uids.compact(),
+            self.known_repository_name_uids.compact(),
             self.current_blobs.compact(),
             self.current_files.compact(),
             self.current_materialisations.compact(),
@@ -337,6 +366,30 @@ impl KVStores {
             self.current_reductions.compact(),
         )?;
         Ok(())
+    }
+
+    pub(crate) async fn apply_known_blob_uids(
+        &self,
+        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+    ) -> Result<u64, DBError> {
+        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        self.known_blob_uids.apply(s).await
+    }
+
+    pub(crate) async fn apply_known_file_uids(
+        &self,
+        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+    ) -> Result<u64, DBError> {
+        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        self.known_file_uids.apply(s).await
+    }
+
+    pub(crate) async fn apply_known_repository_name_uids(
+        &self,
+        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+    ) -> Result<u64, DBError> {
+        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        self.known_repository_name_uids.apply(s).await
     }
 
     pub(crate) async fn apply_blobs(
@@ -505,6 +558,42 @@ impl KVStores {
         IK: Clone + Send + Sync + 'static,
     {
         self.current_blobs.left_join(s, key_func)
+    }
+
+    pub(crate) fn left_join_known_blob_uids<IK, KF>(
+        &self,
+        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        key_func: KF,
+    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    where
+        KF: Fn(IK) -> Uid + Sync + Send + 'static,
+        IK: Clone + Send + Sync + 'static,
+    {
+        self.known_blob_uids.left_join(s, key_func)
+    }
+
+    pub(crate) fn left_join_known_file_uids<IK, KF>(
+        &self,
+        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        key_func: KF,
+    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    where
+        KF: Fn(IK) -> Uid + Sync + Send + 'static,
+        IK: Clone + Send + Sync + 'static,
+    {
+        self.known_file_uids.left_join(s, key_func)
+    }
+
+    pub(crate) fn left_join_known_repository_name_uids<IK, KF>(
+        &self,
+        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        key_func: KF,
+    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    where
+        KF: Fn(IK) -> Uid + Sync + Send + 'static,
+        IK: Clone + Send + Sync + 'static,
+    {
+        self.known_repository_name_uids.left_join(s, key_func)
     }
 
     pub(crate) fn left_join_current_files<
@@ -765,8 +854,7 @@ where
                     let (key, value) = item?;
                     let key_owned: KO = key.value().to_owned();
                     let value_owned: VO = value.value().to_owned();
-                    tx.blocking_send(Ok((key_owned, value_owned)))
-                        .map_err(|e| DBError::SendError(format!("{:?}", e)))?;
+                    tx.blocking_send(Ok((key_owned, value_owned)))?;
                 }
                 Ok(())
             })();
@@ -958,7 +1046,7 @@ where
                         .map(|v| v.value().to_owned());
                     tracer.off();
                     tx.blocking_send(Ok((key_like, blob)))
-                        .map_err(|e| DBError::SendError(format!("{:?}", e)))?;
+                        .map_err(Into::<DBError>::into)?;
                 }
                 tracer.measure();
 
@@ -977,7 +1065,7 @@ where
             while let Some(item) = s.next().await {
                 if let Err(e) = tx_in.send(item).await {
                     log::error!("failed to lookup({}) in redb: {}", table.name(), e);
-                    return Err(DBError::SendError(format!("{:?}", e)));
+                    return Err::<_, DBError>(e.into());
                 }
                 count += 1;
             }

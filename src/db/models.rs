@@ -2,12 +2,26 @@ use crate::utils::redb_bridge::{impl_redb_bincode_key, impl_redb_bincode_value};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+pub struct Uid(pub(crate) u64);
+impl_redb_bincode_key!(Uid);
+impl From<u64> for Uid {
+    fn from(v: u64) -> Self {
+        Self(v)
+    }
+}
+impl From<Uid> for u64 {
+    fn from(v: Uid) -> Self {
+        v.0
+    }
+}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct Path(pub(crate) String);
 impl_redb_bincode_key!(Path);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct BlobID(pub(crate) String);
+impl_redb_bincode_value!(BlobID);
 
 impl BlobID {
     pub fn path(&self) -> PathBuf {
@@ -21,8 +35,6 @@ impl BlobID {
         }
     }
 }
-
-impl_redb_bincode_value!(BlobID);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub(crate) struct RepoID(pub(crate) String);
@@ -293,14 +305,14 @@ impl VirtualFile {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
-    pub uid: u64,
+    pub uid: Uid,
     pub path: Path,
     pub blob_id: Option<BlobID>,
     pub valid_from: DateTime<Utc>,
 }
 
 impl File {
-    pub fn from_insert_file(file: InsertFile, uid: u64) -> Self {
+    pub fn from_insert_file(file: InsertFile, uid: Uid) -> Self {
         Self {
             uid,
             path: file.path,
@@ -319,7 +331,7 @@ pub struct InsertFile {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Blob {
-    pub uid: u64,
+    pub uid: Uid,
     pub repo_id: RepoID,
     pub blob_id: BlobID,
     pub blob_size: u64,
@@ -329,7 +341,7 @@ pub struct Blob {
 }
 
 impl Blob {
-    pub fn from_insert_blob(blob: InsertBlob, uid: u64) -> Self {
+    pub fn from_insert_blob(blob: InsertBlob, uid: Uid) -> Self {
         Self {
             uid,
             repo_id: blob.repo_id,
@@ -362,7 +374,7 @@ pub struct Repository {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepositoryName {
-    pub uid: u64,
+    pub uid: Uid,
     pub repo_id: RepoID,
     pub name: String,
     pub valid_from: DateTime<Utc>,
