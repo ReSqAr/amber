@@ -1,9 +1,6 @@
-use serial_test::serial;
-
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_fsck() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -18,7 +15,6 @@ async fn integration_test_fsck() -> anyhow::Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_fsck_quarantine_behavior_with_hard_links()
 -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -69,7 +65,6 @@ async fn integration_test_fsck_quarantine_behavior_with_hard_links()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_fsck_quarantine_behavior_with_ref_links()
 -> anyhow::Result<(), anyhow::Error> {
     if !dsl_definition::capability_check_ref_link().await? {

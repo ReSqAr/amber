@@ -1,8 +1,6 @@
 mod dsl_definition;
-use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_nested_dirs() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
         # Initialize repositories

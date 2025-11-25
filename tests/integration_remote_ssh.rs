@@ -1,16 +1,14 @@
-use serial_test::serial;
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_ssh_connection_list() -> Result<(), anyhow::Error> {
     let script = r#"
         @a amber init a
-        @a start_ssh 4567 hunter2
+        @a start_ssh 45670 hunter2
 
         @b amber init b
 
-        @b amber remote add a-ssh ssh "user:hunter2@localhost:4567/"
+        @b amber remote add a-ssh ssh "user:hunter2@localhost:45670/"
         
         @b amber remote list
         assert_output_contains "a-ssh"
@@ -19,7 +17,6 @@ async fn integration_test_ssh_connection_list() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
     let script = r#"
         # Set up repositories
@@ -33,10 +30,10 @@ async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
         @b amber add
 
         # Start SSH server for repository A
-        @a start_ssh 4567 hunter2
+        @a start_ssh 45671 hunter2
 
         # Add remote via SSH connection
-        @b amber remote add a-ssh ssh "user:hunter2@localhost:4567/"
+        @b amber remote add a-ssh ssh "user:hunter2@localhost:45671/"
 
         # Pull from SSH remote
         @b amber sync a-ssh
@@ -49,7 +46,6 @@ async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_ssh_connection_pull() -> Result<(), anyhow::Error> {
     let script = r#"
         # Set up repositories
@@ -60,10 +56,10 @@ async fn integration_test_ssh_connection_pull() -> Result<(), anyhow::Error> {
         @b amber init b
 
         # Start SSH server for repository A
-        @a start_ssh 4567 hunter2
+        @a start_ssh 45672 hunter2
 
         # Add remote via SSH connection from B to A
-        @b amber remote add a-ssh ssh "user:hunter2@localhost:4567/"
+        @b amber remote add a-ssh ssh "user:hunter2@localhost:45672/"
 
         # Pull from SSH remote A
         @b amber pull a-ssh
@@ -75,7 +71,6 @@ async fn integration_test_ssh_connection_pull() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_ssh_connection_push() -> Result<(), anyhow::Error> {
     let script = r#"
         # Set up repositories
@@ -86,10 +81,10 @@ async fn integration_test_ssh_connection_push() -> Result<(), anyhow::Error> {
         @b amber init b
 
         # Start SSH server for repository B
-        @b start_ssh 4567 hunter2
+        @b start_ssh 45673 hunter2
 
         # Add remote via SSH connection from A to B
-        @a amber remote add b-ssh ssh "user:hunter2@localhost:4567/"
+        @a amber remote add b-ssh ssh "user:hunter2@localhost:45673/"
 
         # Push from A to SSH remote B
         @a amber push b-ssh

@@ -1,8 +1,6 @@
-use serial_test::serial;
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_sync_pull_push() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -28,7 +26,6 @@ async fn integration_test_two_repo_sync_pull_push() -> Result<(), anyhow::Error>
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_auto_restore_removed_file() -> Result<(), anyhow::Error> {
     let script = r#"
         # when

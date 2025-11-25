@@ -1,8 +1,6 @@
-use serial_test::serial;
 mod dsl_definition;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_push_path_selector() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -27,7 +25,6 @@ async fn integration_test_two_repo_push_path_selector() -> Result<(), anyhow::Er
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_pull_path_selector() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -51,7 +48,6 @@ async fn integration_test_two_repo_pull_path_selector() -> Result<(), anyhow::Er
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_sync_same_filename_pull_push() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -75,7 +71,6 @@ async fn integration_test_two_repo_sync_same_filename_pull_push() -> Result<(), 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_sync_same_filename_push_pull() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
@@ -101,7 +96,6 @@ async fn integration_test_two_repo_sync_same_filename_push_pull() -> Result<(), 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn integration_test_two_repo_missing() -> Result<(), anyhow::Error> {
     let script = r#"
         # when
