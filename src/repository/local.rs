@@ -1,6 +1,6 @@
 use crate::connection::EstablishedConnection;
 use crate::db;
-use crate::db::database::{DBOutputStream, Database};
+use crate::db::database::Database;
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
@@ -21,6 +21,7 @@ use crate::utils::fs::{Capability, capability_check, link};
 use crate::utils::path::RepoPath;
 use fs2::FileExt;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
+use futures_core::stream::BoxStream;
 use log::debug;
 use rand::Rng;
 use rand::distr::Alphanumeric;
@@ -487,7 +488,7 @@ impl VirtualFilesystem for LocalRepository {
     fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = DBOutputStream<'static, MissingFile>> + Send {
+    ) -> impl Future<Output = BoxStream<'static, Result<MissingFile, DBError>>> + Send {
         self.db
             .select_missing_files_on_virtual_filesystem(last_seen_id)
     }
