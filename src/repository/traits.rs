@@ -1,5 +1,4 @@
 use crate::db;
-use crate::db::database::DBOutputStream;
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
@@ -10,6 +9,7 @@ use crate::utils::errors::InternalError;
 use crate::utils::fs::Capability;
 use crate::utils::path::RepoPath;
 use futures::Stream;
+use futures_core::stream::BoxStream;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -130,7 +130,7 @@ pub trait VirtualFilesystem {
     fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = DBOutputStream<'static, MissingFile>> + Send;
+    ) -> impl Future<Output = BoxStream<'static, Result<MissingFile, DBError>>> + Send;
 
     fn add_checked_events(
         &self,

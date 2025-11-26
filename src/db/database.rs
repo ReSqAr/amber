@@ -26,15 +26,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+const UID_BUFFER: usize = 100;
+
 #[derive(Clone)]
 pub struct Database {
     kv: KVStores,
     logs: Logs,
 }
-
-const UID_BUFFER: usize = 100;
-
-pub(crate) type DBOutputStream<'a, T> = BoxStream<'a, Result<T, DBError>>;
 
 const FILE_TABLE_NAME: &str = "files";
 const BLOB_TABLE_NAME: &str = "blobs";
@@ -142,9 +140,7 @@ impl Database {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
-        let tail = txn
-            .tail(TailFrom::Head)
-            .track("lookup_current_repository_name::log_stream");
+        let tail = txn.tail(TailFrom::Head).track("add_files::log_stream");
         let bg = self.file_log_stream(tail);
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
@@ -363,7 +359,9 @@ impl Database {
                 valid_from: blob.valid_from,
             })
             .await
-            .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
+            .inspect_err(|e| {
+                log::error!("Database::add_repository_names failed to add log: {e}")
+            })?;
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
@@ -381,7 +379,7 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn select_repositories(&self) -> DBOutputStream<'static, Repository> {
+    pub async fn select_repositories(&self) -> BoxStream<'static, Result<Repository, DBError>> {
         self.kv
             .stream_repositories()
             .map_ok(|(repo_id, m)| Repository {
@@ -393,7 +391,10 @@ impl Database {
             .boxed()
     }
 
-    pub async fn select_files(&self, last_index: Option<u64>) -> DBOutputStream<'static, File> {
+    pub async fn select_files(
+        &self,
+        last_index: Option<u64>,
+    ) -> BoxStream<'static, Result<File, DBError>> {
         let reader = self.logs.files_writer.reader();
         let watermark = reader.snapshot_watermark();
         let from = Self::next_offset(last_index);
@@ -414,13 +415,13 @@ impl Database {
             .boxed()
     }
 
-    pub async fn select_blobs(&self, last_index: Option<u64>) -> DBOutputStream<'static, Blob> {
+    pub async fn select_blobs(
+        &self,
+        last_index: Option<u64>,
+    ) -> BoxStream<'static, Result<Blob, DBError>> {
         let reader = self.logs.blobs_writer.reader();
         let watermark = reader.snapshot_watermark();
-        let from = match last_index {
-            None => Offset::start(),
-            Some(last_index) => Into::<Offset>::into(last_index).increment(),
-        };
+        let from = Self::next_offset(last_index);
         reader
             .from(from)
             .take_while(move |r| {
@@ -441,13 +442,10 @@ impl Database {
     pub async fn select_repository_names(
         &self,
         last_index: Option<u64>,
-    ) -> DBOutputStream<'static, RepositoryName> {
+    ) -> BoxStream<'static, Result<RepositoryName, DBError>> {
         let reader = self.logs.repository_names_writer.reader();
         let watermark = reader.snapshot_watermark();
-        let from = match last_index {
-            None => Offset::start(),
-            Some(last_index) => Into::<Offset>::into(last_index).increment(),
-        };
+        let from = Self::next_offset(last_index);
         reader
             .from(from)
             .take_while(move |r| {
@@ -768,7 +766,7 @@ impl Database {
     pub async fn select_missing_files_on_virtual_filesystem(
         &self,
         last_seen_id: i64,
-    ) -> DBOutputStream<'static, MissingFile> {
+    ) -> BoxStream<'static, Result<MissingFile, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let repo_id = match self.get_or_create_current_repository().await {
@@ -893,7 +891,7 @@ impl Database {
         transfer_id: u32,
         remote_repo_id: RepoID,
         prefixes: Vec<String>,
-    ) -> DBOutputStream<'static, BlobTransferItem> {
+    ) -> BoxStream<'static, Result<BlobTransferItem, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let repo_id = match self.get_or_create_current_repository().await {
@@ -948,7 +946,7 @@ impl Database {
         local_repo_id: RepoID,
         remote_repo_id: RepoID,
         prefixes: Vec<String>,
-    ) -> DBOutputStream<'static, FileTransferItem> {
+    ) -> BoxStream<'static, Result<FileTransferItem, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = self.kv.stream_current_files();
@@ -993,7 +991,7 @@ impl Database {
     pub async fn select_current_files<'a>(
         &self,
         file_or_dir: String,
-    ) -> DBOutputStream<'a, (Path, BlobID)> {
+    ) -> BoxStream<'a, Result<(Path, BlobID), DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = stream::iter([Ok(Path(file_or_dir.clone()))]);
