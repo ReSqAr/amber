@@ -18,8 +18,8 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use db::models;
-use futures::Stream;
 use futures::TryStreamExt;
+use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
@@ -68,7 +68,7 @@ where
         request
             .into_inner()
             .map_ok::<models::Repository, _>(Repository::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
         Ok(Response::new(MergeRepositoriesResponse {}))
     }
@@ -80,7 +80,7 @@ where
         request
             .into_inner()
             .map_ok::<models::File, _>(File::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
         Ok(Response::new(MergeFilesResponse {}))
     }
@@ -92,7 +92,7 @@ where
         request
             .into_inner()
             .map_ok::<models::Blob, _>(Blob::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
         Ok(Response::new(MergeBlobsResponse {}))
     }
@@ -104,7 +104,7 @@ where
         request
             .into_inner()
             .map_ok::<models::RepositoryName, _>(RepositoryName::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
         Ok(Response::new(MergeRepositoryNamesResponse {}))
     }
@@ -206,7 +206,9 @@ where
         let count = request
             .into_inner()
             .map_ok::<models::BlobTransferItem, _>(TransferItem::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.prepare_transfer(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| {
+                self.repository.prepare_transfer(s.boxed())
+            })
             .await?;
         Ok(Response::new(PrepareTransferResponse { count }))
     }
@@ -239,7 +241,9 @@ where
         let count = request
             .into_inner()
             .map_ok::<models::CopiedTransferItem, _>(CopiedTransferItem::into)
-            .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.finalise_transfer(s))
+            .try_forward_into::<_, _, _, _, InternalError>(|s| {
+                self.repository.finalise_transfer(s.boxed())
+            })
             .await?;
         Ok(Response::new(FinaliseTransferResponse { count }))
     }

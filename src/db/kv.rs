@@ -8,7 +8,7 @@ use crate::db::models::{
 };
 use crate::flightdeck::tracer::Tracer;
 use futures::{StreamExt, TryStreamExt, stream};
-use futures_core::Stream;
+use futures_core::stream::BoxStream;
 use redb::TableDefinition;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -348,63 +348,63 @@ impl KVStores {
 
     pub(crate) async fn apply_known_blob_uids(
         &self,
-        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<Uid, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        let s = s.map(|e| e.map(|u| (u, Some(())))).boxed();
         self.known_blob_uids.apply(s).await
     }
 
     pub(crate) async fn apply_known_file_uids(
         &self,
-        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<Uid, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        let s = s.map(|e| e.map(|u| (u, Some(())))).boxed();
         self.known_file_uids.apply(s).await
     }
 
     pub(crate) async fn apply_known_repository_name_uids(
         &self,
-        s: impl Stream<Item = Result<Uid, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<Uid, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| e.map(|u| (u, Some(()))));
+        let s = s.map(|e| e.map(|u| (u, Some(())))).boxed();
         self.known_repository_name_uids.apply(s).await
     }
 
     pub(crate) async fn apply_blobs(
         &self,
-        s: impl Stream<Item = Result<Blob, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<Blob, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertBlob));
+        let s = s.map(move |r| r.map(UpsertBlob)).boxed();
         self.current_blobs.upsert(s).await
     }
 
     pub(crate) async fn apply_files(
         &self,
-        s: impl Stream<Item = Result<File, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<File, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertFile));
+        let s = s.map(move |r| r.map(UpsertFile)).boxed();
         self.current_files.upsert(s).await
     }
 
     pub(crate) async fn apply_materialisations(
         &self,
-        s: impl Stream<Item = Result<InsertMaterialisation, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<InsertMaterialisation, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertMaterialisation));
+        let s = s.map(move |r| r.map(UpsertMaterialisation)).boxed();
         self.current_materialisations.upsert(s).await
     }
 
     pub(crate) async fn apply_repository_names(
         &self,
-        s: impl Stream<Item = Result<RepositoryName, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<RepositoryName, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertRepositoryName));
+        let s = s.map(move |r| r.map(UpsertRepositoryName)).boxed();
         self.current_repository_names.upsert(s).await
     }
 
     pub(crate) async fn apply_file_seen(
         &self,
-        s: impl Stream<Item = Result<FileSeen, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<FileSeen, DBError>>,
     ) -> Result<u64, DBError> {
         let map = |e: FileSeen| {
             (
@@ -417,13 +417,13 @@ impl KVStores {
                 }),
             )
         };
-        let s = s.map(move |r| r.map(map));
+        let s = s.map(move |r| r.map(map)).boxed();
         self.current_observations.apply(s).await
     }
 
     pub(crate) async fn apply_file_checks(
         &self,
-        s: impl Stream<Item = Result<FileCheck, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<FileCheck, DBError>>,
     ) -> Result<u64, DBError> {
         let map = |e: FileCheck| {
             (
@@ -434,7 +434,7 @@ impl KVStores {
                 }),
             )
         };
-        let s = s.map(move |r| r.map(map));
+        let s = s.map(move |r| r.map(map)).boxed();
         self.current_checks.apply(s).await
     }
 
@@ -443,15 +443,15 @@ impl KVStores {
         current_repository: CurrentRepository,
     ) -> Result<u64, DBError> {
         self.current_repository
-            .apply(stream::iter([Ok(((), Some(current_repository)))]))
+            .apply(stream::iter([Ok(((), Some(current_repository)))]).boxed())
             .await
     }
 
     pub(crate) async fn apply_current_reductions(
         &self,
-        s: impl Stream<Item = (TableName, LogOffset)> + Send + 'static,
+        s: BoxStream<'static, (TableName, LogOffset)>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|(t, o)| Ok(UpsertCurrentReduction(t, o)));
+        let s = s.map(|(t, o)| Ok(UpsertCurrentReduction(t, o))).boxed();
         self.current_reductions.upsert(s).await
     }
 
@@ -464,39 +464,42 @@ impl KVStores {
         }: Connection,
     ) -> Result<u64, DBError> {
         self.connections
-            .apply(stream::iter([Ok((
-                name,
-                Some(ConnectionMetadata {
-                    connection_type,
-                    parameter,
-                }),
-            ))]))
+            .apply(
+                stream::iter([Ok((
+                    name,
+                    Some(ConnectionMetadata {
+                        connection_type,
+                        parameter,
+                    }),
+                ))])
+                .boxed(),
+            )
             .await
     }
 
     pub(crate) async fn apply_repositories(
         &self,
-        s: impl Stream<Item = Result<Repository, DBError>> + Send + 'static,
+        s: BoxStream<'_, Result<Repository, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertRepositoryMetadata));
+        let s = s.map(move |r| r.map(UpsertRepositoryMetadata)).boxed();
         self.repositories.upsert(s).await
     }
 
     pub(crate) fn stream_current_blobs(
         &self,
-    ) -> impl Stream<Item = Result<(BlobRef, CurrentBlob), DBError>> + Send + 'static {
+    ) -> BoxStream<'static, Result<(BlobRef, CurrentBlob), DBError>> {
         self.current_blobs.stream()
     }
 
     pub(crate) fn stream_current_files(
         &self,
-    ) -> impl Stream<Item = Result<(Path, CurrentFile), DBError>> + Send + 'static {
+    ) -> BoxStream<'static, Result<(Path, CurrentFile), DBError>> {
         self.current_files.stream()
     }
 
     pub(crate) fn stream_current_repository_names(
         &self,
-    ) -> impl Stream<Item = Result<(RepoID, CurrentRepositoryName), DBError>> + Send + 'static {
+    ) -> BoxStream<'static, Result<(RepoID, CurrentRepositoryName), DBError>> {
         self.current_repository_names.stream()
     }
 
@@ -509,28 +512,27 @@ impl KVStores {
 
     pub(crate) fn stream_repositories(
         &self,
-    ) -> impl Stream<Item = Result<(RepoID, RepositoryMetadata), DBError>> + Send + 'static {
+    ) -> BoxStream<'static, Result<(RepoID, RepositoryMetadata), DBError>> {
         self.repositories.stream()
     }
 
     pub(crate) fn stream_connections(
         &self,
-    ) -> impl Stream<Item = Result<(ConnectionName, ConnectionMetadata), DBError>> + Send + 'static
-    {
+    ) -> BoxStream<'static, Result<(ConnectionName, ConnectionMetadata), DBError>> {
         self.connections.stream()
     }
 
     pub(crate) fn stream_current_reductions(
         &self,
-    ) -> impl Stream<Item = Result<(TableName, LogOffset), DBError>> + Send + 'static {
+    ) -> BoxStream<'static, Result<(TableName, LogOffset), DBError>> {
         self.current_reductions.stream()
     }
 
     pub(crate) fn left_join_current_blobs<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, DBError>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentBlob>), DBError>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentBlob>), DBError>>
     where
         KF: Fn(IK) -> BlobRef + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -540,9 +542,9 @@ impl KVStores {
 
     pub(crate) fn left_join_known_blob_uids<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, DBError>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<()>), DBError>>
     where
         KF: Fn(IK) -> Uid + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -552,9 +554,9 @@ impl KVStores {
 
     pub(crate) fn left_join_known_file_uids<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, DBError>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    ) -> BoxStream<'_, Result<(IK, Option<()>), DBError>>
     where
         KF: Fn(IK) -> Uid + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -564,9 +566,9 @@ impl KVStores {
 
     pub(crate) fn left_join_known_repository_name_uids<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<IK, DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, DBError>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<()>), DBError>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<()>), DBError>>
     where
         KF: Fn(IK) -> Uid + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -580,9 +582,9 @@ impl KVStores {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentFile>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentFile>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -596,9 +598,9 @@ impl KVStores {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentMaterialisation>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentMaterialisation>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -612,9 +614,9 @@ impl KVStores {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentRepositoryName>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentRepositoryName>), E>>
     where
         KF: Fn(IK) -> RepoID + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -628,9 +630,9 @@ impl KVStores {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentObservation>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentObservation>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -644,9 +646,9 @@ impl KVStores {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<CurrentCheck>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<CurrentCheck>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -656,9 +658,9 @@ impl KVStores {
 
     pub(crate) fn left_join_repositories<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<RepositoryMetadata>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<RepositoryMetadata>), E>>
     where
         KF: Fn(IK) -> RepoID + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -668,9 +670,9 @@ impl KVStores {
 
     pub(crate) fn left_join_connections<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<ConnectionMetadata>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<ConnectionMetadata>), E>>
     where
         KF: Fn(IK) -> ConnectionName + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,

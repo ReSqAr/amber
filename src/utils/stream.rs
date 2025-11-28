@@ -1,15 +1,15 @@
 use async_stream::stream;
-use futures_core::Stream;
+use futures_core::stream::BoxStream;
 use tokio_stream::StreamExt;
 
-pub fn group_by_key<S, K, F>(s: S, key_fn: F) -> impl Stream<Item = (K, Vec<S::Item>)>
+pub fn group_by_key<T, K, F>(s: BoxStream<'static, T>, key_fn: F) -> BoxStream<'static, (K, Vec<T>)>
 where
-    S: Stream + Unpin,
-    F: Fn(&S::Item) -> K + Clone,
-    K: PartialEq + Clone,
+    T: Send + Sync + 'static,
+    F: Fn(&T) -> K + Clone + Send + Sync + 'static,
+    K: PartialEq + Clone + Send + Sync + 'static,
 {
     let mut s = s;
-    stream! {
+    futures::StreamExt::boxed(stream! {
         use std::collections::VecDeque;
         let mut current_key = None;
         let mut buffer = VecDeque::new();
@@ -30,5 +30,5 @@ where
             let items: Vec<_> = buffer.into_iter().collect();
             yield (k, items);
         }
-    }
+    })
 }

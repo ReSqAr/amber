@@ -96,7 +96,9 @@ async fn fsck_blobs(
     );
 
     stream
-        .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
+        .try_forward_into::<_, _, _, _, InternalError>(|s| async {
+            local.add_blobs(futures::StreamExt::boxed(s)).await
+        })
         .await?;
 
     let duration = start_time.elapsed();

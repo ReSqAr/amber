@@ -117,7 +117,8 @@ pub(crate) async fn rm(
         let s = local
             .select_current_files(normalised_path.clone())
             .await
-            .map_err(InternalError::DBError);
+            .map_err(InternalError::DBError)
+            .boxed();
         let (s, bg) = redb.streaming_upsert(s, |p| p);
         let count = s
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
@@ -137,16 +138,20 @@ pub(crate) async fn rm(
 
     if error_count.load(Ordering::Relaxed) == 0 {
         let now = Utc::now();
+        let local = local.clone();
         redb.stream()
-            .map_ok(|(p, _)| InsertFile {
+            .map_ok(move |(p, _)| InsertFile {
                 path: p.clone(),
                 blob_id: None,
                 valid_from: now,
             })
-            .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_files(s).await })
+            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
+                local.add_files(s.boxed()).await
+            })
             .await
             .inspect_err(|e| log::error!("fs::rm: db failed: {e}"))?;
 
+        let local_clone = local.clone();
         redb.stream()
             .map({
                 move |e| {
@@ -156,48 +161,59 @@ pub(crate) async fn rm(
                     let materialised_count = materialised_count_clone.clone();
                     let error_count = error_count_clone.clone();
 
-                    async move {
-                        let (path, blob_id) = e?;
-                        let count = virtual_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        obs.lock().await.observe_position(log::Level::Trace, count);
-                        let mut o = BaseObserver::with_id("fs:rm:file", &path.0);
+                    {
+                        let local = local_clone.clone();
+                        async move {
+                            let (path, blob_id) = e?;
+                            let count = virtual_count.fetch_add(1, Ordering::Relaxed) + 1;
+                            obs.lock().await.observe_position(log::Level::Trace, count);
+                            let mut o = BaseObserver::with_id("fs:rm:file", &path.0);
 
-                        let p = root.join(&path.0);
-                        let metadata = fs::metadata(&p).await.ok();
-                        let is_file = metadata.as_ref().is_some_and(|m| m.is_file());
+                            let p = root.join(&path.0);
+                            let metadata = fs::metadata(&p).await.ok();
+                            let is_file = metadata.as_ref().is_some_and(|m| m.is_file());
 
-                        if is_file {
-                            if hard {
-                                let hash = blake3::compute_blake3_and_size(&p).await?;
-                                if hash.hash == blob_id {
-                                    if let Err(e) = fs::remove_file(&p).await {
-                                        error_count.fetch_add(1, Ordering::Relaxed);
+                            if is_file {
+                                if hard {
+                                    let hash = blake3::compute_blake3_and_size(&p).await?;
+                                    if hash.hash == blob_id {
+                                        if let Err(e) = fs::remove_file(&p).await {
+                                            error_count.fetch_add(1, Ordering::Relaxed);
+                                            o.observe_termination(
+                                                log::Level::Error,
+                                                format!("remove failed: {e}"),
+                                            );
+                                            return Ok::<_, InternalError>(
+                                                stream::iter([]).boxed(),
+                                            );
+                                        }
+                                        o.observe_termination(log::Level::Info, "removed");
+                                        materialised_count.fetch_add(1, Ordering::Relaxed);
+                                    } else {
                                         o.observe_termination(
-                                            log::Level::Error,
-                                            format!("remove failed: {e}"),
+                                            log::Level::Warn,
+                                            "kept modified file",
                                         );
-                                        return Ok::<_, InternalError>(stream::iter([]).boxed());
                                     }
-                                    o.observe_termination(log::Level::Info, "removed");
-                                    materialised_count.fetch_add(1, Ordering::Relaxed);
                                 } else {
-                                    o.observe_termination(log::Level::Warn, "kept modified file");
+                                    unblobify::unblobify(&local, &p).await?;
+                                    o.observe_termination(log::Level::Info, "removed [soft]");
                                 }
-                            } else {
-                                unblobify::unblobify(local, &p).await?;
-                                o.observe_termination(log::Level::Info, "removed [soft]");
-                            }
 
-                            Ok(stream::iter([Ok::<_, InternalError>(InsertMaterialisation {
-                                path,
-                                blob_id: None,
-                                valid_from: Utc::now(),
-                            })])
-                            .boxed())
-                        } else {
-                            // DB-only removal; nothing to do on disk
-                            o.observe_termination(log::Level::Info, "removed (not materialised)");
-                            Ok(stream::iter([]).boxed())
+                                Ok(stream::iter([Ok::<_, InternalError>(InsertMaterialisation {
+                                    path,
+                                    blob_id: None,
+                                    valid_from: Utc::now(),
+                                })])
+                                .boxed())
+                            } else {
+                                // DB-only removal; nothing to do on disk
+                                o.observe_termination(
+                                    log::Level::Info,
+                                    "removed (not materialised)",
+                                );
+                                Ok(stream::iter([]).boxed())
+                            }
                         }
                     }
                 }
@@ -205,7 +221,7 @@ pub(crate) async fn rm(
             .buffer_unordered(local.buffer_size(BufferType::FsRmParallelism))
             .try_flatten()
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                local.add_materialisation(s).await
+                local.add_materialisation(s.boxed()).await
             })
             .await
             .inspect_err(|e| log::error!("fs::rm: failed: {e}"))?;
@@ -299,7 +315,7 @@ pub(crate) async fn mv(
         .select_current_files(source_prefix)
         .await
         .map_err(InternalError::DBError);
-    let (s, bg) = redb.streaming_upsert(s, |p| p);
+    let (s, bg) = redb.streaming_upsert(s.boxed(), |p| p);
     let s = s.map_ok(
         |UpsertedValue {
              path_like: p,
@@ -309,7 +325,7 @@ pub(crate) async fn mv(
     );
     let s = s.map_ok(|(src, b)| (src.clone(), b));
     let dst_clone = dst.clone();
-    let s = local.left_join_current_files(s, move |(src, _)| dst_clone(&src));
+    let s = local.left_join_current_files(s.boxed(), move |(src, _)| dst_clone(&src));
     let s = s
         .then(async |e| match e {
             Ok(((src, _), cf)) => {
@@ -348,9 +364,10 @@ pub(crate) async fn mv(
     bg.await??;
 
     if error_count.load(Ordering::Relaxed) == 0 {
+        let dst_clone = dst.clone();
         let now = Utc::now();
         redb.stream()
-            .map_ok(|(src, b)| {
+            .map_ok(move |(src, b)| {
                 stream::iter::<[Result<_, InternalError>; _]>([
                     Ok(InsertFile {
                         path: src.clone(),
@@ -358,7 +375,7 @@ pub(crate) async fn mv(
                         valid_from: now,
                     }),
                     Ok(InsertFile {
-                        path: dst(&src),
+                        path: dst_clone(&src),
                         blob_id: Some(b),
                         valid_from: now,
                     }),
@@ -366,7 +383,9 @@ pub(crate) async fn mv(
                 .boxed()
             })
             .try_flatten()
-            .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_files(s).await })
+            .try_forward_into::<_, _, _, _, InternalError>(|s| async {
+                local.add_files(s.boxed()).await
+            })
             .await
             .inspect_err(|e| log::error!("fs::mv: db failed: {e}"))?;
 
@@ -458,7 +477,7 @@ pub(crate) async fn mv(
             .buffer_unordered(local.buffer_size(BufferType::FsMvParallelism))
             .try_flatten()
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
-                local.add_materialisation(s).await
+                local.add_materialisation(s.boxed()).await
             })
             .await
             .inspect_err(|e| log::error!("fs::mv: failed: {e}"))?;

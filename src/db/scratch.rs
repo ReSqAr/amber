@@ -3,7 +3,7 @@ use crate::db::models::Path;
 use crate::flightdeck;
 use crate::utils::errors::InternalError;
 use futures::StreamExt;
-use futures_core::Stream;
+use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
 use redb::{Database, ReadableDatabase, TableDefinition, TableHandle};
 use std::marker::PhantomData;
@@ -91,7 +91,7 @@ where
 
     pub(crate) async fn insert(
         &self,
-        s: impl Stream<Item = Result<(Path, V), InternalError>> + Send + 'static,
+        s: BoxStream<'static, Result<(Path, V), InternalError>>,
     ) -> Result<u64, InternalError> {
         let (tx, mut rx) = mpsc::channel::<Result<_, InternalError>>(DEFAULT_BATCH_SIZE);
         let db = self.db.clone();
@@ -127,10 +127,10 @@ where
 
     pub(crate) fn left_join<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<IK, InternalError>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, InternalError>>,
         key_func: KF,
     ) -> (
-        impl Stream<Item = Result<(IK, Option<VO>), InternalError>> + 'static,
+        BoxStream<'static, Result<(IK, Option<VO>), InternalError>>,
         JoinHandle<Result<u64, InternalError>>,
     )
     where
@@ -183,10 +183,10 @@ where
             Ok(count)
         });
 
-        (rx, bg)
+        (rx.boxed(), bg)
     }
 
-    pub(crate) fn stream(&self) -> impl Stream<Item = Result<(Path, VO), InternalError>> + 'static {
+    pub(crate) fn stream(&self) -> BoxStream<'static, Result<(Path, VO), InternalError>> {
         let table = self.table.clone();
         let db = self.db.clone();
         let name = format!("RedbTable({})::stream", table.name());
@@ -210,15 +210,15 @@ where
             }
         });
 
-        rx
+        rx.boxed()
     }
 
     pub(crate) fn streaming_upsert<IK, KF>(
         &self,
-        s: impl Stream<Item = Result<(IK, V), InternalError>> + Send + 'static,
+        s: BoxStream<'static, Result<(IK, V), InternalError>>,
         key_func: KF,
     ) -> (
-        impl Stream<Item = Result<UpsertedValue<IK, V, VO>, InternalError>> + Send + 'static,
+        BoxStream<'static, Result<UpsertedValue<IK, V, VO>, InternalError>>,
         JoinHandle<Result<u64, InternalError>>,
     )
     where
@@ -275,6 +275,6 @@ where
             Ok(count)
         });
 
-        (rx, bg)
+        (rx.boxed(), bg)
     }
 }

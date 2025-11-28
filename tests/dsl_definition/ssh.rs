@@ -2,6 +2,7 @@ use crate::dsl_definition::writer::ChannelWriter;
 use amber::commands::serve;
 use amber::flightdeck::output::Output;
 use cipher::crypto_common::rand_core::OsRng;
+use futures::FutureExt;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Handler, Server, Session};
 use russh::{Channel, ChannelId};
@@ -625,7 +626,8 @@ pub async fn start_ssh_server(
             auth_key_clone,
             async {
                 let _ = rx.await;
-            },
+            }
+            .boxed(),
         )
         .await
         {

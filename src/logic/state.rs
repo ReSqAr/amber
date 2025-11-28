@@ -11,7 +11,8 @@ use crate::repository::traits::{BufferType, Config, Local, VirtualFilesystem};
 use crate::utils::blake3;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::walker::{FileObservation, WalkerConfig, walk};
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
+use futures_core::stream::BoxStream;
 use log::{debug, error};
 use tokio::task::JoinHandle;
 
@@ -171,7 +172,7 @@ pub async fn state(
 ) -> Result<
     (
         JoinHandle<Result<(), InternalError>>,
-        impl Stream<Item = Result<VirtualFile, InternalError>>,
+        BoxStream<'static, Result<VirtualFile, InternalError>>,
     ),
     InternalError,
 > {
@@ -198,8 +199,8 @@ pub async fn state_with_checks(
 ) -> Result<
     (
         JoinHandle<Result<(), InternalError>>,
-        impl Stream<Item = Result<VirtualFile, InternalError>>,
-        impl Stream<Item = FileCheck>,
+        BoxStream<'static, Result<VirtualFile, InternalError>>,
+        BoxStream<'static, FileCheck>,
     ),
     InternalError,
 > {
@@ -230,7 +231,7 @@ pub async fn state_with_checks(
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
     let bg_seen_persist: JoinHandle<()> = tokio::spawn(async move {
-        if let Err(e) = vfs_clone.add_seen_events(seen_db_rx).await {
+        if let Err(e) = vfs_clone.add_seen_events(seen_db_rx.boxed()).await {
             tx_clone
                 .send(Err(e.into()))
                 .await
@@ -283,7 +284,10 @@ pub async fn state_with_checks(
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
     let bg_split_vfs: JoinHandle<()> = tokio::spawn(async move {
-        let mut vfs_stream = vfs_clone.select_virtual_filesystem(seen_rx).await.boxed();
+        let mut vfs_stream = vfs_clone
+            .select_virtual_filesystem(seen_rx.boxed())
+            .await
+            .boxed();
         while let Some(vf) = vfs_stream.next().await {
             match vf {
                 Ok(vf) => {
@@ -439,5 +443,5 @@ pub async fn state_with_checks(
         }
     });
 
-    Ok((bg_final, rx, check_db_rx))
+    Ok((bg_final, rx.boxed(), check_db_rx.boxed()))
 }

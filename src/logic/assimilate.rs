@@ -8,7 +8,8 @@ use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use async_lock::Mutex;
 use dashmap::DashMap;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
+use futures_core::stream::BoxStream;
 use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -76,24 +77,29 @@ async fn assimilate_blob(
     })
 }
 
-pub(crate) async fn assimilate(
-    local: &(impl Local + Metadata + Adder + Send + Sync + Config),
-    stream: impl Stream<Item = Item> + Unpin + Send + 'static,
+pub(crate) async fn assimilate<'a>(
+    local: &'a (impl Local + Metadata + Adder + Send + Sync + Config),
+    stream: BoxStream<'a, Item>,
 ) -> Result<u64, InternalError> {
     let start_time = tokio::time::Instant::now();
     let mut obs = Observer::without_id("assimilate");
+
     let blob_locks: BlobLockMap = Arc::new(DashMap::new());
     let meta = local.current().await?;
-    let counter = AtomicU64::new(0);
+    let counter = Arc::new(AtomicU64::new(0));
 
+    let counter_clone = counter.clone();
+    let mut value = obs.clone();
     let count = stream
         .map(move |i| assimilate_blob(local, meta.id.clone(), i, blob_locks.clone()))
         .buffer_unordered(local.buffer_size(BufferType::AssimilateParallelism))
-        .inspect_ok(|_| {
-            counter.fetch_add(1, Ordering::Relaxed);
-            obs.observe_position(log::Level::Trace, counter.load(Ordering::Relaxed));
+        .inspect_ok(move |_| {
+            counter_clone.fetch_add(1, Ordering::Relaxed);
+            value.observe_position(log::Level::Trace, counter.load(Ordering::Relaxed));
         })
-        .try_forward_into::<_, _, _, _, InternalError>(|s| async { local.add_blobs(s).await })
+        .try_forward_into::<_, _, _, _, InternalError>(|s| async move {
+            local.add_blobs(s.boxed()).await
+        })
         .await?;
 
     let msg = if count > 0 {
@@ -138,7 +144,8 @@ mod tests {
         let items = futures::stream::iter([Item {
             path: local.root().join("hello.txt"),
             expected_blob_id: None,
-        }]);
+        }])
+        .boxed();
 
         // run assimilate
         let count = assimilate(&local, items).await?;

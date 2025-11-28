@@ -120,8 +120,11 @@ pub(crate) async fn fsck_remote(
             stream,
             local.buffer_size(BufferType::FsckMaterialiseBufferParallelism),
         );
-        redb.insert(StreamExt::filter_map(stream, Result::transpose))
-            .await?;
+        redb.insert(futures::StreamExt::boxed(StreamExt::filter_map(
+            stream,
+            Result::transpose,
+        )))
+        .await?;
 
         writing_task.await??;
 
@@ -165,7 +168,7 @@ pub(crate) async fn fsck_remote(
                 })
             }
         });
-        let (s, bg) = redb.left_join(s, |e: ObservedBlob| e.path);
+        let (s, bg) = redb.left_join(futures::StreamExt::boxed(s), |e: ObservedBlob| e.path);
         let s = StreamExt::map(s, |r| {
             r.map(|(o, b)| {
                 let b = b.unwrap();
@@ -179,8 +182,10 @@ pub(crate) async fn fsck_remote(
                 }
             })
         });
-        s.try_forward_into::<_, _, _, _, InternalError>(|s| local_clone.add_blobs(s))
-            .await?;
+        s.try_forward_into::<_, _, _, _, InternalError>(|s| {
+            local_clone.add_blobs(futures::StreamExt::boxed(s))
+        })
+        .await?;
         bg.await??;
 
         Ok::<(), InternalError>(())
