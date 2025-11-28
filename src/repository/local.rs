@@ -20,7 +20,8 @@ use crate::utils::errors::{AppError, InternalError};
 use crate::utils::fs::{Capability, capability_check, link};
 use crate::utils::path::RepoPath;
 use fs2::FileExt;
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream};
+use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use log::debug;
 use rand::Rng;
@@ -204,11 +205,14 @@ impl LocalRepository {
             .await
             .expect("failed to create repo id");
 
-        db.add_repository_names(stream::iter([models::InsertRepositoryName {
-            repo_id: repo.repo_id.clone(),
-            name: name.clone(),
-            valid_from: chrono::Utc::now(),
-        }]))
+        db.add_repository_names(
+            stream::iter([models::InsertRepositoryName {
+                repo_id: repo.repo_id.clone(),
+                name: name.clone(),
+                valid_from: chrono::Utc::now(),
+            }])
+            .boxed(),
+        )
         .await?;
 
         db.close().await?;
@@ -310,88 +314,104 @@ impl Config for LocalRepository {
 }
 
 impl Metadata for LocalRepository {
-    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
-        let name = self
-            .db
-            .lookup_current_repository_name(self.repo_id.clone())
-            .await?;
-        Ok(RepositoryMetadata {
-            id: self.repo_id.clone(),
-            name: name.unwrap_or("-".into()),
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+        let db = self.db.clone();
+        let repo_id = self.repo_id.clone();
+        Box::pin(async move {
+            let name = db.lookup_current_repository_name(repo_id.clone()).await?;
+            Ok(RepositoryMetadata {
+                id: repo_id.clone(),
+                name: name.unwrap_or("-".into()),
+            })
         })
     }
 }
 
 impl Availability for LocalRepository {
-    fn available(
-        &self,
-    ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static {
-        self.db.available_blobs(self.repo_id.clone()).err_into()
+    fn available(&self) -> BoxStream<'static, Result<AvailableBlob, InternalError>> {
+        self.db
+            .available_blobs(self.repo_id.clone())
+            .err_into()
+            .boxed()
     }
 
-    async fn missing(
-        &self,
-    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static
-    {
-        self.db.missing_blobs(self.repo_id.clone()).await.err_into()
+    async fn missing(&self) -> BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>> {
+        self.db
+            .missing_blobs(self.repo_id.clone())
+            .await
+            .err_into()
+            .boxed()
     }
 }
 
 impl Adder for LocalRepository {
-    async fn add_files(
-        &self,
-        s: impl Stream<Item = models::InsertFile> + Unpin + Send,
-    ) -> Result<u64, DBError> {
-        self.db.add_files(s).await
+    fn add_files<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertFile>,
+    ) -> BoxFuture<'a, Result<u64, DBError>> {
+        let db = self.db.clone();
+        async move { db.add_files(s).await }.boxed()
     }
 
-    async fn add_blobs(
-        &self,
-        s: impl Stream<Item = models::InsertBlob> + Unpin + Send,
-    ) -> Result<u64, DBError> {
-        self.db.add_blobs(s).await
+    fn add_blobs<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertBlob>,
+    ) -> BoxFuture<'a, Result<u64, DBError>> {
+        let db = self.db.clone();
+        async move { db.add_blobs(s).await }.boxed()
     }
 
-    async fn add_file_bundles(
-        &self,
-        s: impl Stream<Item = models::InsertFileBundle> + Unpin + Send,
-    ) -> Result<u64, DBError> {
-        self.db.add_file_bundles(s).await
+    fn add_file_bundles<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertFileBundle>,
+    ) -> BoxFuture<'a, Result<u64, DBError>> {
+        let db = self.db.clone();
+        async move { db.add_file_bundles(s).await }.boxed()
     }
 
-    async fn add_repository_names(
-        &self,
-        s: impl Stream<Item = models::InsertRepositoryName> + Unpin + Send,
-    ) -> Result<u64, DBError> {
-        self.db.add_repository_names(s).await
+    fn add_repository_names<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertRepositoryName>,
+    ) -> BoxFuture<'a, Result<u64, DBError>> {
+        let db = self.db.clone();
+        async move { db.add_repository_names(s).await }.boxed()
     }
 
-    async fn add_materialisation(
-        &self,
-        s: impl Stream<Item = models::InsertMaterialisation> + Unpin + Send,
-    ) -> Result<u64, DBError> {
-        self.db.add_materialisations(s).await
+    fn add_materialisation<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertMaterialisation>,
+    ) -> BoxFuture<'a, Result<u64, DBError>> {
+        let db = self.db.clone();
+        async move { db.add_materialisations(s).await }.boxed()
     }
 }
 
 impl LastIndicesSyncer for LocalRepository {
-    async fn lookup(&self, repo_id: RepoID) -> Result<LastIndices, InternalError> {
-        let Repository {
-            last_file_index,
-            last_blob_index,
-            last_name_index,
-            ..
-        } = self.db.lookup_repository(repo_id).await?;
-        Ok(LastIndices {
-            file: last_file_index,
-            blob: last_blob_index,
-            name: last_name_index,
-        })
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
+        let db = self.db.clone();
+        async move {
+            let Repository {
+                last_file_index,
+                last_blob_index,
+                last_name_index,
+                ..
+            } = db.lookup_repository(repo_id).await?;
+            Ok(LastIndices {
+                file: last_file_index,
+                blob: last_blob_index,
+                name: last_name_index,
+            })
+        }
+        .boxed()
     }
 
-    async fn refresh(&self) -> Result<(), InternalError> {
-        self.db.update_last_indices().await?;
-        Ok(())
+    fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>> {
+        let db = self.db.clone();
+        async move {
+            db.update_last_indices().await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
@@ -403,17 +423,14 @@ impl Syncer<Repository> for LocalRepository {
     fn select(
         &self,
         _params: (),
-    ) -> impl Future<
-        Output = impl Stream<Item = Result<Repository, InternalError>> + Unpin + Send + 'static,
-    > + Send {
-        self.db.select_repositories().map(|s| s.err_into())
+    ) -> BoxFuture<'_, BoxStream<'static, Result<Repository, InternalError>>> {
+        let db = self.db.clone();
+        async move { db.select_repositories().await.err_into().boxed() }.boxed()
     }
 
-    fn merge(
-        &self,
-        s: impl Stream<Item = Repository> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
-        self.db.merge_repositories(s).err_into()
+    fn merge(&self, s: BoxStream<'static, Repository>) -> BoxFuture<'_, Result<(), InternalError>> {
+        let db = self.db.clone();
+        async move { db.merge_repositories(s).await.map_err(Into::into) }.boxed()
     }
 }
 
@@ -425,17 +442,18 @@ impl Syncer<File> for LocalRepository {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl Stream<Item = Result<File, InternalError>> + Unpin + Send + 'static,
-    > + Send {
-        self.db.select_files(last_index).map(|s| s.err_into())
+    ) -> BoxFuture<'_, BoxStream<'static, Result<File, InternalError>>> {
+        let db = self.db.clone();
+        async move {
+            db.select_files(last_index)
+                .map(|s| s.err_into().boxed())
+                .await
+        }
+        .boxed()
     }
 
-    fn merge(
-        &self,
-        s: impl Stream<Item = File> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
-        self.db.merge_files(s).err_into()
+    fn merge(&self, s: BoxStream<'static, File>) -> BoxFuture<'_, Result<(), InternalError>> {
+        self.db.merge_files(s).err_into().boxed()
     }
 }
 
@@ -447,17 +465,13 @@ impl Syncer<Blob> for LocalRepository {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl Stream<Item = Result<Blob, InternalError>> + Unpin + Send + 'static,
-    > + Send {
-        self.db.select_blobs(last_index).map(|s| s.err_into())
+    ) -> BoxFuture<'_, BoxStream<'static, Result<Blob, InternalError>>> {
+        let db = self.db.clone();
+        async move { db.select_blobs(last_index).await.err_into().boxed() }.boxed()
     }
 
-    fn merge(
-        &self,
-        s: impl Stream<Item = Blob> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
-        self.db.merge_blobs(s).err_into()
+    fn merge(&self, s: BoxStream<'static, Blob>) -> BoxFuture<'_, Result<(), InternalError>> {
+        self.db.merge_blobs(s).err_into().boxed()
     }
 }
 impl SyncerParams for RepositoryName {
@@ -468,19 +482,22 @@ impl Syncer<RepositoryName> for LocalRepository {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl Stream<Item = Result<RepositoryName, InternalError>> + Unpin + Send + 'static,
-    > + Send {
-        self.db
-            .select_repository_names(last_index)
-            .map(|s| s.err_into())
+    ) -> BoxFuture<'_, BoxStream<'static, Result<RepositoryName, InternalError>>> {
+        let db = self.db.clone();
+        async move {
+            db.select_repository_names(last_index)
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
     }
 
     fn merge(
         &self,
-        s: impl Stream<Item = RepositoryName> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
-        self.db.merge_repository_names(s).err_into()
+        s: BoxStream<'static, RepositoryName>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
+        self.db.merge_repository_names(s).err_into().boxed()
     }
 }
 
@@ -488,14 +505,18 @@ impl VirtualFilesystem for LocalRepository {
     fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = BoxStream<'static, Result<MissingFile, DBError>>> + Send {
-        self.db
-            .select_missing_files_on_virtual_filesystem(last_seen_id)
+    ) -> BoxFuture<'_, BoxStream<'static, Result<MissingFile, DBError>>> {
+        let db = self.db.clone();
+        async move {
+            db.select_missing_files_on_virtual_filesystem(last_seen_id)
+                .await
+        }
+        .boxed()
     }
 
     fn add_checked_events(
         &self,
-        s: impl Stream<Item = FileCheck> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileCheck>,
     ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
         let db = self.db.clone();
         Box::pin(async move { db.add_virtual_filesystem_file_checked_events(s).await })
@@ -503,7 +524,7 @@ impl VirtualFilesystem for LocalRepository {
 
     fn add_seen_events(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileSeen>,
     ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
         let db = self.db.clone();
         Box::pin(async move { db.add_virtual_filesystem_file_seen_events(s).await })
@@ -511,14 +532,9 @@ impl VirtualFilesystem for LocalRepository {
 
     fn select_virtual_filesystem(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileSeen>,
     ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = impl Stream<Item = Result<VirtualFile, DBError>> + Unpin + Send + 'static,
-                > + Send
-                + 'static,
-        >,
+        Box<dyn Future<Output = BoxStream<'static, Result<VirtualFile, DBError>>> + Send + 'static>,
     > {
         let db = self.db.clone();
         Box::pin(async move {
@@ -533,7 +549,7 @@ impl VirtualFilesystem for LocalRepository {
     async fn select_current_files(
         &self,
         file_or_dir: String,
-    ) -> impl Stream<Item = Result<(models::Path, BlobID), DBError>> + Unpin + Send + 'static {
+    ) -> BoxStream<'static, Result<(models::Path, BlobID), DBError>> {
         self.db.select_current_files(file_or_dir).await
     }
 
@@ -542,9 +558,9 @@ impl VirtualFilesystem for LocalRepository {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<K, E>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<K, E>>,
         key_func: impl Fn(K) -> models::Path + Sync + Send + 'static,
-    ) -> impl Stream<Item = Result<(K, Option<CurrentFile>), E>> + Unpin + Send + 'static {
+    ) -> BoxStream<'static, Result<(K, Option<CurrentFile>), E>> {
         self.db.left_join_current_files(s, key_func)
     }
 }
@@ -614,71 +630,88 @@ impl RcloneTargetPath for LocalRepository {
 }
 
 impl Sender<BlobTransferItem> for LocalRepository {
-    async fn prepare_transfer(
+    fn prepare_transfer(
         &self,
-        s: impl Stream<Item = BlobTransferItem> + Unpin + Send + 'static,
-    ) -> Result<u64, InternalError> {
-        let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| async move {
-            let blob_path = self.blob_path(&item.blob_id);
-            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);
-            if let Some(parent) = transfer_path.abs().parent() {
-                fs::create_dir_all(parent).await?;
-            }
+        s: BoxStream<'static, BlobTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
+        let local = self.clone();
+        async move {
+            let local_clone = local.clone();
+            let stream = tokio_stream::StreamExt::map(s, |item: BlobTransferItem| {
+                let local = local_clone.clone();
+                async move {
+                    let blob_path = local.blob_path(&item.blob_id);
+                    let transfer_path =
+                        local.rclone_target_path(item.transfer_id).join(item.path.0);
+                    if let Some(parent) = transfer_path.abs().parent() {
+                        fs::create_dir_all(parent).await?;
+                    }
 
-            link(blob_path, transfer_path, self.capability()).await?;
-            Result::<(), InternalError>::Ok(())
-        });
+                    link(blob_path, transfer_path, local.capability()).await?;
+                    Result::<(), InternalError>::Ok(())
+                }
+            });
 
-        // allow multiple hard link operations to run concurrently
-        let stream =
-            stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransferParallelism));
+            // allow multiple hard link operations to run concurrently
+            let stream =
+                stream.buffer_unordered(local.buffer_size(BufferType::PrepareTransferParallelism));
 
-        let mut count = 0;
-        pin_mut!(stream);
-        while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
-            match maybe_path {
-                Ok(()) => count += 1,
-                Err(e) => {
-                    return Err(e);
+            let mut count = 0;
+            pin_mut!(stream);
+            while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
+                match maybe_path {
+                    Ok(()) => count += 1,
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
             }
-        }
 
-        Ok(count)
+            Ok(count)
+        }
+        .boxed()
     }
 }
 
 impl Receiver<BlobTransferItem> for LocalRepository {
-    async fn create_transfer_request(
+    fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: RepoID,
         paths: Vec<String>,
-    ) -> impl Stream<Item = Result<BlobTransferItem, InternalError>> + Unpin + Send + 'static {
-        let rclone_target_path = self.rclone_target_path(transfer_id);
-        if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
-            return stream::iter([Err(e.into())]).boxed();
-        }
+    ) -> BoxFuture<'_, BoxStream<'static, Result<BlobTransferItem, InternalError>>> {
+        async move {
+            let rclone_target_path = self.rclone_target_path(transfer_id);
+            if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
+                return stream::iter([Err(e.into())]).boxed();
+            }
 
-        self.db
-            .select_missing_blobs_for_transfer(transfer_id, repo_id, paths)
-            .await
-            .err_into()
-            .boxed()
+            self.db
+                .select_missing_blobs_for_transfer(transfer_id, repo_id, paths)
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
     }
 
-    async fn finalise_transfer(
+    fn finalise_transfer(
         &self,
-        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
-    ) -> Result<u64, InternalError> {
+        s: BoxStream<'static, CopiedTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
         let local = self.clone();
         let assimilation = self.clone();
-        let s = s.map(move |r| Item {
-            path: local.rclone_target_path(r.transfer_id).join(r.path.0),
-            expected_blob_id: Some(r.blob_id),
-        });
+        async move {
+            let s = s
+                .map(move |r| Item {
+                    path: local.rclone_target_path(r.transfer_id).join(r.path.0),
+                    expected_blob_id: Some(r.blob_id),
+                })
+                .boxed();
 
-        assimilate::assimilate(&assimilation, s).await
+            assimilate::assimilate(&assimilation, s).await
+        }
+        .boxed()
     }
 }
 
@@ -707,71 +740,88 @@ impl Into<SizedBlobID> for FileTransferItem {
 }
 
 impl Sender<FileTransferItem> for LocalRepository {
-    async fn prepare_transfer(
+    fn prepare_transfer(
         &self,
-        s: impl Stream<Item = FileTransferItem> + Unpin + Send + 'static,
-    ) -> Result<u64, InternalError> {
-        let stream = tokio_stream::StreamExt::map(s, |item: FileTransferItem| async move {
-            let blob_path = self.blob_path(&item.blob_id);
-            let transfer_path = self.rclone_target_path(item.transfer_id).join(item.path.0);
-            if let Some(parent) = transfer_path.abs().parent() {
-                fs::create_dir_all(parent).await?;
-            }
+        s: BoxStream<'static, FileTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
+        let local = self.clone();
+        async move {
+            let local_clone = local.clone();
+            let stream = tokio_stream::StreamExt::map(s, |item: FileTransferItem| {
+                let local = local_clone.clone();
+                async move {
+                    let blob_path = local.blob_path(&item.blob_id);
+                    let transfer_path =
+                        local.rclone_target_path(item.transfer_id).join(item.path.0);
+                    if let Some(parent) = transfer_path.abs().parent() {
+                        fs::create_dir_all(parent).await?;
+                    }
 
-            link(blob_path, transfer_path, self.capability()).await?;
-            Result::<(), InternalError>::Ok(())
-        });
+                    link(blob_path, transfer_path, local.capability()).await?;
+                    Result::<(), InternalError>::Ok(())
+                }
+            });
 
-        // allow multiple hard link operations to run concurrently
-        let stream =
-            stream.buffer_unordered(self.buffer_size(BufferType::PrepareTransferParallelism));
+            // allow multiple hard link operations to run concurrently
+            let stream =
+                stream.buffer_unordered(local.buffer_size(BufferType::PrepareTransferParallelism));
 
-        let mut count = 0;
-        pin_mut!(stream);
-        while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
-            match maybe_path {
-                Ok(()) => count += 1,
-                Err(e) => {
-                    return Err(e);
+            let mut count = 0;
+            pin_mut!(stream);
+            while let Some(maybe_path) = tokio_stream::StreamExt::next(&mut stream).await {
+                match maybe_path {
+                    Ok(()) => count += 1,
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
             }
-        }
 
-        Ok(count)
+            Ok(count)
+        }
+        .boxed()
     }
 }
 
 impl Receiver<FileTransferItem> for LocalRepository {
-    async fn create_transfer_request(
+    fn create_transfer_request(
         &self,
         transfer_id: u32,
         repo_id: RepoID,
         paths: Vec<String>,
-    ) -> impl Stream<Item = Result<FileTransferItem, InternalError>> + Unpin + Send + 'static {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<FileTransferItem, InternalError>>> {
+        let db = self.db.clone();
+        let local_repo_id = self.repo_id.clone();
         let rclone_target_path = self.rclone_target_path(transfer_id);
-        if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
-            return stream::iter([Err(e.into())]).boxed();
-        }
+        async move {
+            if let Err(e) = fs::create_dir_all(rclone_target_path.abs()).await {
+                return stream::iter([Err(e.into())]).boxed();
+            }
 
-        self.db
-            .select_missing_files_for_transfer(transfer_id, self.repo_id.clone(), repo_id, paths)
-            .await
-            .err_into()
-            .boxed()
+            db.select_missing_files_for_transfer(transfer_id, local_repo_id.clone(), repo_id, paths)
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
     }
 
-    async fn finalise_transfer(
+    fn finalise_transfer(
         &self,
-        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
-    ) -> Result<u64, InternalError> {
+        s: BoxStream<'static, CopiedTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
         let local = self.clone();
         let assimilation = self.clone();
+        async move {
+            let s = s
+                .map(move |r| Item {
+                    path: local.rclone_target_path(r.transfer_id).join(r.path.0),
+                    expected_blob_id: Some(r.blob_id),
+                })
+                .boxed();
 
-        let s = s.map(move |r| Item {
-            path: local.rclone_target_path(r.transfer_id).join(r.path.0),
-            expected_blob_id: Some(r.blob_id),
-        });
-
-        assimilate::assimilate(&assimilation, s).await
+            assimilate::assimilate(&assimilation, s).await
+        }
+        .boxed()
     }
 }

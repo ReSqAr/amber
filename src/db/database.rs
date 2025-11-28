@@ -16,7 +16,7 @@ use crate::utils::stream::group_by_key;
 use behemoth::{Offset, StreamError, TailFrom};
 use chrono::Utc;
 use futures::stream::BoxStream;
-use futures::{Stream, StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use log::debug;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -63,10 +63,10 @@ impl Database {
         let m_reader = self.logs.materialisations_writer.reader();
         let rn_reader = self.logs.repository_names_writer.reader();
 
-        let b = self.blob_log_stream(b_reader.from(blob_offset));
-        let f = self.file_log_stream(f_reader.from(file_offset));
-        let m = self.materialisation_log_stream(m_reader.from(mat_offset));
-        let rn = self.repository_name_log_stream(rn_reader.from(name_offset));
+        let b = self.blob_log_stream(b_reader.from(blob_offset).boxed());
+        let f = self.file_log_stream(f_reader.from(file_offset).boxed());
+        let m = self.materialisation_log_stream(m_reader.from(mat_offset).boxed());
+        let rn = self.repository_name_log_stream(rn_reader.from(name_offset).boxed());
 
         let (b_count, f_count, m_count, rn_count) = tokio::try_join!(b, f, m, rn)?;
         ob.observe_termination_ext(
@@ -123,7 +123,7 @@ impl Database {
         repo_id: RepoID,
     ) -> Result<Option<String>, DBError> {
         let s = self.kv.left_join_current_repository_names(
-            stream::iter(vec![Ok::<_, DBError>(repo_id)]),
+            stream::iter(vec![Ok::<_, DBError>(repo_id)]).boxed(),
             |r| r,
         );
         let r: Vec<_> = s.collect().await;
@@ -133,15 +133,12 @@ impl Database {
         Ok(result.map(|r| r.name))
     }
 
-    pub async fn add_files(
-        &self,
-        s: impl Stream<Item = InsertFile> + Send + Unpin,
-    ) -> Result<u64, DBError> {
+    pub async fn add_files(&self, s: BoxStream<'_, InsertFile>) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("add_files::log_stream");
-        let bg = self.file_log_stream(tail);
+        let bg = self.file_log_stream(tail.boxed());
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
@@ -173,15 +170,12 @@ impl Database {
         Ok(total_inserted)
     }
 
-    pub async fn add_blobs(
-        &self,
-        s: impl Stream<Item = InsertBlob> + Send + Unpin,
-    ) -> Result<u64, DBError> {
+    pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.blobs_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("add_blobs::log_stream");
-        let bg = self.blob_log_stream(tail);
+        let bg = self.blob_log_stream(tail.boxed());
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
@@ -218,7 +212,7 @@ impl Database {
 
     pub async fn add_file_bundles(
         &self,
-        s: impl Stream<Item = InsertFileBundle> + Send + Unpin,
+        s: BoxStream<'_, InsertFileBundle>,
     ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -236,9 +230,9 @@ impl Database {
         let mat_tail = mat_txn
             .tail(TailFrom::Head)
             .track("add_file_bundles::mat::log_stream");
-        let blob_bg = self.blob_log_stream(blob_tail);
-        let file_bg = self.file_log_stream(file_tail);
-        let mat_bg = self.materialisation_log_stream(mat_tail);
+        let blob_bg = self.blob_log_stream(blob_tail.boxed());
+        let file_bg = self.file_log_stream(file_tail.boxed());
+        let mat_bg = self.materialisation_log_stream(mat_tail.boxed());
 
         let mut tracer_b = Tracer::new_off("add_file_bundles::blob_txn::push");
         let mut tracer_f = Tracer::new_off("add_file_bundles::file_txn::push");
@@ -337,7 +331,7 @@ impl Database {
 
     pub async fn add_repository_names(
         &self,
-        s: impl Stream<Item = InsertRepositoryName> + Send + Unpin,
+        s: BoxStream<'_, InsertRepositoryName>,
     ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -345,7 +339,7 @@ impl Database {
         let tail = txn
             .tail(TailFrom::Head)
             .track("add_repository_names::log_stream");
-        let bg = self.repository_name_log_stream(tail);
+        let bg = self.repository_name_log_stream(tail.boxed());
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
@@ -463,27 +457,21 @@ impl Database {
             .boxed()
     }
 
-    pub async fn merge_repositories(
-        &self,
-        s: impl Stream<Item = Repository> + Unpin + Send + 'static,
-    ) -> Result<(), DBError> {
-        self.kv.apply_repositories(s.map(Ok)).await?;
+    pub async fn merge_repositories(&self, s: BoxStream<'_, Repository>) -> Result<(), DBError> {
+        self.kv.apply_repositories(s.map(Ok).boxed()).await?;
         Ok(())
     }
 
-    pub async fn merge_files(
-        &self,
-        s: impl Stream<Item = File> + Unpin + Send + 'static,
-    ) -> Result<(), DBError> {
+    pub async fn merge_files(&self, s: BoxStream<'static, File>) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("merge_files::log_stream");
-        let bg = self.file_log_stream(tail);
+        let bg = self.file_log_stream(tail.boxed());
 
         let s = self
             .kv
-            .left_join_known_file_uids(s.map(Ok), |f: File| f.uid)
+            .left_join_known_file_uids(s.map(Ok).boxed(), |f: File| f.uid)
             .boxed();
         let mut s = s.enumerate();
         while let Some((i, file)) = s.next().await {
@@ -510,19 +498,16 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_blobs(
-        &self,
-        s: impl Stream<Item = Blob> + Unpin + Send + 'static,
-    ) -> Result<(), DBError> {
+    pub async fn merge_blobs(&self, s: BoxStream<'static, Blob>) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.blobs_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("merge_blobs::log_stream");
-        let bg = self.blob_log_stream(tail);
+        let bg = self.blob_log_stream(tail.boxed());
 
         let s = self
             .kv
-            .left_join_known_blob_uids(s.map(Ok), |b: Blob| b.uid)
+            .left_join_known_blob_uids(s.map(Ok).boxed(), |b: Blob| b.uid)
             .boxed();
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
@@ -551,7 +536,7 @@ impl Database {
 
     pub async fn merge_repository_names(
         &self,
-        s: impl Stream<Item = RepositoryName> + Unpin + Send + 'static,
+        s: BoxStream<'static, RepositoryName>,
     ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -559,11 +544,11 @@ impl Database {
         let tail = txn
             .tail(TailFrom::Head)
             .track("merge_repository_names::log_stream");
-        let bg = self.repository_name_log_stream(tail);
+        let bg = self.repository_name_log_stream(tail.boxed());
 
         let s = self
             .kv
-            .left_join_known_repository_name_uids(s.map(Ok), |rn: RepositoryName| rn.uid)
+            .left_join_known_repository_name_uids(s.map(Ok).boxed(), |rn: RepositoryName| rn.uid)
             .boxed();
         let mut s = s.enumerate();
         while let Some((i, repository_name)) = s.next().await {
@@ -593,7 +578,10 @@ impl Database {
     pub async fn lookup_repository(&self, repo_id: RepoID) -> Result<Repository, DBError> {
         let c: Vec<_> = self
             .kv
-            .left_join_repositories(stream::iter([Ok::<_, DBError>(repo_id.clone())]), |r| r)
+            .left_join_repositories(
+                stream::iter([Ok::<_, DBError>(repo_id.clone())]).boxed(),
+                |r| r,
+            )
             .try_collect()
             .await?;
         let (_, rm) = c.into_iter().next().expect("at least one element");
@@ -615,12 +603,15 @@ impl Database {
         let last_blob_index = self.logs.blobs_writer.watermark();
         let last_name_index = self.logs.repository_names_writer.watermark();
         self.kv
-            .apply_repositories(stream::iter([Ok(Repository {
-                repo_id: self.get_or_create_current_repository().await?.repo_id,
-                last_file_index: last_file_index.map(Into::into),
-                last_blob_index: last_blob_index.map(Into::into),
-                last_name_index: last_name_index.map(Into::into),
-            })]))
+            .apply_repositories(
+                stream::iter([Ok(Repository {
+                    repo_id: self.get_or_create_current_repository().await?.repo_id,
+                    last_file_index: last_file_index.map(Into::into),
+                    last_blob_index: last_blob_index.map(Into::into),
+                    last_name_index: last_name_index.map(Into::into),
+                })])
+                .boxed(),
+            )
             .await?;
         Ok(())
     }
@@ -628,7 +619,7 @@ impl Database {
     pub(crate) fn available_blobs<'a>(
         &self,
         repo_id: RepoID,
-    ) -> impl Stream<Item = Result<AvailableBlob, DBError>> + Unpin + Send + 'static {
+    ) -> BoxStream<'static, Result<AvailableBlob, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = self.kv.stream_current_blobs();
@@ -655,8 +646,7 @@ impl Database {
     pub(crate) async fn missing_blobs(
         &self,
         repo_id: RepoID,
-    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, DBError>> + Unpin + Send + Sized + 'static
-    {
+    ) -> BoxStream<'static, Result<BlobAssociatedToFiles, DBError>> {
         let repo_names: HashMap<_, _> = match self
             .kv
             .stream_current_repository_names()
@@ -693,7 +683,7 @@ impl Database {
                 Err(e) => vec![Err(e)],
             })
         });
-        let s = s.flatten();
+        let s = s.flatten().boxed();
         let s = self
             .kv
             .left_join_current_blobs(s, move |(_, b, r): (Path, BlobID, RepoID)| BlobRef {
@@ -730,7 +720,7 @@ impl Database {
 
     pub async fn add_materialisations(
         &self,
-        s: impl Stream<Item = InsertMaterialisation> + Send + Unpin,
+        s: BoxStream<'_, InsertMaterialisation>,
     ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
@@ -738,7 +728,7 @@ impl Database {
         let tail = txn
             .tail(TailFrom::Head)
             .track("add_materialisations::log_stream");
-        let bg = self.materialisation_log_stream(tail);
+        let bg = self.materialisation_log_stream(tail.boxed());
 
         let mut s = s.enumerate();
         while let Some((i, mat)) = s.next().await {
@@ -788,7 +778,8 @@ impl Database {
                 }
             }
             Err(e) => Some(Err(e)),
-        });
+        })
+        .boxed();
         let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: repo_id.clone(),
@@ -805,26 +796,26 @@ impl Database {
 
     pub async fn add_virtual_filesystem_file_checked_events(
         &self,
-        s: impl Stream<Item = FileCheck> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileCheck>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| Ok(e));
+        let s = s.map(|e| Ok(e)).boxed();
         Ok(self.kv.apply_file_checks(s).await?)
     }
 
     pub async fn add_virtual_filesystem_file_seen_events(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileSeen>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| Ok(e));
+        let s = s.map(|e| Ok(e)).boxed();
         Ok(self.kv.apply_file_seen(s).await?)
     }
 
     pub fn select_virtual_filesystem(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileSeen>,
         repo_id: RepoID,
-    ) -> impl Stream<Item = Result<VirtualFile, DBError>> + Unpin + Send + 'static {
-        let s = s.map(Ok);
+    ) -> BoxStream<'static, Result<VirtualFile, DBError>> {
+        let s = s.map(Ok).boxed();
         let s = self.kv.left_join_current_files(s, move |f| f.path);
         let s = self
             .kv
@@ -832,11 +823,13 @@ impl Database {
                 blob_id: cf.map(|c| c.blob_id).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
                 repo_id: repo_id.clone(),
             })
-            .map_ok(|((f, cf), cb)| (f, cf, cb));
+            .map_ok(|((f, cf), cb)| (f, cf, cb))
+            .boxed();
         let s = self
             .kv
             .left_join_current_materialisations(s, move |(f, _, _)| f.path)
-            .map_ok(|((f, cf, cb), cm)| (f, cf, cb, cm));
+            .map_ok(|((f, cf, cb), cm)| (f, cf, cb, cm))
+            .boxed();
         let s = self
             .kv
             .left_join_current_check(s, move |(f, _, _, _)| f.path)
@@ -846,9 +839,10 @@ impl Database {
                 current_blob: cb,
                 current_materialisation: cm,
                 current_check: cc,
-            });
+            })
+            .boxed();
 
-        s.boxed().track("Database::select_virtual_filesystem")
+        s.track("Database::select_virtual_filesystem").boxed()
     }
 
     pub async fn add_connection(&self, connection: Connection) -> Result<(), DBError> {
@@ -860,7 +854,7 @@ impl Database {
         &self,
         name: ConnectionName,
     ) -> Result<Option<Connection>, DBError> {
-        let s = stream::iter([Ok::<_, DBError>(name.clone())]);
+        let s = stream::iter([Ok::<_, DBError>(name.clone())]).boxed();
         let c: Vec<_> = self
             .kv
             .left_join_connections(s, |n| n)
@@ -909,17 +903,22 @@ impl Database {
                 }
             }
             Err(e) => Some(Err(e)),
-        });
+        })
+        .boxed();
 
-        let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
-            repo_id: repo_id.clone(),
-        });
+        let s = self
+            .kv
+            .left_join_current_blobs(s, move |(_, b)| BlobRef {
+                blob_id: b.clone(),
+                repo_id: repo_id.clone(),
+            })
+            .boxed();
         let s = TokioStreamExt::filter_map(s, |e| match e {
             Ok(((p, b), None)) => Some(Ok((p, b))),
             Ok((_, Some(_))) => None,
             Err(e) => Some(Err(e)),
-        });
+        })
+        .boxed();
         let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: remote_repo_id.clone(),
@@ -959,7 +958,8 @@ impl Database {
                 }
             }
             Err(e) => Some(Err(e)),
-        });
+        })
+        .boxed();
 
         let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
@@ -969,7 +969,8 @@ impl Database {
             Ok(((p, b), None)) => Some(Ok((p, b))),
             Ok((_, Some(_))) => None,
             Err(e) => Some(Err(e)),
-        });
+        })
+        .boxed();
         let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: remote_repo_id.clone(),
@@ -994,7 +995,7 @@ impl Database {
     ) -> BoxStream<'a, Result<(Path, BlobID), DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
-        let s = stream::iter([Ok(Path(file_or_dir.clone()))]);
+        let s = stream::iter([Ok(Path(file_or_dir.clone()))]).boxed();
         let s = self.kv.left_join_current_files(s, |p| p);
         let s: Vec<_> = TokioStreamExt::collect(s).await;
         let (p, cf) = match s.into_iter().next().unwrap() {
@@ -1024,7 +1025,7 @@ impl Database {
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<K, E>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<K, E>>,
         key_func: impl Fn(K) -> Path + Sync + Send + 'static,
     ) -> BoxStream<'a, Result<(K, Option<CurrentFile>), E>> {
         self.kv.left_join_current_files(s, key_func).boxed()
@@ -1032,7 +1033,7 @@ impl Database {
 
     fn blob_log_stream(
         &self,
-        s: impl Stream<Item = Result<(Offset, Blob), StreamError>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<(Offset, Blob), StreamError>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1059,11 +1060,12 @@ impl Database {
                         Err(e) => Err::<_, DBError>(e.into()),
                     }
                 }
-            });
+            })
+            .boxed();
 
             tokio::try_join!(
                 inner.kv.apply_blobs(s),
-                inner.kv.apply_known_blob_uids(uid_rx),
+                inner.kv.apply_known_blob_uids(uid_rx.boxed()),
             )?;
 
             let counter = counter.load(Ordering::Relaxed);
@@ -1071,10 +1073,9 @@ impl Database {
                 let max_offset = max_offset.load(Ordering::SeqCst);
                 inner
                     .kv
-                    .apply_current_reductions(stream::iter([(
-                        BLOB_TABLE_NAME.into(),
-                        LogOffset(max_offset),
-                    )]))
+                    .apply_current_reductions(
+                        stream::iter([(BLOB_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
+                    )
                     .await?;
             }
 
@@ -1084,7 +1085,7 @@ impl Database {
 
     fn file_log_stream(
         &self,
-        s: impl Stream<Item = Result<(Offset, File), StreamError>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<(Offset, File), StreamError>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1111,11 +1112,12 @@ impl Database {
                         Err(e) => Err::<_, DBError>(e.into()),
                     }
                 }
-            });
+            })
+            .boxed();
 
             tokio::try_join!(
                 inner.kv.apply_files(s),
-                inner.kv.apply_known_file_uids(uid_rx),
+                inner.kv.apply_known_file_uids(uid_rx.boxed()),
             )?;
 
             let counter = counter.load(Ordering::Relaxed);
@@ -1123,10 +1125,9 @@ impl Database {
                 let max_offset = max_offset.load(Ordering::SeqCst);
                 inner
                     .kv
-                    .apply_current_reductions(stream::iter([(
-                        FILE_TABLE_NAME.into(),
-                        LogOffset(max_offset),
-                    )]))
+                    .apply_current_reductions(
+                        stream::iter([(FILE_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
+                    )
                     .await?;
             }
 
@@ -1136,10 +1137,7 @@ impl Database {
 
     fn materialisation_log_stream(
         &self,
-        s: impl Stream<Item = Result<(Offset, InsertMaterialisation), StreamError>>
-        + Unpin
-        + Send
-        + 'static,
+        s: BoxStream<'static, Result<(Offset, InsertMaterialisation), StreamError>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1157,7 +1155,8 @@ impl Database {
                     Ok(m)
                 }
                 Err(e) => Err(e.into()),
-            });
+            })
+            .boxed();
             inner.kv.apply_materialisations(s).await?;
 
             let counter = counter.load(Ordering::Relaxed);
@@ -1165,10 +1164,9 @@ impl Database {
                 let max_offset = max_offset.load(Ordering::SeqCst);
                 inner
                     .kv
-                    .apply_current_reductions(stream::iter([(
-                        MAT_TABLE_NAME.into(),
-                        LogOffset(max_offset),
-                    )]))
+                    .apply_current_reductions(
+                        stream::iter([(MAT_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
+                    )
                     .await?;
             }
 
@@ -1178,7 +1176,7 @@ impl Database {
 
     fn repository_name_log_stream(
         &self,
-        s: impl Stream<Item = Result<(Offset, RepositoryName), StreamError>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<(Offset, RepositoryName), StreamError>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1208,11 +1206,12 @@ impl Database {
                         }
                     }
                 },
-            );
+            )
+            .boxed();
 
             tokio::try_join!(
                 inner.kv.apply_repository_names(s),
-                inner.kv.apply_known_repository_name_uids(uid_rx),
+                inner.kv.apply_known_repository_name_uids(uid_rx.boxed()),
             )?;
 
             let counter = counter.load(Ordering::Relaxed);
@@ -1220,10 +1219,9 @@ impl Database {
                 let max_offset = max_offset.load(Ordering::SeqCst);
                 inner
                     .kv
-                    .apply_current_reductions(stream::iter([(
-                        NAME_TABLE_NAME.into(),
-                        LogOffset(max_offset),
-                    )]))
+                    .apply_current_reductions(
+                        stream::iter([(NAME_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
+                    )
                     .await?;
             }
 

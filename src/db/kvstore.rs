@@ -1,9 +1,8 @@
 use crate::db::error::DBError;
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
-use crate::flightdeck::tracked::stream::{Adapter, TrackedStream};
 use futures::StreamExt;
-use futures_core::Stream;
+use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
 use redb::{Database, Key, ReadableDatabase, TableDefinition, TableHandle, Value};
 use std::borrow::Borrow;
@@ -161,9 +160,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn stream(
-        &self,
-    ) -> TrackedStream<impl Stream<Item = Result<(KO, VO), DBError>> + 'static, Adapter> {
+    pub(crate) fn stream(&self) -> BoxStream<'static, Result<(KO, VO), DBError>> {
         let table = self.table;
         let db = self.db.clone();
         let name = format!("RedbTable({})::stream", table.name());
@@ -194,12 +191,12 @@ where
             }
         });
 
-        rx
+        rx.boxed()
     }
 
     pub(crate) async fn apply(
         &self,
-        s: impl Stream<Item = Result<(K, Option<V>), DBError>> + Send + 'static,
+        s: BoxStream<'static, Result<(K, Option<V>), DBError>>,
     ) -> Result<u64, DBError> {
         let (tx, mut rx) = mpsc::channel::<Result<_, DBError>>(DEFAULT_BUFFER_SIZE);
         let db = self.db.clone();
@@ -258,7 +255,7 @@ where
 
     pub(crate) async fn upsert<U: Upsert<K = K, V = V>>(
         &self,
-        s: impl Stream<Item = Result<U, DBError>> + Send + 'static,
+        s: BoxStream<'_, Result<U, DBError>>,
     ) -> Result<u64, DBError> {
         let (tx, mut rx) = mpsc::channel::<Result<_, DBError>>(DEFAULT_BUFFER_SIZE);
         let table = self.table;
@@ -334,9 +331,9 @@ where
 
     pub(crate) fn left_join<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
         &self,
-        s: impl Stream<Item = Result<IK, E>> + Send + 'static,
+        s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> impl Stream<Item = Result<(IK, Option<VO>), E>> + Send + 'static
+    ) -> BoxStream<'static, Result<(IK, Option<VO>), E>>
     where
         KF: Fn(IK) -> K + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -402,6 +399,6 @@ where
             Ok(count)
         });
 
-        rx
+        rx.boxed()
     }
 }

@@ -20,7 +20,9 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures_core::future::BoxFuture;
+use futures_core::stream::BoxStream;
 use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -149,43 +151,52 @@ impl GRPCClient {
 }
 
 impl Metadata for GRPCClient {
-    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
-        let repo_id_request = tonic::Request::new(CurrentRepositoryMetadataRequest {});
-        let meta = self
-            .client
-            .write()
-            .await
-            .current_repository_metadata(repo_id_request)
-            .await?
-            .into_inner();
-        Ok(RepositoryMetadata {
-            id: RepoID(meta.id),
-            name: meta.name,
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+        let client = self.client.clone();
+        Box::pin(async move {
+            let repo_id_request = tonic::Request::new(CurrentRepositoryMetadataRequest {});
+            let meta = client
+                .write()
+                .await
+                .current_repository_metadata(repo_id_request)
+                .await?
+                .into_inner();
+            Ok(RepositoryMetadata {
+                id: RepoID(meta.id),
+                name: meta.name,
+            })
         })
     }
 }
 
 impl LastIndicesSyncer for GRPCClient {
-    async fn lookup(&self, repo_id: RepoID) -> Result<LastIndices, InternalError> {
-        let LookupLastIndicesResponse { file, blob, name } = self
-            .client
-            .write()
-            .await
-            .lookup_last_indices(LookupLastIndicesRequest {
-                repo_id: repo_id.0.clone(),
-            })
-            .await?
-            .into_inner();
-        Ok(LastIndices { file, blob, name })
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
+        let client = self.client.clone();
+        async move {
+            let LookupLastIndicesResponse { file, blob, name } = client
+                .write()
+                .await
+                .lookup_last_indices(LookupLastIndicesRequest {
+                    repo_id: repo_id.0.clone(),
+                })
+                .await?
+                .into_inner();
+            Ok(LastIndices { file, blob, name })
+        }
+        .boxed()
     }
 
-    async fn refresh(&self) -> Result<(), InternalError> {
-        self.client
-            .write()
-            .await
-            .update_last_indices(UpdateLastIndicesRequest {})
-            .await?;
-        Ok(())
+    fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>> {
+        let client = self.client.clone();
+        async move {
+            client
+                .write()
+                .await
+                .update_last_indices(UpdateLastIndicesRequest {})
+                .await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
@@ -193,12 +204,7 @@ impl Syncer<models::Repository> for GRPCClient {
     fn select(
         &self,
         _params: (),
-    ) -> impl Future<
-        Output = impl futures::Stream<Item = Result<models::Repository, InternalError>>
-                 + Unpin
-                 + Send
-                 + 'static,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Repository, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -208,22 +214,25 @@ impl Syncer<models::Repository> for GRPCClient {
                 .map(|r| r.unwrap().err_into().map_ok(models::Repository::from))
                 .await
                 .track("GRPCClient::Syncer<models::Repository>::select")
+                .boxed()
         }
+        .boxed()
     }
 
     fn merge(
         &self,
-        s: impl Stream<Item = models::Repository> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
+        s: BoxStream<'static, models::Repository>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
-        async move {
+        Box::pin(async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_repositories(s.map(Repository::from))
+                .merge_repositories(s.map(Repository::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
+                .boxed()
                 .await
-        }
+        })
     }
 }
 
@@ -231,12 +240,7 @@ impl Syncer<models::File> for GRPCClient {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl futures::Stream<Item = Result<models::File, InternalError>>
-                 + Unpin
-                 + Send
-                 + 'static,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::File, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -246,22 +250,26 @@ impl Syncer<models::File> for GRPCClient {
                 .map(|r| r.unwrap().err_into().map_ok(models::File::from))
                 .await
                 .track("GRPCClient::Syncer<models::File>::select")
+                .boxed()
         }
+        .boxed()
     }
 
     fn merge(
         &self,
-        s: impl Stream<Item = models::File> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
+        s: BoxStream<'static, models::File>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_files(s.map(File::from))
+                .merge_files(s.map(File::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
+                .boxed()
                 .await
         }
+        .boxed()
     }
 }
 
@@ -269,12 +277,7 @@ impl Syncer<models::Blob> for GRPCClient {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl futures::Stream<Item = Result<models::Blob, InternalError>>
-                 + Unpin
-                 + Send
-                 + 'static,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Blob, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -284,22 +287,26 @@ impl Syncer<models::Blob> for GRPCClient {
                 .map(|r| r.unwrap().err_into().map_ok(models::Blob::from))
                 .await
                 .track("GRPCClient::Syncer<models::Blob>::select")
+                .boxed()
         }
+        .boxed()
     }
 
     fn merge(
         &self,
-        s: impl Stream<Item = models::Blob> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
+        s: BoxStream<'static, models::Blob>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_blobs(s.map(Blob::from))
+                .merge_blobs(s.map(Blob::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
+                .boxed()
                 .await
         }
+        .boxed()
     }
 }
 
@@ -307,12 +314,7 @@ impl Syncer<models::RepositoryName> for GRPCClient {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> impl Future<
-        Output = impl futures::Stream<Item = Result<models::RepositoryName, InternalError>>
-                 + Unpin
-                 + Send
-                 + 'static,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryName, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -322,22 +324,26 @@ impl Syncer<models::RepositoryName> for GRPCClient {
                 .map(|r| r.unwrap().err_into().map_ok(models::RepositoryName::from))
                 .await
                 .track("GRPCClient::Syncer<models::RepositoryName>::select")
+                .boxed()
         }
+        .boxed()
     }
 
     fn merge(
         &self,
-        s: impl Stream<Item = models::RepositoryName> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send {
+        s: BoxStream<'static, models::RepositoryName>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_repository_names(s.map(RepositoryName::from))
+                .merge_repository_names(s.map(RepositoryName::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
+                .boxed()
                 .await
         }
+        .boxed()
     }
 }
 
@@ -358,17 +364,19 @@ impl RcloneTargetPath for GRPCClient {
 impl Sender<models::BlobTransferItem> for GRPCClient {
     fn prepare_transfer(
         &self,
-        s: impl Stream<Item = models::BlobTransferItem> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<u64, InternalError>> + Send {
+        s: BoxStream<'static, models::BlobTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             let PrepareTransferResponse { count } = guard
-                .prepare_transfer(s.map(TransferItem::from))
+                .prepare_transfer(s.map(TransferItem::from).boxed())
+                .boxed()
                 .await?
                 .into_inner();
             Ok(count)
         }
+        .boxed()
     }
 }
 
@@ -378,12 +386,7 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
         transfer_id: u32,
         repo_id: RepoID,
         paths: Vec<String>,
-    ) -> impl Future<
-        Output = impl futures::Stream<Item = Result<models::BlobTransferItem, InternalError>>
-                 + Unpin
-                 + Send
-                 + 'static,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::BlobTransferItem, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
@@ -397,21 +400,25 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
                 .map(|r| r.unwrap().err_into().map_ok(models::BlobTransferItem::from))
                 .await
                 .track("GRPCClient::Receiver<models::BlobTransferItem>>::create_transfer_request")
+                .boxed()
         }
+        .boxed()
     }
 
     fn finalise_transfer(
         &self,
-        s: impl Stream<Item = models::CopiedTransferItem> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<u64, InternalError>> + Send {
+        s: BoxStream<'static, models::CopiedTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             let FinaliseTransferResponse { count } = guard
-                .finalise_transfer(s.map(CopiedTransferItem::from))
+                .finalise_transfer(s.map(CopiedTransferItem::from).boxed())
+                .boxed()
                 .await?
                 .into_inner();
             Ok(count)
         }
+        .boxed()
     }
 }

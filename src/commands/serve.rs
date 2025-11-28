@@ -8,6 +8,7 @@ use crate::repository::traits::Local;
 use crate::utils::errors::InternalError;
 use crate::utils::fs::Capability;
 use crate::utils::port;
+use futures_core::future::BoxFuture;
 use log::debug;
 use rand::Rng;
 use rand::distr::Alphanumeric;
@@ -59,7 +60,7 @@ pub async fn serve(
         output,
         port,
         auth_key,
-        shutdown_signal,
+        Box::pin(shutdown_signal),
     )
     .await
 }
@@ -71,7 +72,7 @@ pub async fn serve_on_port(
     output: crate::flightdeck::output::Output,
     port: u16,
     auth_key: String,
-    shutdown_signal: impl Future<Output = ()>,
+    shutdown_signal: BoxFuture<'_, ()>,
 ) -> Result<(), InternalError> {
     let config = LocalRepositoryConfig {
         maybe_root,

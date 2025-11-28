@@ -3,7 +3,7 @@ use crate::flightdeck::base::BaseObserver;
 use crate::repository::traits::{LastIndicesSyncer, Metadata, Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
-use futures::try_join;
+use futures::{StreamExt, try_join};
 use log::debug;
 
 pub async fn sync_table<I, L, R>(
@@ -23,14 +23,14 @@ where
     try_join!(
         async {
             local_stream
-                .try_forward_into::<_, _, _, _, InternalError>(|s| remote.merge(s))
+                .try_forward_into::<_, _, _, _, InternalError>(|s| remote.merge(s.boxed()))
                 .await?;
             debug!("remote: merged type: {}", std::any::type_name::<I>());
             Ok::<_, InternalError>(())
         },
         async {
             remote_stream
-                .try_forward_into::<_, _, _, _, InternalError>(|s| local.merge(s))
+                .try_forward_into::<_, _, _, _, InternalError>(|s| local.merge(s.boxed()))
                 .await?;
             debug!("local: merged type: {}", std::any::type_name::<I>());
             Ok::<_, InternalError>(())

@@ -8,7 +8,7 @@ use crate::db::models::{
 use crate::utils::errors::InternalError;
 use crate::utils::fs::Capability;
 use crate::utils::path::RepoPath;
-use futures::Stream;
+use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use std::fmt::Debug;
 use std::future::Future;
@@ -32,7 +32,7 @@ pub struct RepositoryMetadata {
 }
 
 pub trait Metadata {
-    fn current(&self) -> impl Future<Output = Result<RepositoryMetadata, InternalError>> + Send;
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>>;
 }
 
 pub enum BufferType {
@@ -59,40 +59,36 @@ pub trait Config {
 }
 
 pub trait Availability {
-    fn available(
-        &self,
-    ) -> impl Stream<Item = Result<AvailableBlob, InternalError>> + Unpin + Send + 'static;
-    async fn missing(
-        &self,
-    ) -> impl Stream<Item = Result<BlobAssociatedToFiles, InternalError>> + Unpin + Send + 'static;
+    fn available(&self) -> BoxStream<'static, Result<AvailableBlob, InternalError>>;
+    async fn missing(&self) -> BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>;
 }
 
 pub trait Adder {
     #[allow(dead_code)]
-    fn add_files(
-        &self,
-        s: impl Stream<Item = models::InsertFile> + Unpin + Send,
-    ) -> impl Future<Output = Result<u64, DBError>> + Send;
+    fn add_files<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertFile>,
+    ) -> BoxFuture<'a, Result<u64, DBError>>;
 
-    fn add_blobs(
-        &self,
-        s: impl Stream<Item = models::InsertBlob> + Unpin + Send,
-    ) -> impl Future<Output = Result<u64, DBError>> + Send;
+    fn add_blobs<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertBlob>,
+    ) -> BoxFuture<'a, Result<u64, DBError>>;
 
-    fn add_file_bundles(
-        &self,
-        s: impl Stream<Item = InsertFileBundle> + Unpin + Send,
-    ) -> impl Future<Output = Result<u64, DBError>> + Send;
+    fn add_file_bundles<'a>(
+        &'a self,
+        s: BoxStream<'a, InsertFileBundle>,
+    ) -> BoxFuture<'a, Result<u64, DBError>>;
 
-    fn add_repository_names(
-        &self,
-        s: impl Stream<Item = models::InsertRepositoryName> + Unpin + Send,
-    ) -> impl Future<Output = Result<u64, DBError>> + Send;
+    fn add_repository_names<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertRepositoryName>,
+    ) -> BoxFuture<'a, Result<u64, DBError>>;
 
-    fn add_materialisation(
-        &self,
-        s: impl Stream<Item = models::InsertMaterialisation> + Unpin + Send,
-    ) -> impl Future<Output = Result<u64, DBError>> + Send;
+    fn add_materialisation<'a>(
+        &'a self,
+        s: BoxStream<'a, models::InsertMaterialisation>,
+    ) -> BoxFuture<'a, Result<u64, DBError>>;
 }
 
 #[derive(Debug)]
@@ -103,11 +99,8 @@ pub struct LastIndices {
 }
 
 pub trait LastIndicesSyncer {
-    fn lookup(
-        &self,
-        repo_id: RepoID,
-    ) -> impl Future<Output = Result<LastIndices, InternalError>> + Send;
-    fn refresh(&self) -> impl Future<Output = Result<(), InternalError>> + Send;
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>>;
+    fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>>;
 }
 
 pub trait SyncerParams {
@@ -118,53 +111,44 @@ pub trait Syncer<T: SyncerParams> {
     fn select(
         &self,
         params: <T as SyncerParams>::Params,
-    ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
+    ) -> BoxFuture<'_, BoxStream<'static, Result<T, InternalError>>>;
 
-    fn merge(
-        &self,
-        s: impl Stream<Item = T> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<(), InternalError>> + Send;
+    fn merge(&self, s: BoxStream<'static, T>) -> BoxFuture<'_, Result<(), InternalError>>;
 }
 
 pub trait VirtualFilesystem {
     fn select_missing_files(
         &self,
         last_seen_id: i64,
-    ) -> impl Future<Output = BoxStream<'static, Result<MissingFile, DBError>>> + Send;
+    ) -> BoxFuture<'_, BoxStream<'static, Result<MissingFile, DBError>>>;
 
     fn add_checked_events(
         &self,
-        s: impl Stream<Item = FileCheck> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileCheck>,
     ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
 
     fn add_seen_events(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
+        s: BoxStream<'static, FileSeen>,
     ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
 
     fn select_virtual_filesystem(
         &self,
-        s: impl Stream<Item = FileSeen> + Unpin + Send + 'static,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = impl Stream<Item = Result<VirtualFile, DBError>> + Unpin + Send + 'static,
-                > + Send,
-        >,
-    >;
+        s: BoxStream<'static, FileSeen>,
+    ) -> Pin<Box<dyn Future<Output = BoxStream<'static, Result<VirtualFile, DBError>>> + Send>>;
     async fn select_current_files(
         &self,
         file_or_dir: String,
-    ) -> impl Stream<Item = Result<(models::Path, BlobID), DBError>> + Unpin + Send + 'static;
+    ) -> BoxStream<'static, Result<(models::Path, BlobID), DBError>>;
 
     fn left_join_current_files<
         K: Clone + Send + Sync + 'static,
         E: From<DBError> + Debug + Send + Sync + 'static,
     >(
         &self,
-        s: impl Stream<Item = Result<K, E>> + Unpin + Send + 'static,
+        s: BoxStream<'static, Result<K, E>>,
         key_func: impl Fn(K) -> db::models::Path + Sync + Send + 'static,
-    ) -> impl Stream<Item = Result<(K, Option<CurrentFile>), E>> + Unpin + Send + 'static;
+    ) -> BoxStream<'static, Result<(K, Option<CurrentFile>), E>>;
 }
 
 pub trait ConnectionManager {
@@ -192,8 +176,8 @@ pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'stati
 pub trait Sender<T: TransferItem> {
     fn prepare_transfer(
         &self,
-        s: impl Stream<Item = T> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<u64, InternalError>> + Send;
+        s: BoxStream<'static, T>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>>;
 }
 
 pub trait Receiver<T: TransferItem> {
@@ -202,10 +186,10 @@ pub trait Receiver<T: TransferItem> {
         transfer_id: u32,
         repo_id: RepoID,
         paths: Vec<String>,
-    ) -> impl Future<Output = impl Stream<Item = Result<T, InternalError>> + Unpin + Send + 'static> + Send;
+    ) -> BoxFuture<'_, BoxStream<'static, Result<T, InternalError>>>;
 
     fn finalise_transfer(
         &self,
-        s: impl Stream<Item = CopiedTransferItem> + Unpin + Send + 'static,
-    ) -> impl Future<Output = Result<u64, InternalError>> + Send;
+        s: BoxStream<'static, CopiedTransferItem>,
+    ) -> BoxFuture<'_, Result<u64, InternalError>>;
 }

@@ -13,7 +13,7 @@ use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
 use dashmap::DashMap;
-use futures::{pin_mut, stream};
+use futures::{StreamExt, pin_mut, stream};
 use std::sync::Arc;
 use tokio::fs;
 
@@ -40,7 +40,7 @@ pub(crate) async fn add_files(
         let local_repository = repository.clone();
         tokio::spawn(async move {
             local_repository
-                .add_file_bundles(bundle_rx)
+                .add_file_bundles(bundle_rx.boxed())
                 .await
                 .inspect_err(|e| log::error!("add_files: add_file_bundles task failed: {e}"))
         })
@@ -60,7 +60,7 @@ pub(crate) async fn add_files(
     let local_repository = repository.clone();
     let bg_persist_check = tokio::spawn(async move {
         let fc = stream::select(state_checks, check_rx);
-        local_repository.add_checked_events(fc).await
+        local_repository.add_checked_events(fc.boxed()).await
     });
 
     let mut scan_count = 0;

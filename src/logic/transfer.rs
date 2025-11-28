@@ -258,7 +258,8 @@ pub async fn transfer<T: TransferItem>(
             let b = t.into();
             (models::Path(p), b)
         })
-    });
+    })
+    .boxed();
     let (stream, _) = redb.streaming_upsert(stream, |p| p);
     let stream = TokioStreamExt::filter_map(stream, move |item| match item {
         Ok(UpsertedValue {
@@ -302,7 +303,7 @@ pub async fn transfer<T: TransferItem>(
             }
         })
         .boxed()
-        .try_forward_into::<_, _, _, _, InternalError>(|s| source.prepare_transfer(s))
+        .try_forward_into::<_, _, _, _, InternalError>(|s| source.prepare_transfer(s.boxed()))
         .await
         .inspect_err(|e| {
             log::error!("transfer: try_forward_into -> prepare_transfer failed: {e}")
@@ -338,7 +339,7 @@ pub async fn transfer<T: TransferItem>(
         .await
     });
 
-    let stream = TokioStreamExt::map(stream, Ok);
+    let stream = TokioStreamExt::map(stream, Ok).boxed();
     let (stream, _) = redb.left_join(stream, |p| models::Path(p));
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,
@@ -352,7 +353,7 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let count = stream
-        .try_forward_into::<_, _, _, _, InternalError>(|s| destination.finalise_transfer(s))
+        .try_forward_into::<_, _, _, _, InternalError>(|s| destination.finalise_transfer(s.boxed()))
         .await
         .inspect_err(|e| log::error!("transfer: destination.finalise_transfer failed: {e}"))?;
 

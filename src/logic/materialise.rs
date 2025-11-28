@@ -7,7 +7,7 @@ use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use crate::utils::walker::WalkerConfig;
-use futures::pin_mut;
+use futures::{StreamExt, pin_mut};
 use tokio::fs;
 
 pub async fn materialise(
@@ -24,7 +24,7 @@ pub async fn materialise(
     );
     let db_mat_handle = {
         let local_repository = local.clone();
-        tokio::spawn(async move { local_repository.add_materialisation(mat_rx).await })
+        tokio::spawn(async move { local_repository.add_materialisation(mat_rx.boxed()).await })
     };
 
     fs::create_dir_all(&local.staging_path()).await?;

@@ -3,6 +3,7 @@ use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
 use crate::repository::traits::{Metadata, RepositoryMetadata};
 use crate::utils::errors::InternalError;
+use futures_core::future::BoxFuture;
 
 #[derive(Clone)]
 pub enum WrappedRepository {
@@ -22,11 +23,13 @@ impl WrappedRepository {
 }
 
 impl Metadata for WrappedRepository {
-    async fn current(&self) -> Result<RepositoryMetadata, InternalError> {
-        match self {
-            WrappedRepository::Local(local) => local.current().await,
-            WrappedRepository::Grpc(grpc) => grpc.current().await,
-            WrappedRepository::RClone(rclone) => rclone.current().await,
-        }
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+        Box::pin(async move {
+            match self {
+                WrappedRepository::Local(local) => local.current().await,
+                WrappedRepository::Grpc(grpc) => grpc.current().await,
+                WrappedRepository::RClone(rclone) => rclone.current().await,
+            }
+        })
     }
 }
