@@ -43,41 +43,29 @@ where
 pub async fn sync_repositories<S, T>(local: &S, remote: &T) -> Result<(), InternalError>
 where
     S: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
-        + Syncer<File>
-        + Syncer<Blob>
-        + Syncer<RepositoryName>
-        + Clone
-        + Send
-        + Sync,
+    + LastIndicesSyncer
+    + Syncer<Repository>
+    + Syncer<File>
+    + Syncer<Blob>
+    + Syncer<RepositoryName>
+    + Clone
+    + Send
+    + Sync,
     T: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
-        + Syncer<File>
-        + Syncer<Blob>
-        + Syncer<RepositoryName>
-        + Clone
-        + Send
-        + Sync,
+    + LastIndicesSyncer
+    + Syncer<Repository>
+    + Syncer<File>
+    + Syncer<Blob>
+    + Syncer<RepositoryName>
+    + Clone
+    + Send
+    + Sync,
 {
     let local_meta = local.current().await?;
     let remote_meta = remote.current().await?;
 
     let local_last_indices = remote.lookup(local_meta.id).await?;
     let remote_last_indices = local.lookup(remote_meta.id).await?;
-
-    {
-        let mut o = BaseObserver::with_id("sync:table", "files");
-        sync_table::<File, _, _>(
-            local,
-            local_last_indices.file,
-            remote,
-            remote_last_indices.file,
-        )
-        .await?;
-        o.observe_termination(log::Level::Info, "synchronised");
-    }
 
     {
         let mut o = BaseObserver::with_id("sync:table", "blobs");
@@ -87,9 +75,22 @@ where
             remote,
             remote_last_indices.blob,
         )
-        .await?;
+            .await?;
         o.observe_termination(log::Level::Info, "synchronised");
     }
+
+    {
+        let mut o = BaseObserver::with_id("sync:table", "files");
+        sync_table::<File, _, _>(
+            local,
+            local_last_indices.file,
+            remote,
+            remote_last_indices.file,
+        )
+            .await?;
+        o.observe_termination(log::Level::Info, "synchronised");
+    }
+
     {
         let mut o = BaseObserver::with_id("sync:table", "repository names");
         sync_table::<RepositoryName, _, _>(
@@ -98,7 +99,7 @@ where
             remote,
             remote_last_indices.name,
         )
-        .await?;
+            .await?;
         o.observe_termination(log::Level::Info, "synchronised");
     }
 
