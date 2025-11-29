@@ -98,6 +98,11 @@ impl Database {
         self.kv.close().await?;
         Ok(())
     }
+    
+    pub async fn compact(&self) -> Result<(), DBError> {
+        self.kv.compact().await?;
+        Ok(())
+    }
 
     fn next_offset(i: Option<impl Into<Offset>>) -> Offset {
         match i {

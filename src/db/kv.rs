@@ -326,8 +326,7 @@ impl KVStores {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn compact(&self) -> Result<(), DBError> {
+    pub(crate) async fn compact(&self) -> Result<(), DBError> {
         tokio::try_join!(
             self.known_blob_uids.compact(),
             self.known_file_uids.compact(),

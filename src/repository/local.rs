@@ -230,6 +230,10 @@ impl LocalRepository {
         self.db.close().await?;
         Ok(())
     }
+    pub(crate) async fn compact(&self) -> Result<(), InternalError> {
+        self.db.compact().await?;
+        Ok(())
+    }
     pub(crate) fn db(&self) -> &Database {
         &self.db
     }
