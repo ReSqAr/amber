@@ -59,7 +59,7 @@ russh-sftp = ">=2.0.8"
 serial_test = "3.2"
 
 [build-dependencies]
-tonic-prost-build = "0.14"
+tonic-build = { package = "tonic-prost-build", version = "0.14" }
 
 [profile.dev]
 opt-level = 0

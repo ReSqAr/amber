@@ -146,6 +146,16 @@ amber pull <connection name>
 
 Metadata here mainly means the availability of blobs in the repositories and the desired file structure.
 
+## Updating gRPC bindings
+
+If `proto/grpc.proto` changes, regenerate the committed gRPC stubs with the helper script:
+
+```bash
+scripts/update-grpc.sh
+```
+
+This uses `tonic-build` under the hood and writes the generated files into `src/grpc/generated/`.
+
 ## I don't have any data but still want to play around with amber
 
 You are in luck.
