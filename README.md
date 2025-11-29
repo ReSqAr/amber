@@ -29,14 +29,14 @@
 Amber is a streamlined tool for managing large file collections by tracking content-addressable blobs.
 It works like a "Git for blobs"—similar in spirit to Git Annex but without branching—by preserving files in their original form.
 Instead of versioning changes, amber treats every file as an immutable blob (think of how you rarely edit photos) and leverages hard links to deduplicate them.
-File tracking information is stored in a SQLite database, while file transfers between locations are handled via rclone.
+File tracking information is stored in a database, while file transfers between locations are handled via rclone.
 Built in Rust for speed and robustness, amber provides a clear and efficient way to manage vast amounts of data.
 
 ## Overview
 
-- **Immutable Blobs:** Files are stored as unchangeable blobs—once added, they aren’t edited (much like photos, which remain in their original state). This read-only approach, combined with hard links, ensures efficient deduplication.
-- **Massive Collections:** Designed for large-scale use (imagine managing 200k photos), amber provides great visibility into your data so nothing scrolls past unnoticed.
-- **Accurate Tracking:** All file metadata and tracking details are maintained in a lightweight SQLite database.
+- **Immutable Blobs:** Files are stored as unchangeable blobs - once added, they aren’t edited (much like photos, which remain in their original state). This read-only approach, combined with CoW (or hard links), ensures efficient tracking.
+- **Massive Collections:** Designed for large-scale use (imagine managing 300k photos), amber provides great visibility into your data so nothing scrolls past unnoticed.
+- **Accurate Tracking:** All file metadata and tracking details are maintained in a lightweight database.
 - **Effortless Mobility:** Utilize rclone to move files between storage locations seamlessly.
 - **Fast & Robust:** Developed in Rust, amber delivers high performance and reliability.
 - **Material Preservation:** amber preserves your files exactly as they are.
