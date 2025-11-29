@@ -431,20 +431,36 @@ mod tests {
 
         let source_dir = base_path.join("source");
         let dest_dir = base_path.join("dest");
-        fs::create_dir_all(&source_dir).await?;
-        fs::create_dir_all(&dest_dir).await?;
+        fs::create_dir_all(&source_dir)
+            .await
+            .expect("failed to create source dir");
+        fs::create_dir_all(&dest_dir)
+            .await
+            .expect("failed to create dest dir");
 
         let source_file = source_dir.join("test.txt");
         let file_content = b"Hello from rclone test";
-        fs::write(&source_file, file_content).await?;
+        fs::write(&source_file, file_content)
+            .await
+            .expect("failed to write to source file");
 
         let file_list_path = base_path.join("filelist.txt");
-        let mut file_list = fs::File::create(&file_list_path).await?;
-        file_list.write_all(b"test.txt\n").await?;
-        file_list.flush().await?;
+        let mut file_list = fs::File::create(&file_list_path)
+            .await
+            .expect("failed to create file list");
+        file_list
+            .write_all(b"test.txt\n")
+            .await
+            .expect("failed to write to filelist");
+        file_list
+            .flush()
+            .await
+            .expect("failed to write to filelist");
 
         let rclone_temp_dir = base_path.join("rclone_temp");
-        fs::create_dir_all(&rclone_temp_dir).await?;
+        fs::create_dir_all(&rclone_temp_dir)
+            .await
+            .expect("failed to create rclone temp dir");
 
         let source_target = LocalTarget {
             path: source_dir.to_string_lossy().into_owned(),
@@ -468,7 +484,8 @@ mod tests {
             },
             callback,
         )
-        .await?;
+        .await
+        .expect("run_rclone failed");
 
         // check that the file now exists in the destination directory
         let dest_file = dest_dir.join("test.txt");
@@ -480,7 +497,9 @@ mod tests {
         );
 
         // check that the copied file's content matches.
-        let copied_content = fs::read(&dest_file).await?;
+        let copied_content = fs::read(&dest_file)
+            .await
+            .expect("failed to read source file");
         assert_eq!(
             copied_content, file_content,
             "The copied file content does not match the source."
