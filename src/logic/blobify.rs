@@ -4,10 +4,10 @@ use crate::repository::traits::{Local, Metadata};
 use crate::utils::blake3;
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
-use async_lock::Mutex;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::fs;
+use tokio::sync::Mutex;
 
 pub(crate) type BlobLockMap = Arc<DashMap<BlobID, Arc<Mutex<()>>>>;
 

@@ -6,7 +6,6 @@ use crate::utils::blake3;
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
-use async_lock::Mutex;
 use dashmap::DashMap;
 use futures::{StreamExt, TryStreamExt};
 use futures_core::stream::BoxStream;
@@ -14,6 +13,7 @@ use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
+use tokio::sync::Mutex;
 
 pub(crate) type BlobLockMap = Arc<DashMap<BlobID, Arc<Mutex<()>>>>;
 
