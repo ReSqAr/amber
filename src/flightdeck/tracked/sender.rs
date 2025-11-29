@@ -140,6 +140,7 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSender<T, ST> {
         self.inner.send(msg)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {
         self.inner.blocking_send(msg)
     }

@@ -61,6 +61,16 @@ serial_test = "3.2"
 [build-dependencies]
 tonic-prost-build = "0.14"
 
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+codegen-units = 256
+lto = "off"
+
+[profile.dev.package."*"]
+opt-level = 0
+
 [profile.release]
 opt-level = 3         # Enables maximum optimisation
 debug = false         # Removes debug information to reduce binary size
