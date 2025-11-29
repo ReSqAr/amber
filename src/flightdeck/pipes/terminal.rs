@@ -1,6 +1,6 @@
 use crate::flightdeck::observation::{Data, Observation, Value};
 use crate::flightdeck::output::Output;
-use colored::*;
+use owo_colors::OwoColorize;
 use tokio::task;
 
 pub struct TerminalPipe {
@@ -32,13 +32,12 @@ impl TerminalPipe {
 
         let colored_state = if with_color {
             match level {
-                log::Level::Error => state.red(),
-                log::Level::Warn => state.yellow(),
-                log::Level::Info => state.blue(),
-                log::Level::Debug => state.dimmed(),
-                log::Level::Trace => state.dimmed(),
+                log::Level::Error => state.red().to_string(),
+                log::Level::Warn => state.yellow().to_string(),
+                log::Level::Info => state.blue().to_string(),
+                log::Level::Debug => state.dimmed().to_string(),
+                log::Level::Trace => state.dimmed().to_string(),
             }
-            .to_string()
         } else {
             state.to_string()
         };
