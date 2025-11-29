@@ -44,9 +44,11 @@ pub async fn fsck(
                 }
             };
 
+            local.compact().await?;
             connection.close().await?;
         } else {
             fsck_local::fsck_local(&local).await?;
+            local.compact().await?;
         }
 
         local.close().await?;
