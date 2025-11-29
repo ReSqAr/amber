@@ -118,7 +118,10 @@ pub async fn serve_on_port(
         .add_service(service)
         .serve_with_shutdown(addr, shutdown_signal);
 
-    server.await?;
+    if let Err(e) = server.await {
+        local_repository.close().await?;
+        return Err(e.into());
+    }
 
     files::cleanup_staging(&staging_path).await?;
     debug!("deleted staging {}", staging_path.display());
