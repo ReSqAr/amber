@@ -43,23 +43,23 @@ where
 pub async fn sync_repositories<S, T>(local: &S, remote: &T) -> Result<(), InternalError>
 where
     S: Metadata
-    + LastIndicesSyncer
-    + Syncer<Repository>
-    + Syncer<File>
-    + Syncer<Blob>
-    + Syncer<RepositoryName>
-    + Clone
-    + Send
-    + Sync,
+        + LastIndicesSyncer
+        + Syncer<Repository>
+        + Syncer<File>
+        + Syncer<Blob>
+        + Syncer<RepositoryName>
+        + Clone
+        + Send
+        + Sync,
     T: Metadata
-    + LastIndicesSyncer
-    + Syncer<Repository>
-    + Syncer<File>
-    + Syncer<Blob>
-    + Syncer<RepositoryName>
-    + Clone
-    + Send
-    + Sync,
+        + LastIndicesSyncer
+        + Syncer<Repository>
+        + Syncer<File>
+        + Syncer<Blob>
+        + Syncer<RepositoryName>
+        + Clone
+        + Send
+        + Sync,
 {
     let local_meta = local.current().await?;
     let remote_meta = remote.current().await?;
@@ -75,7 +75,7 @@ where
             remote,
             remote_last_indices.blob,
         )
-            .await?;
+        .await?;
         o.observe_termination(log::Level::Info, "synchronised");
     }
 
@@ -87,7 +87,7 @@ where
             remote,
             remote_last_indices.file,
         )
-            .await?;
+        .await?;
         o.observe_termination(log::Level::Info, "synchronised");
     }
 
@@ -99,7 +99,7 @@ where
             remote,
             remote_last_indices.name,
         )
-            .await?;
+        .await?;
         o.observe_termination(log::Level::Info, "synchronised");
     }
 
