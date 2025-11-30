@@ -3,6 +3,7 @@ use amber::commands::serve;
 use amber::flightdeck::output::Output;
 use cipher::crypto_common::rand_core::OsRng;
 use futures::FutureExt;
+use once_cell::sync::Lazy;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Handler, Server, Session};
 use russh::{Channel, ChannelId};
@@ -17,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use tokio::fs;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, MutexGuard, oneshot};
+
+static SSH_PORT_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 // SSH Server Implementation
 #[derive(Clone)]
@@ -52,9 +55,8 @@ struct SshSession {
     client_id: usize,
     password: String,
     repo_path: PathBuf,
-    ssh_clients:
-        std::sync::Arc<tokio::sync::Mutex<HashMap<(usize, ChannelId), russh::server::Handle>>>,
-    channels: std::sync::Arc<tokio::sync::Mutex<HashMap<ChannelId, Channel<russh::server::Msg>>>>,
+    ssh_clients: std::sync::Arc<Mutex<HashMap<(usize, ChannelId), russh::server::Handle>>>,
+    channels: std::sync::Arc<Mutex<HashMap<ChannelId, Channel<russh::server::Msg>>>>,
     server_response: ServeResponse,
 }
 
@@ -78,10 +80,12 @@ pub(crate) enum ServeResult {
     Error(ServeError),
 }
 
-pub(crate) async fn find_available_port() -> Result<u16, anyhow::Error> {
+pub(crate) async fn find_available_port<'a>() -> Result<(MutexGuard<'a, ()>, u16), anyhow::Error> {
+    let guard = SSH_PORT_MUTEX.lock().await;
+
     use tokio::net::TcpListener;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
-    Ok(listener.local_addr()?.port())
+    Ok((guard, listener.local_addr()?.port()))
 }
 
 impl Handler for SshSession {
@@ -606,7 +610,7 @@ pub async fn start_ssh_server(
     };
 
     let auth_key = serve::generate_auth_key();
-    let port = find_available_port().await?;
+    let (guard, port) = find_available_port().await?;
 
     let auth_key_clone = auth_key.clone();
     let server_response = ServeResponse { port, auth_key };
@@ -649,6 +653,7 @@ pub async fn start_ssh_server(
         ssh_port,
     );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    drop(guard);
 
     tokio::spawn(async move {
         let config = std::sync::Arc::new(config);
