@@ -13,13 +13,12 @@ pub async fn add(
     verbose: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(config).await?;
-    let log_path = local_repository.log_path().abs().clone();
+    let local = LocalRepository::new(config).await?;
+    let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        add::add_files(local_repository.clone()).await?;
+        add::add_files(local.clone()).await?;
 
-        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 
@@ -27,7 +26,12 @@ pub async fn add(
         true => Some(log::LevelFilter::Debug),
         false => None,
     };
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await
+
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
