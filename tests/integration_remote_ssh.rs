@@ -12,6 +12,8 @@ async fn integration_test_ssh_connection_list() -> Result<(), anyhow::Error> {
         
         @b amber remote list
         assert_output_contains "a-ssh"
+
+        @a end_ssh
     "#;
     dsl_definition::run_dsl_script(script).await
 }
@@ -41,6 +43,8 @@ async fn integration_test_ssh_connection_sync() -> Result<(), anyhow::Error> {
         # Verify the file was transferred
         @b assert_exists test2.txt "Common content!"
         assert_equal a b
+
+        @a end_ssh
     "#;
     dsl_definition::run_dsl_script(script).await
 }
@@ -66,6 +70,8 @@ async fn integration_test_ssh_connection_pull() -> Result<(), anyhow::Error> {
 
         # Verify the file was transferred
         @b assert_exists test.txt "Hello from repository A!"
+
+        @a end_ssh
     "#;
     dsl_definition::run_dsl_script(script).await
 }
