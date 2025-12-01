@@ -1,4 +1,3 @@
-use crate::db;
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
@@ -11,8 +10,6 @@ use crate::utils::path::RepoPath;
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use std::fmt::Debug;
-use std::future::Future;
-use std::pin::Pin;
 
 pub trait Local {
     fn root(&self) -> RepoPath;
@@ -125,12 +122,12 @@ pub trait VirtualFilesystem {
     fn add_checked_events(
         &self,
         s: BoxStream<'static, FileCheck>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
+    ) -> BoxFuture<'_, Result<u64, DBError>>;
 
     fn add_seen_events(
         &self,
         s: BoxStream<'static, FileSeen>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
+    ) -> BoxFuture<'_, Result<u64, DBError>>;
 
     fn select_virtual_filesystem(
         &'_ self,
@@ -147,7 +144,7 @@ pub trait VirtualFilesystem {
     >(
         &self,
         s: BoxStream<'static, Result<K, E>>,
-        key_func: impl Fn(K) -> db::models::Path + Sync + Send + 'static,
+        key_func: impl Fn(K) -> models::Path + Sync + Send + 'static,
     ) -> BoxStream<'static, Result<(K, Option<CurrentFile>), E>>;
 }
 

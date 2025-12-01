@@ -55,13 +55,9 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                         }
                     });
                     // Call run_cli_command, passing in the global root for $ROOT substitution.
-                    last_command_output = amber::run_amber_cli_command(
-                        &sub_command,
-                        &repo_instance.path,
-                        &root,
-                        None,
-                    )
-                    .await?;
+                    let repo_path = repo_instance.path.clone();
+                    last_command_output =
+                        amber::run_amber_cli_command(&sub_command, &repo_path, &root, None).await?;
                 }
                 CommandLine::AmberCommandFailure {
                     repo,
@@ -211,10 +207,9 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     let repo_instance = env.repos.get(&repo).ok_or_else(|| {
                         anyhow!("Repository {} not found for start_ssh command", repo)
                     })?;
-
+                    let repo_path = repo_instance.path.clone();
                     let shutdown =
-                        ssh::start_ssh_server(&repo_instance.path, ".amb".into(), port, password)
-                            .await?;
+                        ssh::start_ssh_server(repo_path, ".amb".into(), port, password).await?;
                     if let Some(s) = ssh_connection.insert(repo, shutdown) {
                         s.await
                     }

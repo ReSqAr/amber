@@ -1,9 +1,9 @@
 use crate::flightdeck::base::BaseObserver;
+use futures::FutureExt;
 use futures_core::future::BoxFuture;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use futures::FutureExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinHandle;
@@ -69,7 +69,8 @@ impl<T: 'static + Send + Sync, ST: Tracker> TrackedSenderInner<T, ST> {
                 .fetch_add(delay.as_nanos() as u64, Ordering::Relaxed);
 
             result
-        }.boxed()
+        }
+        .boxed()
     }
 
     pub(crate) fn blocking_send(&self, msg: T) -> Result<(), SendError<T>> {

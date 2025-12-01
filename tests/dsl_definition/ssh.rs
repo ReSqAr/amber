@@ -3,6 +3,7 @@ use amber::commands::serve;
 use amber::flightdeck::output::Output;
 use cipher::crypto_common::rand_core::OsRng;
 use futures::FutureExt;
+use futures_core::future::BoxFuture;
 use once_cell::sync::Lazy;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Handler, Server, Session};
@@ -14,11 +15,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
+use std::path::PathBuf;
 use tokio::fs;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::sync::{Mutex, MutexGuard, oneshot};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{oneshot, Mutex, MutexGuard};
 
 static SSH_PORT_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -593,11 +593,11 @@ impl russh_sftp::server::Handler for SftpSession {
 }
 
 pub async fn start_ssh_server(
-    repo_path: &Path,
+    repo_path: PathBuf,
     app_folder: PathBuf,
     ssh_port: u16,
     password: String,
-) -> anyhow::Result<Pin<Box<dyn Future<Output = ()>>>, anyhow::Error> {
+) -> anyhow::Result<BoxFuture<'static, ()>, anyhow::Error> {
     let (tx, rx) = oneshot::channel();
 
     let key_pair = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?;
