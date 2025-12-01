@@ -30,6 +30,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Run tests with KV drop asserts
+        run: cargo test --verbose --features __kv-drop-dev-assert
+
       - name: Check formatting
         run: cargo fmt -- --check
 

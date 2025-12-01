@@ -58,11 +58,10 @@ impl DatabaseGuard {
 impl Drop for DatabaseGuard {
     fn drop(&mut self) {
         if let Some(_db) = self.db.take() {
-            #[cfg(debug_assertions)]
-            panic!("Use ::close instead of relying on the default Drop behaviour");
-
-            #[cfg(not(debug_assertions))]
-            {
+            if cfg!(feature = "__kv-drop-dev-assert") {
+                panic!("Use ::close instead of relying on the default Drop behaviour");
+            } else {
+                log::error!("Use ::close instead of relying on the default Drop behaviour");
                 let tracer = Tracer::new_on(format!("RedbTable({})::drop", self.name));
                 drop(_db);
                 tracer.measure();

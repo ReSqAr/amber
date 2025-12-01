@@ -3,6 +3,10 @@ name = "amber"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+__kv-drop-dev-assert = []
+
 [dependencies]
 aes = "0.8"
 async-compression = { version = "0.4", default-features = false, features = ["tokio", "gzip"] }
