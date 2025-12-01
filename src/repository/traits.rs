@@ -133,9 +133,9 @@ pub trait VirtualFilesystem {
     ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>>;
 
     fn select_virtual_filesystem(
-        &self,
+        &'_ self,
         s: BoxStream<'static, FileSeen>,
-    ) -> Pin<Box<dyn Future<Output = BoxStream<'static, Result<VirtualFile, DBError>>> + Send>>;
+    ) -> BoxFuture<'_, BoxStream<'static, Result<VirtualFile, DBError>>>;
     async fn select_current_files(
         &self,
         file_or_dir: String,
