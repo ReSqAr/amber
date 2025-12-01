@@ -17,8 +17,8 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tokio::fs;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{oneshot, Mutex, MutexGuard};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::{Mutex, MutexGuard, oneshot};
 
 static SSH_PORT_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
