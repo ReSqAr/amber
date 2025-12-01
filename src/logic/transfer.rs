@@ -340,7 +340,7 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let stream = TokioStreamExt::map(stream, Ok).boxed();
-    let (stream, _) = redb.left_join(stream, |p| models::Path(p));
+    let (stream, _) = redb.left_join(stream, models::Path);
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,
         Ok((p, Some(b))) => Some(Ok(CopiedTransferItem {

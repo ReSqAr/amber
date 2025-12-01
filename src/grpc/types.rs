@@ -26,9 +26,9 @@ impl From<models::Repository> for Repository {
     fn from(repo: models::Repository) -> Self {
         Repository {
             repo_id: repo.repo_id.0,
-            last_file_index: repo.last_file_index.map(Into::into),
-            last_blob_index: repo.last_blob_index.map(Into::into),
-            last_name_index: repo.last_name_index.map(Into::into),
+            last_file_index: repo.last_file_index,
+            last_blob_index: repo.last_blob_index,
+            last_name_index: repo.last_name_index,
         }
     }
 }

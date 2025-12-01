@@ -537,17 +537,16 @@ impl VirtualFilesystem for LocalRepository {
     fn select_virtual_filesystem(
         &self,
         s: BoxStream<'static, FileSeen>,
-    ) -> Pin<
-        Box<dyn Future<Output = BoxStream<'static, Result<VirtualFile, DBError>>> + Send + 'static>,
-    > {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<VirtualFile, DBError>>> {
         let db = self.db.clone();
-        Box::pin(async move {
+        async move {
             let repo = match db.get_or_create_current_repository().await {
                 Ok(id) => id,
                 Err(err) => return stream::iter([Err(err)]).boxed(),
             };
-            Box::pin(db.select_virtual_filesystem(s, repo.repo_id))
-        })
+            db.select_virtual_filesystem(s, repo.repo_id).boxed()
+        }
+        .boxed()
     }
 
     async fn select_current_files(
@@ -599,11 +598,11 @@ impl ConnectionManager for LocalRepository {
     }
 }
 
-impl Into<SizedBlobID> for BlobTransferItem {
-    fn into(self) -> SizedBlobID {
+impl From<BlobTransferItem> for SizedBlobID {
+    fn from(v: BlobTransferItem) -> Self {
         SizedBlobID {
-            blob_id: self.blob_id.clone(),
-            blob_size: self.blob_size,
+            blob_id: v.blob_id.clone(),
+            blob_size: v.blob_size,
         }
     }
 }
@@ -734,11 +733,11 @@ impl TransferItem for FileTransferItem {
     }
 }
 
-impl Into<SizedBlobID> for FileTransferItem {
-    fn into(self) -> SizedBlobID {
+impl From<FileTransferItem> for SizedBlobID {
+    fn from(val: FileTransferItem) -> Self {
         SizedBlobID {
-            blob_id: self.blob_id.clone(),
-            blob_size: self.blob_size,
+            blob_id: val.blob_id.clone(),
+            blob_size: val.blob_size,
         }
     }
 }

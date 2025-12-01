@@ -621,7 +621,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn available_blobs<'a>(
+    pub(crate) fn available_blobs(
         &self,
         repo_id: RepoID,
     ) -> BoxStream<'static, Result<AvailableBlob, DBError>> {
@@ -702,25 +702,22 @@ impl Database {
             Err(_) => Err(()),
         });
 
-        let s = s
-            .map(move |(e, group)| match e {
-                Ok((p, b)) => Ok(BlobAssociatedToFiles {
-                    blob_id: b,
-                    path: p,
-                    repositories_with_blob: group
-                        .into_iter()
-                        .map(Result::unwrap)
-                        .filter_map(|((_, _, r), cf)| match cf {
-                            Some(_) => Some(repo_names.get(&r).cloned().unwrap_or(r.0.clone())),
-                            None => None,
-                        })
-                        .collect(),
-                }),
-                Err(()) => Err(group.into_iter().next().unwrap().unwrap_err()),
-            })
-            .boxed();
-
-        s
+        s.map(move |(e, group)| match e {
+            Ok((p, b)) => Ok(BlobAssociatedToFiles {
+                blob_id: b,
+                path: p,
+                repositories_with_blob: group
+                    .into_iter()
+                    .map(Result::unwrap)
+                    .filter_map(|((_, _, r), cf)| match cf {
+                        Some(_) => Some(repo_names.get(&r).cloned().unwrap_or(r.0.clone())),
+                        None => None,
+                    })
+                    .collect(),
+            }),
+            Err(()) => Err(group.into_iter().next().unwrap().unwrap_err()),
+        })
+        .boxed()
     }
 
     pub async fn add_materialisations(
@@ -803,16 +800,16 @@ impl Database {
         &self,
         s: BoxStream<'static, FileCheck>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| Ok(e)).boxed();
-        Ok(self.kv.apply_file_checks(s).await?)
+        let s = s.map(Ok).boxed();
+        self.kv.apply_file_checks(s).await
     }
 
     pub async fn add_virtual_filesystem_file_seen_events(
         &self,
         s: BoxStream<'static, FileSeen>,
     ) -> Result<u64, DBError> {
-        let s = s.map(|e| Ok(e)).boxed();
-        Ok(self.kv.apply_file_seen(s).await?)
+        let s = s.map(Ok).boxed();
+        self.kv.apply_file_seen(s).await
     }
 
     pub fn select_virtual_filesystem(

@@ -125,6 +125,7 @@ where
         Ok(count)
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn left_join<IK, KF>(
         &self,
         s: BoxStream<'static, Result<IK, InternalError>>,
@@ -187,7 +188,7 @@ where
     }
 
     pub(crate) fn stream(&self) -> BoxStream<'static, Result<(Path, VO), InternalError>> {
-        let table = self.table.clone();
+        let table = self.table;
         let db = self.db.clone();
         let name = format!("RedbTable({})::stream", table.name());
         let (tx, rx) = flightdeck::tracked::mpsc_channel(name, DEFAULT_BATCH_SIZE);
@@ -213,6 +214,7 @@ where
         rx.boxed()
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn streaming_upsert<IK, KF>(
         &self,
         s: BoxStream<'static, Result<(IK, V), InternalError>>,
