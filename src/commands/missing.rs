@@ -42,11 +42,14 @@ pub async fn missing(
             list_missing_blobs(local.clone()).await?;
         }
 
-        local.close().await?;
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

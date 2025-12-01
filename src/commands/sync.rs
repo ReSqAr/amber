@@ -16,14 +16,14 @@ pub async fn sync(
     connection_name: Option<String>,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(config).await?;
-    let log_path = local_repository.log_path().abs().clone();
+    let local = LocalRepository::new(config).await?;
+    let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
         let mut sync_obs = BaseObserver::without_id("sync");
 
-        connect_sync_materialise(local_repository.clone(), connection_name.clone()).await?;
+        connect_sync_materialise(local.clone(), connection_name.clone()).await?;
 
         let duration = start_time.elapsed();
         let msg = match connection_name {
@@ -34,11 +34,14 @@ pub async fn sync(
         };
         sync_obs.observe_termination(log::Level::Info, msg);
 
-        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

@@ -17,13 +17,12 @@ pub async fn status(
     verbose: bool,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(config).await?;
-    let log_path = local_repository.log_path().abs().clone();
+    let local = LocalRepository::new(config).await?;
+    let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
-        show_status(local_repository.clone()).await?;
+        show_status(local.clone()).await?;
 
-        local_repository.close().await?;
         Ok::<(), InternalError>(())
     };
 
@@ -31,7 +30,11 @@ pub async fn status(
         true => Some(log::LevelFilter::Debug),
         false => None,
     };
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

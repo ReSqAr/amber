@@ -74,12 +74,15 @@ pub async fn push(
         );
         sync_obs.observe_termination(log::Level::Info, msg);
 
-        local.close().await?;
         connection.close().await?;
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

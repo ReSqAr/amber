@@ -41,7 +41,7 @@ pub async fn pull(
         let mut sync_obs = BaseObserver::without_id("sync");
 
         let mut connect_obs = BaseObserver::with_id("connect", connection_name.clone());
-        let connection = local
+        let connection = (local)
             .connect(ConnectionName(connection_name.clone()))
             .await?;
         let remote = connection.remote.clone();
@@ -76,12 +76,15 @@ pub async fn pull(
         );
         sync_obs.observe_termination(log::Level::Info, msg);
 
-        local.close().await?;
         connection.close().await?;
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
+    let result =
+        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

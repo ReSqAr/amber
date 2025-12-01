@@ -19,13 +19,9 @@ pub(crate) async fn rm(
     let root_path = local.root().abs().clone();
     let log_path = local.log_path().abs().clone();
 
-    let wrapped = async {
-        let result = fs::rm(&local, paths, hard).await;
-        local.close().await?;
-        result
-    };
+    let wrapped = async { fs::rm(&local, paths, hard).await };
 
-    flightdeck::flightdeck(
+    let result = flightdeck::flightdeck(
         wrapped,
         rm_root_builders(&root_path),
         log_path,
@@ -33,7 +29,10 @@ pub(crate) async fn rm(
         None,
         output,
     )
-    .await
+    .await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn rm_root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
@@ -70,11 +69,10 @@ pub(crate) async fn mv(
     let local = LocalRepository::new(config).await?;
     let log_path = local.log_path().abs().clone();
 
-    let wrapped = async {
-        let result = fs::mv(&local, &source, &destination).await;
-        local.close().await?;
-        result
-    };
+    let wrapped = async { fs::mv(&local, &source, &destination).await };
 
-    flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await
+    let result = flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await;
+
+    let close_result = local.close().await;
+    result.and(close_result)
 }

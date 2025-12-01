@@ -55,7 +55,7 @@ pub async fn add(
     parameter: String,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(config).await?;
+    let local = LocalRepository::new(config).await?;
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
@@ -65,7 +65,7 @@ pub async fn add(
             ConnectionName(name.clone()),
             connection_type.clone(),
             parameter,
-            local_repository.clone(),
+            &local,
         )
         .await?;
         let remote_meta = connection.remote.current().await?;
@@ -79,14 +79,14 @@ pub async fn add(
         );
         init_obs.observe_termination(log::Level::Info, msg);
 
-        local_repository.close().await?;
         connection.close().await?;
         Ok::<(), InternalError>(())
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await?;
+    let result = flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await;
 
-    Ok(())
+    let close_result = local.close().await;
+    result.and(close_result)
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
@@ -111,12 +111,12 @@ async fn add_connection(
     name: ConnectionName,
     connection_type: ConnectionType,
     parameter: String,
-    local_repository: LocalRepository,
+    local: &LocalRepository,
 ) -> Result<EstablishedConnection, InternalError> {
     rclone::check_rclone().await?;
 
     let established = EstablishedConnection::new(
-        local_repository.clone(),
+        local.clone(),
         name.clone(),
         connection_type.clone(),
         parameter.clone(),
@@ -129,8 +129,7 @@ async fn add_connection(
         parameter,
     };
 
-    local_repository.add(connection).await?;
+    local.add(connection).await?;
 
-    local_repository.close().await?;
     Ok(established)
 }
