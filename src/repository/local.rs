@@ -27,9 +27,7 @@ use log::debug;
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use std::fmt::Debug;
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
@@ -521,7 +519,7 @@ impl VirtualFilesystem for LocalRepository {
     fn add_checked_events(
         &self,
         s: BoxStream<'static, FileCheck>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
+    ) -> BoxFuture<'_, Result<u64, DBError>> {
         let db = self.db.clone();
         Box::pin(async move { db.add_virtual_filesystem_file_checked_events(s).await })
     }
@@ -529,7 +527,7 @@ impl VirtualFilesystem for LocalRepository {
     fn add_seen_events(
         &self,
         s: BoxStream<'static, FileSeen>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, DBError>> + Send>> {
+    ) -> BoxFuture<'_, Result<u64, DBError>> {
         let db = self.db.clone();
         Box::pin(async move { db.add_virtual_filesystem_file_seen_events(s).await })
     }
