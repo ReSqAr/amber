@@ -337,12 +337,17 @@ impl Availability for LocalRepository {
             .boxed()
     }
 
-    async fn missing(&self) -> BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>> {
-        self.db
-            .missing_blobs(self.repo_id.clone())
-            .await
-            .err_into()
-            .boxed()
+    fn missing(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>> {
+        let db = self.db.clone();
+        async move {
+            db.missing_blobs(self.repo_id.clone())
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
     }
 }
 
@@ -547,11 +552,12 @@ impl VirtualFilesystem for LocalRepository {
         .boxed()
     }
 
-    async fn select_current_files(
+    fn select_current_files(
         &self,
         file_or_dir: String,
-    ) -> BoxStream<'static, Result<(models::Path, BlobID), DBError>> {
-        self.db.select_current_files(file_or_dir).await
+    ) -> BoxFuture<'_, BoxStream<'static, Result<(models::Path, BlobID), DBError>>> {
+        let db = self.db.clone();
+        async move { db.select_current_files(file_or_dir).await }.boxed()
     }
 
     fn left_join_current_files<
@@ -567,32 +573,42 @@ impl VirtualFilesystem for LocalRepository {
 }
 
 impl ConnectionManager for LocalRepository {
-    async fn add(&self, connection: Connection) -> Result<(), InternalError> {
-        self.db.add_connection(connection).await.map_err(Into::into)
+    fn add(&self, connection: Connection) -> BoxFuture<'_, Result<(), InternalError>> {
+        let db = self.db.clone();
+        async move { db.add_connection(connection).await.map_err(Into::into) }.boxed()
     }
 
-    async fn lookup_by_name(
+    fn lookup_by_name(
         &self,
         name: ConnectionName,
-    ) -> Result<Option<Connection>, InternalError> {
-        self.db.connection_by_name(name).await.map_err(Into::into)
+    ) -> BoxFuture<'_, Result<Option<Connection>, InternalError>> {
+        let db = self.db.clone();
+        async move { db.connection_by_name(name).await.map_err(Into::into) }.boxed()
     }
 
-    async fn list(&self) -> Result<Vec<Connection>, InternalError> {
-        self.db.list_all_connections().await.map_err(Into::into)
+    fn list(&self) -> BoxFuture<'_, Result<Vec<Connection>, InternalError>> {
+        let db = self.db.clone();
+        async move { db.list_all_connections().await.map_err(Into::into) }.boxed()
     }
 
-    async fn connect(&self, name: ConnectionName) -> Result<EstablishedConnection, InternalError> {
-        if let Ok(Some(Connection {
-            connection_type,
-            parameter,
-            ..
-        })) = self.lookup_by_name(name.clone()).await
-        {
-            EstablishedConnection::new(self.clone(), name, connection_type, parameter).await
-        } else {
-            Err(AppError::ConnectionNotFound(name).into())
+    fn connect(
+        &self,
+        name: ConnectionName,
+    ) -> BoxFuture<'_, Result<EstablishedConnection, InternalError>> {
+        let local = self.clone();
+        async move {
+            if let Ok(Some(Connection {
+                connection_type,
+                parameter,
+                ..
+            })) = local.lookup_by_name(name.clone()).await
+            {
+                EstablishedConnection::new(local.clone(), name, connection_type, parameter).await
+            } else {
+                Err(AppError::ConnectionNotFound(name).into())
+            }
         }
+        .boxed()
     }
 }
 
@@ -621,12 +637,13 @@ impl TransferItem for BlobTransferItem {
 }
 
 impl RcloneTargetPath for LocalRepository {
-    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError> {
-        Ok(self
-            .rclone_target_path(transfer_id)
-            .abs()
-            .to_string_lossy()
-            .into_owned())
+    fn rclone_path(&self, transfer_id: u32) -> BoxFuture<'_, Result<String, InternalError>> {
+        let local = self.clone();
+        async move {
+            let path = local.rclone_target_path(transfer_id);
+            Ok(path.abs().to_string_lossy().into_owned())
+        }
+        .boxed()
     }
 }
 
