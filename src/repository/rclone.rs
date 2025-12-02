@@ -65,8 +65,9 @@ impl Metadata for RCloneStore {
 }
 
 impl RcloneTargetPath for RCloneStore {
-    async fn rclone_path(&self, _transfer_id: u32) -> Result<String, InternalError> {
-        Ok(self.path.clone())
+    fn rclone_path(&self, _transfer_id: u32) -> BoxFuture<'_, Result<String, InternalError>> {
+        let path = self.path.clone();
+        async move { Ok(path) }.boxed()
     }
 }
 
@@ -139,12 +140,11 @@ impl Availability for RCloneStore {
             .boxed()
     }
 
-    async fn missing(&self) -> BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>> {
-        self.local
-            .db()
-            .missing_blobs(self.repo_id.clone())
-            .await
-            .err_into()
-            .boxed()
+    fn missing(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>> {
+        let db = self.local.db().clone();
+        let repo_id = self.repo_id.clone();
+        async move { db.missing_blobs(repo_id).await.err_into().boxed() }.boxed()
     }
 }

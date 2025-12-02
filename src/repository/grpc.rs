@@ -348,16 +348,19 @@ impl Syncer<models::RepositoryName> for GRPCClient {
 }
 
 impl RcloneTargetPath for GRPCClient {
-    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError> {
-        let rclone_path_request = tonic::Request::new(RclonePathRequest { transfer_id });
-        let RclonePathResponse { path } = self
-            .client
-            .write()
-            .await
-            .rclone_path(rclone_path_request)
-            .await?
-            .into_inner();
-        Ok(path)
+    fn rclone_path(&self, transfer_id: u32) -> BoxFuture<'_, Result<String, InternalError>> {
+        let client = self.client.clone();
+        async move {
+            let rclone_path_request = tonic::Request::new(RclonePathRequest { transfer_id });
+            let mut guard = client.write().boxed().await;
+            let RclonePathResponse { path } = guard
+                .rclone_path(rclone_path_request)
+                .boxed()
+                .await?
+                .into_inner();
+            Ok(path)
+        }
+        .boxed()
     }
 }
 

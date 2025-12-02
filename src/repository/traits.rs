@@ -57,7 +57,9 @@ pub trait Config {
 
 pub trait Availability {
     fn available(&self) -> BoxStream<'static, Result<AvailableBlob, InternalError>>;
-    async fn missing(&self) -> BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>;
+    fn missing(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>>;
 }
 
 pub trait Adder {
@@ -133,10 +135,10 @@ pub trait VirtualFilesystem {
         &'_ self,
         s: BoxStream<'static, FileSeen>,
     ) -> BoxFuture<'_, BoxStream<'static, Result<VirtualFile, DBError>>>;
-    async fn select_current_files(
+    fn select_current_files(
         &self,
         file_or_dir: String,
-    ) -> BoxStream<'static, Result<(models::Path, BlobID), DBError>>;
+    ) -> BoxFuture<'_, BoxStream<'static, Result<(models::Path, BlobID), DBError>>>;
 
     fn left_join_current_files<
         K: Clone + Send + Sync + 'static,
@@ -149,20 +151,20 @@ pub trait VirtualFilesystem {
 }
 
 pub trait ConnectionManager {
-    async fn add(&self, connection: Connection) -> Result<(), InternalError>;
-    async fn lookup_by_name(
+    fn add(&self, connection: Connection) -> BoxFuture<'_, Result<(), InternalError>>;
+    fn lookup_by_name(
         &self,
         name: ConnectionName,
-    ) -> Result<Option<Connection>, InternalError>;
-    async fn list(&self) -> Result<Vec<Connection>, InternalError>;
-    async fn connect(
+    ) -> BoxFuture<'_, Result<Option<Connection>, InternalError>>;
+    fn list(&self) -> BoxFuture<'_, Result<Vec<Connection>, InternalError>>;
+    fn connect(
         &self,
         name: ConnectionName,
-    ) -> Result<crate::connection::EstablishedConnection, InternalError>;
+    ) -> BoxFuture<'_, Result<crate::connection::EstablishedConnection, InternalError>>;
 }
 
 pub trait RcloneTargetPath {
-    async fn rclone_path(&self, transfer_id: u32) -> Result<String, InternalError>;
+    fn rclone_path(&self, transfer_id: u32) -> BoxFuture<'_, Result<String, InternalError>>;
 }
 
 pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'static {
