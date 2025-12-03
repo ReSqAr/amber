@@ -26,15 +26,18 @@ pub async fn status(
         Ok::<(), InternalError>(())
     };
 
+    let wrapped = async {
+        let result = wrapped.await;
+        local.close().await?;
+        result
+    };
+
     let terminal = match verbose {
         true => Some(log::LevelFilter::Debug),
         false => None,
     };
-    let result =
-        flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await;
 
-    let close_result = local.close().await;
-    result.and(close_result)
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, terminal, output).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

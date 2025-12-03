@@ -21,7 +21,13 @@ pub(crate) async fn rm(
 
     let wrapped = async { fs::rm(&local, paths, hard).await };
 
-    let result = flightdeck::flightdeck(
+    let wrapped = async {
+        let result = wrapped.await;
+        local.close().await?;
+        result
+    };
+
+    flightdeck::flightdeck(
         wrapped,
         rm_root_builders(&root_path),
         log_path,
@@ -29,10 +35,7 @@ pub(crate) async fn rm(
         None,
         output,
     )
-    .await;
-
-    let close_result = local.close().await;
-    result.and(close_result)
+    .await
 }
 
 fn rm_root_builders(root_path: &Path) -> impl IntoIterator<Item = LayoutItemBuilderNode> + use<> {
@@ -71,8 +74,11 @@ pub(crate) async fn mv(
 
     let wrapped = async { fs::mv(&local, &source, &destination).await };
 
-    let result = flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await;
+    let wrapped = async {
+        let result = wrapped.await;
+        local.close().await?;
+        result
+    };
 
-    let close_result = local.close().await;
-    result.and(close_result)
+    flightdeck::flightdeck(wrapped, [], log_path, None, None, output).await
 }
