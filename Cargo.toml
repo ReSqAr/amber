@@ -64,6 +64,12 @@ serial_test = "3.2"
 [build-dependencies]
 tonic-build = { package = "tonic-prost-build", version = "0.14" }
 
+[profile.test]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 256
+
 [profile.dev]
 opt-level = 0
 debug = true
