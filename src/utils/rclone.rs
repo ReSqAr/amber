@@ -1,4 +1,5 @@
 use crate::utils::errors::{AppError, InternalError};
+use futures::TryStreamExt;
 use log::debug;
 use serde::Deserialize;
 use std::fmt::Debug;
@@ -6,6 +7,7 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio_stream::wrappers::LinesStream;
 
 pub enum ConfigSection {
     None,
@@ -178,7 +180,7 @@ where
     let stderr = child.stderr.take();
 
     // Create BufReaders for stdout and stderr
-    let mut stdout_reader = match stdout {
+    let stdout_reader = match stdout {
         Some(out) => BufReader::new(out).lines(),
         None => {
             return Err(InternalError::Stream(
@@ -187,7 +189,7 @@ where
         }
     };
 
-    let mut stderr_reader = match stderr {
+    let stderr_reader = match stderr {
         Some(err) => BufReader::new(err).lines(),
         None => {
             return Err(InternalError::Stream(
@@ -196,41 +198,11 @@ where
         }
     };
 
-    loop {
-        tokio::select! {
-            // Read a line from stdout
-            stdout_line = stdout_reader.next_line() => {
-                match stdout_line {
-                    Ok(Some(line)) => {
-                        callback(parse_rclone_line("stdout", &line));
-                    },
-                    Ok(None) => {
-                        break;
-                    },
-                    Err(e) => {
-                        return Err(e.into());
-                    }
-                }
-            },
-
-            stderr_line = stderr_reader.next_line() => {
-                match stderr_line {
-                    Ok(Some(line)) => {
-                        callback(parse_rclone_line("stderr", &line));
-                    },
-                    Ok(None) => {
-                        break;
-                    },
-                    Err(e) => {
-                        return Err(e.into());
-                    }
-                }
-            },
-
-            else => {
-                break;
-            }
-        }
+    let stdout_stream = LinesStream::new(stdout_reader).map_ok(|line| ("stdout", line));
+    let stderr_stream = LinesStream::new(stderr_reader).map_ok(|line| ("stderr", line));
+    let mut merged = futures::stream::select(stdout_stream, stderr_stream);
+    while let Some((which, line)) = merged.try_next().await? {
+        callback(parse_rclone_line(which, &line));
     }
 
     let status = child.wait().await?;
