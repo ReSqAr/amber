@@ -9,6 +9,8 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 1
 
     steps:
       - name: Checkout repository
@@ -18,6 +20,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: amber-ci
+          cache-targets: true
 
       - name: Install rclone
         run: |
@@ -47,6 +55,12 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: amber-coverage
+          cache-targets: true
 
       - name: Install rclone
         run: |
