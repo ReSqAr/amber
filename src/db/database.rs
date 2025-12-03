@@ -604,6 +604,7 @@ impl Database {
     }
 
     pub async fn update_last_indices(&self) -> Result<(), DBError> {
+        let tracer = Tracer::new_on("Database::update_last_indices");
         let last_file_index = self.logs.files_writer.watermark();
         let last_blob_index = self.logs.blobs_writer.watermark();
         let last_name_index = self.logs.repository_names_writer.watermark();
@@ -618,6 +619,8 @@ impl Database {
                 .boxed(),
             )
             .await?;
+
+        tracer.measure();
         Ok(())
     }
 
