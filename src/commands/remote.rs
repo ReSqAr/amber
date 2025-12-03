@@ -83,10 +83,13 @@ pub async fn add(
         Ok::<(), InternalError>(())
     };
 
-    let result = flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await;
+    let wrapped = async {
+        let result = wrapped.await;
+        local.close().await?;
+        result
+    };
 
-    let close_result = local.close().await;
-    result.and(close_result)
+    flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
