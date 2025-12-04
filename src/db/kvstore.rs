@@ -181,6 +181,12 @@ where
                     let value_owned: VO = value.value().to_owned();
                     tx.blocking_send(Ok((key_owned, value_owned)))?;
                 }
+
+                let tracer = Tracer::new_on(format!("RedbTable({})::stream::close", table.name()));
+                drop(table);
+                txn.close().map_err(Into::<DBError>::into)?;
+                tracer.measure();
+
                 Ok(())
             })();
 
@@ -228,11 +234,14 @@ where
                     tracer.off();
                 }
             }
+            tracer.measure();
 
-            tracer.on();
+            let tracer = Tracer::new_on(format!("RedbTable({})::apply::commit", table.name()));
             drop(table);
             if count > 0 {
                 txn.commit()?;
+            } else {
+                txn.abort()?;
             }
             tracer.measure();
 
@@ -304,11 +313,14 @@ where
                     tracer.off();
                 }
             }
+            tracer.measure();
 
-            tracer.on();
+            let tracer = Tracer::new_on(format!("RedbTable({})::upsert::commit", table.name()));
             drop(table);
             if count > 0 {
                 txn.commit()?;
+            } else {
+                txn.abort()?;
             }
             tracer.measure();
 
@@ -373,6 +385,12 @@ where
                     tx.blocking_send(Ok((key_like, blob)))
                         .map_err(Into::<DBError>::into)?;
                 }
+                tracer.measure();
+
+                let tracer =
+                    Tracer::new_on(format!("RedbTable({})::left_join::close", table.name()));
+                drop(table);
+                txn.close().map_err(Into::<DBError>::into)?;
                 tracer.measure();
 
                 Ok(())
