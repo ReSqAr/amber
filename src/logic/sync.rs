@@ -188,8 +188,7 @@ where
         let mut o = BaseObserver::with_id("sync::table", "repositories");
         let start = Instant::now();
         let created_at = chrono::Utc::now();
-        remote.refresh().await?;
-        local.refresh().await?;
+        try_join!(remote.refresh(), local.refresh())?;
         o.observe_state(log::Level::Info, "prepared");
 
         sync_table::<Repository, _, _>(local, (), remote, ()).await?;
