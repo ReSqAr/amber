@@ -209,12 +209,7 @@ pub async fn transfer<T: TransferItem>(
         .await
         .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
-    let redb = kvstore::KVStore::<
-        models::Path,
-        models::SizedBlobID,
-        models::Path,
-        models::SizedBlobID,
-    >::new(
+    let redb = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
         transfer_path.join("scratch.redb").abs().to_owned(),
         TableDefinition::new("scratch"),
     )

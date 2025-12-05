@@ -110,7 +110,7 @@ pub(crate) async fn rm(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = kvstore::KVStore::<models::Path, models::BlobID, models::Path, models::BlobID>::new(
+    let redb = kvstore::KVStore::<models::Path, models::BlobID>::new(
         transfer_path.join("scratch.redb").abs().to_owned(),
         TableDefinition::new("scratch"),
     )
@@ -285,7 +285,7 @@ pub(crate) async fn mv(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = kvstore::KVStore::<models::Path, models::BlobID, models::Path, models::BlobID>::new(
+    let redb = kvstore::KVStore::<models::Path, models::BlobID>::new(
         transfer_path.join("scratch.redb").abs().to_owned(),
         TableDefinition::new("scratch"),
     )
