@@ -103,7 +103,7 @@ fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {
         .boxed();
 
     let sync_table = BaseLayoutBuilderBuilder::default()
-        .type_key("sync:table")
+        .type_key("sync::table")
         .termination_action(TerminationAction::Remove)
         .state_transformer(StateTransformer::IdFn(Box::new(|done, id| match done {
             false => format!(
