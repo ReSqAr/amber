@@ -1,6 +1,6 @@
 use crate::connection::EstablishedConnection;
 use crate::db::models::{AvailableBlob, InsertBlob, RepoID, SizedBlobID};
-use crate::db::{models, scratch};
+use crate::db::{kvstore, models};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
@@ -17,6 +17,7 @@ use crate::utils::rclone::{
 use crate::utils::units;
 use chrono::{DateTime, Utc};
 use rand::Rng;
+use redb::TableDefinition;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,8 +50,16 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
-    let redb =
-        scratch::ScratchKVStore::<SizedBlobID>::new(fsck_path.join("scratch.redb").as_ref())?;
+    let redb = kvstore::KVStore::<
+        models::Path,
+        models::SizedBlobID,
+        models::Path,
+        models::SizedBlobID,
+    >::new(
+        fsck_path.join("scratch.redb").abs().to_owned(),
+        TableDefinition::new("scratch"),
+    )
+    .await?;
     let rclone_source =
         connection.local_rclone_target(fsck_files_path.abs().to_string_lossy().into());
     let rclone_destination = connection.remote_rclone_target(remote.rclone_path(staging_id).await?);
@@ -120,11 +129,9 @@ pub(crate) async fn fsck_remote(
             stream,
             local.buffer_size(BufferType::FsckMaterialiseBufferParallelism),
         );
-        redb.insert(futures::StreamExt::boxed(StreamExt::filter_map(
-            stream,
-            Result::transpose,
-        )))
-        .await?;
+        let stream = StreamExt::filter_map(stream, Result::transpose);
+        let stream = StreamExt::map(stream, |e| e.map(|(p, s)| (p, Some(s))));
+        redb.apply(futures::StreamExt::boxed(stream)).await?;
 
         writing_task.await??;
 
@@ -168,7 +175,10 @@ pub(crate) async fn fsck_remote(
                 })
             }
         });
-        let (s, bg) = redb.left_join(futures::StreamExt::boxed(s), |e: ObservedBlob| e.path);
+        let s = redb
+            .left_join::<_, _, InternalError>(futures::StreamExt::boxed(s), |e: ObservedBlob| {
+                e.path
+            });
         let s = StreamExt::map(s, |r| {
             r.map(|(o, b)| {
                 let b = b.unwrap();
@@ -186,7 +196,8 @@ pub(crate) async fn fsck_remote(
             local_clone.add_blobs(futures::StreamExt::boxed(s))
         })
         .await?;
-        bg.await??;
+
+        redb.close().await?;
 
         Ok::<(), InternalError>(())
     });

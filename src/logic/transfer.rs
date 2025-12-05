@@ -1,10 +1,11 @@
 use crate::connection::EstablishedConnection;
+use crate::db::kvstore::{AlwaysUpsert, UpsertedValue};
 use crate::db::models::CopiedTransferItem;
-use crate::db::scratch::UpsertedValue;
-use crate::db::{models, scratch};
+use crate::db::{kvstore, models};
 use crate::flightdeck;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
+use crate::flightdeck::tracer::Tracer;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::repository::traits::{
     BufferType, Config, Local, Metadata, RcloneTargetPath, Receiver, Sender, TransferItem,
@@ -18,6 +19,7 @@ use crate::utils::rclone::{
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
+use redb::TableDefinition;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -196,6 +198,7 @@ pub async fn transfer<T: TransferItem>(
     config: RCloneConfig,
 ) -> Result<u64, InternalError> {
     use tokio_stream::StreamExt as TokioStreamExt;
+    let tracer = Tracer::new_on("transfer");
 
     let transfer_id: u32 = rand::rng().random();
 
@@ -206,9 +209,16 @@ pub async fn transfer<T: TransferItem>(
         .await
         .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
-    let redb = scratch::ScratchKVStore::<models::SizedBlobID>::new(
-        transfer_path.join("scratch.redb").as_ref(),
-    )?;
+    let redb = kvstore::KVStore::<
+        models::Path,
+        models::SizedBlobID,
+        models::Path,
+        models::SizedBlobID,
+    >::new(
+        transfer_path.join("scratch.redb").abs().to_owned(),
+        TableDefinition::new("scratch"),
+    )
+    .await?;
 
     let paths = paths
         .iter()
@@ -248,32 +258,35 @@ pub async fn transfer<T: TransferItem>(
     };
 
     let start_time = tokio::time::Instant::now();
+    let tracer_ctr = Tracer::new_on("transfer::create_request");
     let stream = destination
         .create_transfer_request(transfer_id, source_meta.id, paths)
         .await;
+    tracer_ctr.measure();
 
     let stream = TokioStreamExt::map(stream, |t: Result<T, InternalError>| {
         t.map(|t| {
             let p = t.path();
             let b = t.into();
-            (models::Path(p), b)
+            AlwaysUpsert(models::Path(p), b)
         })
     })
     .boxed();
-    let (stream, _) = redb.streaming_upsert(stream, |p| p);
+    let (stream, _) = redb.streaming_upsert(stream);
     let stream = TokioStreamExt::filter_map(stream, move |item| match item {
         Ok(UpsertedValue {
             previous_value: Some(_),
             ..
         }) => None,
         Ok(UpsertedValue {
-            path_like,
-            current_value,
+            upsert: AlwaysUpsert(path, b),
             previous_value: None,
-        }) => Some(Ok::<T, _>(T::new(path_like, transfer_id, current_value))),
+            ..
+        }) => Some(Ok::<T, _>(T::new(path, transfer_id, b))),
         Err(e) => Some(Err(e)),
     });
 
+    let tracer_prep = Tracer::new_on("transfer::preparation");
     transfer_obs.observe_state(log::Level::Debug, "preparing");
     let expected_count = {
         let mut prep_count = 0;
@@ -320,6 +333,7 @@ pub async fn transfer<T: TransferItem>(
         "selected no files for transfer".into()
     };
     transfer_obs.observe_state(log::Level::Info, msg);
+    tracer_prep.measure();
 
     let (tx, rx) = mpsc::unbounded_channel();
     let stream = UnboundedReceiverStream::new(rx).track("transfer");
@@ -327,7 +341,8 @@ pub async fn transfer<T: TransferItem>(
     transfer_obs.observe_state(log::Level::Debug, "copying");
     let staging_path = local.staging_id_path(transfer_id);
     let rclone_handle = tokio::spawn(async move {
-        execute_rclone(
+        let tracer_copy = Tracer::new_on("transfer::copy");
+        let result = execute_rclone(
             &staging_path.abs().clone(),
             rclone_source,
             rclone_destination,
@@ -336,11 +351,13 @@ pub async fn transfer<T: TransferItem>(
             config,
             tx,
         )
-        .await
+        .await;
+        tracer_copy.measure();
+        result
     });
 
     let stream = TokioStreamExt::map(stream, Ok).boxed();
-    let (stream, _) = redb.left_join(stream, models::Path);
+    let stream = redb.left_join::<_, _, InternalError>(stream, models::Path);
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,
         Ok((p, Some(b))) => Some(Ok(CopiedTransferItem {
@@ -352,15 +369,20 @@ pub async fn transfer<T: TransferItem>(
         Err(e) => Some(Err(e)),
     });
 
+    let tracer_finalise = Tracer::new_on("transfer::finalise");
     let count = stream
         .try_forward_into::<_, _, _, _, InternalError>(|s| destination.finalise_transfer(s.boxed()))
         .await
         .inspect_err(|e| log::error!("transfer: destination.finalise_transfer failed: {e}"))?;
+    tracer_finalise.measure();
 
     rclone_handle.await??;
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
 
+    redb.close().await?;
+
+    tracer.measure();
     if count < expected_count {
         Err(AppError::IncompleteTransfer {
             count,

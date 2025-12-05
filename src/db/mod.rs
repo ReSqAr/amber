@@ -1,10 +1,9 @@
 pub(crate) mod database;
 pub(crate) mod error;
 pub(crate) mod kv;
-mod kvstore;
+pub(crate) mod kvstore;
 pub(crate) mod logs;
 pub(crate) mod models;
-pub(crate) mod scratch;
 
 use crate::db::database::Database;
 use crate::db::kv::KVStores;
