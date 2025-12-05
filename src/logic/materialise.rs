@@ -2,6 +2,7 @@ use crate::db::models;
 use crate::db::models::{BlobID, InsertMaterialisation};
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::tracer::Tracer;
 use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
@@ -13,6 +14,8 @@ use tokio::fs;
 pub async fn materialise(
     local: &(impl Metadata + Local + Adder + VirtualFilesystem + Config + Clone + Send + Sync + 'static),
 ) -> Result<(), InternalError> {
+    let tracer = Tracer::new_on("materialise");
+
     let mut materialised_count = 0;
     let mut deleted_count = 0;
     let start_time = tokio::time::Instant::now();
@@ -203,5 +206,6 @@ pub async fn materialise(
     drop(mat_tx);
     db_mat_handle.await??;
 
+    tracer.measure();
     Ok(())
 }

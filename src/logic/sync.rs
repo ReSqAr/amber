@@ -1,9 +1,11 @@
 use crate::db::models::{Blob, File, Repository, RepositoryName};
 use crate::flightdeck::base::BaseObserver;
+use crate::flightdeck::observation::Value;
 use crate::flightdeck::tracer::Tracer;
 use crate::repository::traits::{LastIndicesSyncer, Metadata, Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
+use chrono::SecondsFormat;
 use futures::{StreamExt, try_join};
 use log::debug;
 use tokio::time::Instant;
@@ -63,6 +65,8 @@ where
         + Send
         + Sync,
 {
+    let tracer = Tracer::new_on("sync_repositories");
+
     let (local_last_indices, remote_last_indices) = try_join!(
         async {
             let tracer = Tracer::new_on("sync_repositories::local_last_indices");
@@ -82,8 +86,10 @@ where
 
     let blobs_then_files = async {
         {
-            let mut o = BaseObserver::with_id("sync:table", "blobs");
+            let mut o = BaseObserver::with_id("sync::table", "blobs");
             let start = Instant::now();
+            let created_at = chrono::Utc::now();
+
             sync_table::<Blob, _, _>(
                 local,
                 local_last_indices.blob,
@@ -96,13 +102,25 @@ where
             o.observe_termination_ext(
                 log::Level::Info,
                 "synchronised",
-                [("delay_ns".into(), elapsed.as_nanos() as u64)],
+                [
+                    ("delay_ns".into(), Value::U64(elapsed.as_nanos() as u64)),
+                    (
+                        "created_at".into(),
+                        Value::String(
+                            created_at
+                                .to_rfc3339_opts(SecondsFormat::Millis, true)
+                                .to_string(),
+                        ),
+                    ),
+                ],
             );
         }
 
         {
-            let mut o = BaseObserver::with_id("sync:table", "files");
+            let mut o = BaseObserver::with_id("sync::table", "files");
             let start = Instant::now();
+            let created_at = chrono::Utc::now();
+
             sync_table::<File, _, _>(
                 local,
                 local_last_indices.file,
@@ -115,7 +133,17 @@ where
             o.observe_termination_ext(
                 log::Level::Info,
                 "synchronised",
-                [("delay_ns".into(), elapsed.as_nanos() as u64)],
+                [
+                    ("delay_ns".into(), Value::U64(elapsed.as_nanos() as u64)),
+                    (
+                        "created_at".into(),
+                        Value::String(
+                            created_at
+                                .to_rfc3339_opts(SecondsFormat::Millis, true)
+                                .to_string(),
+                        ),
+                    ),
+                ],
             );
         }
 
@@ -123,8 +151,10 @@ where
     };
 
     let repository_names = async {
-        let mut o = BaseObserver::with_id("sync:table", "repository names");
+        let mut o = BaseObserver::with_id("sync::table", "repository names");
         let start = Instant::now();
+        let created_at = chrono::Utc::now();
+
         sync_table::<RepositoryName, _, _>(
             local,
             local_last_indices.name,
@@ -137,7 +167,17 @@ where
         o.observe_termination_ext(
             log::Level::Info,
             "synchronised",
-            [("delay_ns".into(), elapsed.as_nanos() as u64)],
+            [
+                ("delay_ns".into(), Value::U64(elapsed.as_nanos() as u64)),
+                (
+                    "created_at".into(),
+                    Value::String(
+                        created_at
+                            .to_rfc3339_opts(SecondsFormat::Millis, true)
+                            .to_string(),
+                    ),
+                ),
+            ],
         );
         Ok(())
     };
@@ -145,8 +185,9 @@ where
     try_join!(blobs_then_files, repository_names)?;
 
     {
-        let mut o = BaseObserver::with_id("sync:table", "repositories");
+        let mut o = BaseObserver::with_id("sync::table", "repositories");
         let start = Instant::now();
+        let created_at = chrono::Utc::now();
         remote.refresh().await?;
         local.refresh().await?;
         o.observe_state(log::Level::Info, "prepared");
@@ -157,9 +198,20 @@ where
         o.observe_termination_ext(
             log::Level::Info,
             "synchronised",
-            [("delay_ns".into(), elapsed.as_nanos() as u64)],
+            [
+                ("delay_ns".into(), Value::U64(elapsed.as_nanos() as u64)),
+                (
+                    "created_at".into(),
+                    Value::String(
+                        created_at
+                            .to_rfc3339_opts(SecondsFormat::Millis, true)
+                            .to_string(),
+                    ),
+                ),
+            ],
         );
     };
 
+    tracer.measure();
     Ok(())
 }

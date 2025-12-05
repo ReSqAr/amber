@@ -139,17 +139,22 @@ impl Database {
     }
 
     pub async fn add_files(&self, s: BoxStream<'_, InsertFile>) -> Result<u64, DBError> {
+        let tracer = Tracer::new_on("Database::add_files");
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.files_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("add_files::log_stream");
         let bg = self.file_log_stream(tail.boxed());
 
+        let mut tracer_push = Tracer::new_off("Database::add_files::push");
+        let mut tracer_flush = Tracer::new_off("Database::add_files::flush");
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
         while let Some((i, file)) = s.next().await {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
+            tracer_push.on();
             txn.push(&File {
                 uid,
                 path: file.path.clone(),
@@ -158,35 +163,48 @@ impl Database {
             })
             .await
             .inspect_err(|e| log::error!("Database::add_files failed to add log: {e}"))?;
+            tracer_push.off();
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
+                tracer_flush.on();
                 txn.flush().await?;
+                tracer_flush.off();
             }
         }
+        tracer_push.measure();
+        tracer_flush.measure();
 
+        let tracer_commit = Tracer::new_on("Database::add_files::commit");
         txn.close().await?;
         bg.await??;
+        tracer_commit.measure();
 
         debug!(
             "files added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+        tracer.measure();
         Ok(total_inserted)
     }
 
     pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
+        let tracer = Tracer::new_on("Database::add_blobs");
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.blobs_writer.transaction()?;
         let tail = txn.tail(TailFrom::Head).track("add_blobs::log_stream");
         let bg = self.blob_log_stream(tail.boxed());
 
+        let mut tracer_push = Tracer::new_off("Database::add_blobs::push");
+        let mut tracer_flush = Tracer::new_off("Database::add_blobs::flush");
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
+            tracer_push.on();
             txn.push(&Blob {
                 uid,
                 repo_id: blob.repo_id.clone(),
@@ -198,20 +216,28 @@ impl Database {
             })
             .await
             .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
+            tracer_push.off();
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
+                tracer_flush.on();
                 txn.flush().await?;
+                tracer_flush.off();
             }
         }
+        tracer_push.measure();
+        tracer_flush.measure();
 
+        let tracer_commit = Tracer::new_on("Database::add_blobs::commit");
         txn.close().await?;
         bg.await??;
+        tracer_commit.measure();
 
         debug!(
             "blobs added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+        tracer.measure();
         Ok(total_inserted)
     }
 
@@ -219,6 +245,8 @@ impl Database {
         &self,
         s: BoxStream<'_, InsertFileBundle>,
     ) -> Result<u64, DBError> {
+        let tracer = Tracer::new_on("Database::add_file_bundles");
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
 
@@ -302,35 +330,48 @@ impl Database {
         tracer_m.measure();
 
         // in this order
-        let tracer = Tracer::new_on("add_file_bundles::blob_txn::close");
-        blob_txn.close().await?;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::blob_txn::close");
+            blob_txn.close().await?;
+            tracer.measure();
+        }
 
-        let tracer = Tracer::new_on("add_file_bundles::file_txn::close");
-        file_txn.close().await?;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::file_txn::close");
+            file_txn.close().await?;
+            tracer.measure();
+        }
 
-        let tracer = Tracer::new_on("add_file_bundles::mat_txn::close");
-        mat_txn.close().await?;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::mat_txn::close");
+            mat_txn.close().await?;
+            tracer.measure();
+        }
 
-        let tracer = Tracer::new_on("add_file_bundles::blob_bg::wait");
-        blob_bg.await??;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::blob_bg::wait");
+            blob_bg.await??;
+            tracer.measure();
+        }
 
-        let tracer = Tracer::new_on("add_file_bundles::file_bg::wait");
-        file_bg.await??;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::file_bg::wait");
+            file_bg.await??;
+            tracer.measure();
+        }
 
-        let tracer = Tracer::new_on("add_file_bundles::mat_bg::wait");
-        mat_bg.await??;
-        tracer.measure();
+        {
+            let tracer = Tracer::new_on("add_file_bundles::mat_bg::wait");
+            mat_bg.await??;
+            tracer.measure();
+        }
 
         debug!(
             "file bundles added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
 
+        tracer.measure();
         Ok(total_inserted)
     }
 
@@ -338,6 +379,8 @@ impl Database {
         &self,
         s: BoxStream<'_, InsertRepositoryName>,
     ) -> Result<u64, DBError> {
+        let tracer = Tracer::new_on("Database::add_repository_names");
+
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
         let txn = self.logs.repository_names_writer.transaction()?;
@@ -346,11 +389,14 @@ impl Database {
             .track("add_repository_names::log_stream");
         let bg = self.repository_name_log_stream(tail.boxed());
 
+        let mut tracer_push = Tracer::new_off("Database::add_repository_names::push");
+        let mut tracer_flush = Tracer::new_off("Database::add_repository_names::flush");
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let mut s = s.enumerate();
         while let Some((i, blob)) = s.next().await {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
+            tracer_push.on();
             txn.push(&RepositoryName {
                 uid,
                 repo_id: blob.repo_id.clone(),
@@ -361,20 +407,28 @@ impl Database {
             .inspect_err(|e| {
                 log::error!("Database::add_repository_names failed to add log: {e}")
             })?;
+            tracer_push.off();
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
+                tracer_flush.on();
                 txn.flush().await?;
+                tracer_flush.off();
             }
         }
+        tracer_push.measure();
+        tracer_flush.measure();
 
+        let tracer_commit = Tracer::new_on("Database::add_repository_names::commit");
         txn.close().await?;
         bg.await??;
+        tracer_commit.measure();
 
         debug!(
             "repository_names added: attempted={} inserted={}",
             total_attempted, total_inserted
         );
+        tracer.measure();
         Ok(total_inserted)
     }
 
