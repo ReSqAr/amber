@@ -206,19 +206,19 @@ impl Upsert for UpsertRepositoryMetadata {
 
 #[derive(Clone)]
 pub(crate) struct KVStores {
-    known_blob_uids: KVStore<Uid, (), Uid, ()>,
-    known_file_uids: KVStore<Uid, (), Uid, ()>,
-    known_repository_name_uids: KVStore<Uid, (), Uid, ()>,
-    current_blobs: KVStore<BlobRef, CurrentBlob, BlobRef, CurrentBlob>,
-    current_files: KVStore<Path, CurrentFile, Path, CurrentFile>,
-    current_materialisations: KVStore<Path, CurrentMaterialisation, Path, CurrentMaterialisation>,
-    current_repository_names: KVStore<RepoID, CurrentRepositoryName, RepoID, CurrentRepositoryName>,
-    current_observations: KVStore<Path, CurrentObservation, Path, CurrentObservation>,
-    current_checks: KVStore<Path, CurrentCheck, Path, CurrentCheck>,
-    current_repository: KVStore<(), CurrentRepository, (), CurrentRepository>,
-    repositories: KVStore<RepoID, RepositoryMetadata, RepoID, RepositoryMetadata>,
-    connections: KVStore<ConnectionName, ConnectionMetadata, ConnectionName, ConnectionMetadata>,
-    current_reductions: KVStore<TableName, LogOffset, TableName, LogOffset>,
+    known_blob_uids: KVStore<Uid, ()>,
+    known_file_uids: KVStore<Uid, ()>,
+    known_repository_name_uids: KVStore<Uid, ()>,
+    current_blobs: KVStore<BlobRef, CurrentBlob>,
+    current_files: KVStore<Path, CurrentFile>,
+    current_materialisations: KVStore<Path, CurrentMaterialisation>,
+    current_repository_names: KVStore<RepoID, CurrentRepositoryName>,
+    current_observations: KVStore<Path, CurrentObservation>,
+    current_checks: KVStore<Path, CurrentCheck>,
+    current_repository: KVStore<(), CurrentRepository>,
+    repositories: KVStore<RepoID, RepositoryMetadata>,
+    connections: KVStore<ConnectionName, ConnectionMetadata>,
+    current_reductions: KVStore<TableName, LogOffset>,
 }
 
 impl KVStores {

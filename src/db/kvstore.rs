@@ -22,8 +22,8 @@ pub enum UpsertAction<T> {
 }
 
 pub trait Upsert: Sync + Send + 'static {
-    type K: Key + for<'a> Borrow<<<Self as Upsert>::K as Value>::SelfType<'a>> + Send + Sync + Clone;
-    type V: Value + for<'a> Borrow<<<Self as Upsert>::V as Value>::SelfType<'a>> + Send + Sync;
+    type K: Key + Send + Sync + Clone;
+    type V: Value + Send + Sync;
 
     fn key(&self) -> Self::K;
     fn upsert(self, v: Option<<Self::V as Value>::SelfType<'_>>) -> UpsertAction<Self::V>;
@@ -32,13 +32,13 @@ pub trait Upsert: Sync + Send + 'static {
 #[derive(Clone)]
 pub(crate) struct AlwaysUpsert<K, V>(pub(crate) K, pub(crate) V)
 where
-    K: Key + for<'a> Borrow<K::SelfType<'a>> + Clone + Send + Sync + 'static,
-    V: Value + for<'a> Borrow<V::SelfType<'a>> + Clone + Send + Sync + 'static;
+    K: Key + Clone + Send + Sync + 'static,
+    V: Value + Clone + Send + Sync + 'static;
 
 impl<K, V> Upsert for AlwaysUpsert<K, V>
 where
-    K: Key + for<'a> Borrow<K::SelfType<'a>> + Clone + Send + Sync + 'static,
-    V: Value + for<'a> Borrow<V::SelfType<'a>> + Clone + Send + Sync + 'static,
+    K: Key + Clone + Send + Sync + 'static,
+    V: Value + Clone + Send + Sync + 'static,
 {
     type K = K;
     type V = V;
@@ -99,23 +99,23 @@ impl Drop for DatabaseGuard {
     }
 }
 
-pub(crate) struct KVStore<K, V, KO, VO>
+pub(crate) struct KVStore<K, V>
 where
     K: Key + 'static,
     V: Value + 'static,
-    for<'a> K::SelfType<'a>: ToOwned<Owned = KO>,
-    for<'a> V::SelfType<'a>: ToOwned<Owned = VO>,
+    for<'a> K::SelfType<'a>: ToOwned<Owned = K>,
+    for<'a> V::SelfType<'a>: ToOwned<Owned = V>,
 {
     db: Arc<RwLock<DatabaseGuard>>,
     table: TableDefinition<'static, K, V>,
 }
 
-impl<K, V, KO, VO> Clone for KVStore<K, V, KO, VO>
+impl<K, V> Clone for KVStore<K, V>
 where
     K: Key + 'static,
     V: Value + 'static,
-    for<'a> K::SelfType<'a>: ToOwned<Owned = KO>,
-    for<'a> V::SelfType<'a>: ToOwned<Owned = VO>,
+    for<'a> K::SelfType<'a>: ToOwned<Owned = K>,
+    for<'a> V::SelfType<'a>: ToOwned<Owned = V>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -125,14 +125,12 @@ where
     }
 }
 
-impl<K, V, KO, VO> KVStore<K, V, KO, VO>
+impl<K, V> KVStore<K, V>
 where
     K: Key + Clone + for<'a> Borrow<<K as Value>::SelfType<'a>> + Send + Sync + 'static,
     V: Value + Clone + for<'a> Borrow<<V as Value>::SelfType<'a>> + Send + Sync + 'static,
-    for<'a> K::SelfType<'a>: ToOwned<Owned = KO>,
-    for<'a> V::SelfType<'a>: ToOwned<Owned = VO>,
-    KO: Send + Sync + Clone + 'static,
-    VO: Send + Sync + Clone + 'static,
+    for<'a> K::SelfType<'a>: ToOwned<Owned = K>,
+    for<'a> V::SelfType<'a>: ToOwned<Owned = V>,
 {
     pub(crate) async fn new(
         path: PathBuf,
@@ -188,7 +186,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn stream(&self) -> BoxStream<'static, Result<(KO, VO), DBError>> {
+    pub(crate) fn stream(&self) -> BoxStream<'static, Result<(K, V), DBError>> {
         let table = self.table;
         let db = self.db.clone();
         let name = format!("KVStore({})::stream", table.name());
@@ -206,8 +204,8 @@ where
                 let table = txn.open_table(table)?;
                 for item in table.range::<K>(..)? {
                     let (key, value) = item?;
-                    let key_owned: KO = key.value().to_owned();
-                    let value_owned: VO = value.value().to_owned();
+                    let key_owned: K = key.value().to_owned();
+                    let value_owned: V = value.value().to_owned();
                     tx.blocking_send(Ok((key_owned, value_owned)))?;
                 }
 
@@ -374,7 +372,7 @@ where
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<VO>), E>>
+    ) -> BoxStream<'static, Result<(IK, Option<V>), E>>
     where
         KF: Fn(IK) -> K + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -392,8 +390,7 @@ where
                 let guard = db.read();
                 tracer.measure();
 
-                let tracer =
-                    Tracer::new_on(format!("KVStore({})::left_join::open", table.name()));
+                let tracer = Tracer::new_on(format!("KVStore({})::left_join::open", table.name()));
                 let txn = guard
                     .as_ref()
                     .ok_or(DBError::AccessAfterDrop)?
@@ -407,7 +404,7 @@ where
                     let key_like: IK = key_like?;
                     let key: K = key_func(key_like.clone());
                     tracer.on();
-                    let blob: Option<VO> = table
+                    let blob: Option<V> = table
                         .get(key)
                         .map_err(Into::<DBError>::into)?
                         .map(|v| v.value().to_owned());
@@ -417,8 +414,7 @@ where
                 }
                 tracer.measure();
 
-                let tracer =
-                    Tracer::new_on(format!("KVStore({})::left_join::close", table.name()));
+                let tracer = Tracer::new_on(format!("KVStore({})::left_join::close", table.name()));
                 drop(table);
                 txn.close().map_err(Into::<DBError>::into)?;
                 tracer.measure();
@@ -448,17 +444,7 @@ where
 
         rx.boxed()
     }
-}
 
-impl<K, V> KVStore<K, V, K, V>
-where
-    K: Key + Clone + for<'a> Borrow<<K as Value>::SelfType<'a>> + Send + Sync + 'static,
-    V: Value + Clone + for<'a> Borrow<<V as Value>::SelfType<'a>> + Send + Sync + 'static,
-    for<'a> K::SelfType<'a>: ToOwned<Owned = K>,
-    for<'a> V::SelfType<'a>: ToOwned<Owned = V>,
-    K: Send + Sync + Clone + 'static,
-    V: Send + Sync + Clone + 'static,
-{
     #[allow(clippy::type_complexity)]
     pub(crate) fn streaming_upsert<
         U: Upsert<K = K, V = V> + Clone,
@@ -479,17 +465,13 @@ where
         );
 
         let bg = task::spawn_blocking(move || -> Result<u64, DBError> {
-            let tracer = Tracer::new_on(format!(
-                "KVStore({})::streaming_upsert::acq",
-                table.name()
-            ));
+            let tracer =
+                Tracer::new_on(format!("KVStore({})::streaming_upsert::acq", table.name()));
             let guard = db.read();
             tracer.measure();
 
-            let tracer = Tracer::new_on(format!(
-                "KVStore({})::streaming_upsert::open",
-                table.name()
-            ));
+            let tracer =
+                Tracer::new_on(format!("KVStore({})::streaming_upsert::open", table.name()));
             let txn = guard
                 .as_ref()
                 .ok_or(DBError::AccessAfterDrop)?

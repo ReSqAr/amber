@@ -50,12 +50,7 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
-    let redb = kvstore::KVStore::<
-        models::Path,
-        models::SizedBlobID,
-        models::Path,
-        models::SizedBlobID,
-    >::new(
+    let redb = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
         fsck_path.join("scratch.redb").abs().to_owned(),
         TableDefinition::new("scratch"),
     )
