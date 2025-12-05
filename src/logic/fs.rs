@@ -1,6 +1,6 @@
+use crate::db::kvstore::{AlwaysUpsert, UpsertedValue};
 use crate::db::models::{InsertFile, InsertMaterialisation, Path};
-use crate::db::scratch::UpsertedValue;
-use crate::db::{models, scratch};
+use crate::db::{kvstore, models};
 use crate::flightdeck::base::BaseObserver;
 use crate::logic::{files, unblobify};
 use crate::repository::local::LocalRepository;
@@ -12,6 +12,7 @@ use crate::utils::pipe::TryForwardIntoExt;
 use chrono::Utc;
 use futures::{StreamExt, TryStreamExt, stream};
 use rand::Rng;
+use redb::TableDefinition;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -109,9 +110,11 @@ pub(crate) async fn rm(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = scratch::ScratchKVStore::<models::BlobID>::new(
-        transfer_path.join("scratch.redb").as_ref(),
-    )?;
+    let redb = kvstore::KVStore::<models::Path, models::BlobID, models::Path, models::BlobID>::new(
+        transfer_path.join("scratch.redb").abs().to_owned(),
+        TableDefinition::new("scratch"),
+    )
+    .await?;
 
     for (_, normalised_path) in paths_with_hint {
         let s = local
@@ -119,7 +122,8 @@ pub(crate) async fn rm(
             .await
             .map_err(InternalError::DBError)
             .boxed();
-        let (s, bg) = redb.streaming_upsert(s, |p| p);
+        let s = s.map_ok(|(p, b)| AlwaysUpsert(p, b)).boxed();
+        let (s, bg) = redb.streaming_upsert(s);
         let count = s
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
                 Ok::<_, InternalError>(s.count().await)
@@ -248,6 +252,7 @@ pub(crate) async fn rm(
         .await
         .observe_termination(log::Level::Info, format!("{msg} in {duration:.2?}"));
 
+    redb.close().await?;
     if error_count > 0 {
         Err(AppError::RmErrors.into())
     } else {
@@ -280,9 +285,11 @@ pub(crate) async fn mv(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = scratch::ScratchKVStore::<models::BlobID>::new(
-        transfer_path.join("scratch.redb").as_ref(),
-    )?;
+    let redb = kvstore::KVStore::<models::Path, models::BlobID, models::Path, models::BlobID>::new(
+        transfer_path.join("scratch.redb").abs().to_owned(),
+        TableDefinition::new("scratch"),
+    )
+    .await?;
 
     let source_prefix = source
         .rel()
@@ -315,12 +322,13 @@ pub(crate) async fn mv(
         .select_current_files(source_prefix)
         .await
         .map_err(InternalError::DBError);
-    let (s, bg) = redb.streaming_upsert(s.boxed(), |p| p);
+
+    let s = s.map_ok(|(p, b)| AlwaysUpsert(p, b)).boxed();
+    let (s, bg) = redb.streaming_upsert(s.boxed());
     let s = s.map_ok(
         |UpsertedValue {
-             path_like: p,
-             current_value: b,
-             previous_value: _,
+             upsert: AlwaysUpsert(p, b),
+             ..
          }| (p, b),
     );
     let s = s.map_ok(|(src, b)| (src.clone(), b));
@@ -506,6 +514,7 @@ pub(crate) async fn mv(
     let duration = start_time.elapsed();
     let msg = format!("{msg} in {duration:.2?}");
 
+    redb.close().await?;
     obs.lock().await.observe_termination(log::Level::Info, msg);
 
     if error_count > 0 {
