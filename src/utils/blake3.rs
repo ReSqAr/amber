@@ -63,8 +63,11 @@ mod tests {
         let dir = tempdir()?;
         let path = RepoPath::from_root(dir.path());
         let file_path = path.join("hello.txt");
-        let mut file = fs::File::create(&file_path).await?;
-        file.write_all(b"Hello world!").await?;
+        {
+            let mut file = fs::File::create(&file_path).await?;
+            file.write_all(b"Hello world!").await?;
+            file.flush().await?;
+        }
 
         let result = compute_blake3_and_size(&file_path).await.unwrap();
         assert_eq!(
