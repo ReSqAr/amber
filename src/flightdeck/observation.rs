@@ -52,6 +52,7 @@ pub(crate) struct Message {
     pub(crate) observation: Observation,
 }
 
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use crate::flightdeck::observation::{Data, Observation, Value};

@@ -264,6 +264,7 @@ fn parse_rclone_line(channel: &str, line: &str) -> RcloneEvent {
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
 #[cfg(test)]
 mod tests {
     use super::*;

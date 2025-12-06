@@ -35,6 +35,7 @@ fn tokenize_line(line: &str) -> Vec<String> {
 }
 
 /// Parse a DSL line into one of the refined CommandLine variants.
+#[allow(clippy::indexing_slicing)]
 pub fn parse_line(line: &str) -> Option<CommandLine> {
     let trimmed = line.trim();
     if trimmed.is_empty() {

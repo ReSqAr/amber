@@ -257,6 +257,7 @@ fn pick_folder(folders: &[Folder], rng: &mut ChaCha8Rng) -> Folder {
         }
     }
 
+    #[allow(clippy::indexing_slicing)]
     folders[0].clone()
 }
 
@@ -296,6 +297,7 @@ fn write_random_file(filepath: &Path, size_bytes: u64, rng: &mut ChaCha8Rng) -> 
     }
     // Write any remaining bytes.
     if remainder > 0 {
+        #[allow(clippy::indexing_slicing)]
         writer.write_all(&block[..remainder])?;
     }
 
@@ -329,6 +331,7 @@ fn collect_tasks(
                 break;
             }
         }
+        #[allow(clippy::indexing_slicing)]
         let candidate = sizes[chosen_idx];
 
         // Choose a folder and generate a filename.
