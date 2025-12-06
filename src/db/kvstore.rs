@@ -343,8 +343,6 @@ where
                 let key_bytes = bincode::serialize(&key)?;
                 let existing = db_ref.get(&key_bytes)?;
 
-                let mut delete_key = false;
-
                 match existing {
                     Some(bytes) => {
                         let current: V = bincode::deserialize(&bytes)?;
@@ -355,7 +353,8 @@ where
                                 count += 1;
                             }
                             UpsertAction::Delete => {
-                                delete_key = true;
+                                db_ref.delete(&key_bytes)?;
+                                count += 1;
                             }
                             UpsertAction::NoChange => {}
                         }
@@ -367,11 +366,6 @@ where
                             count += 1;
                         }
                     }
-                }
-
-                if delete_key {
-                    db_ref.delete(&key_bytes)?;
-                    count += 1;
                 }
 
                 tracer.off();
@@ -586,5 +580,455 @@ where
         });
 
         (rx.boxed(), bg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{TryStreamExt, stream};
+    use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct SumUpsert {
+        key: String,
+        delta: i32,
+    }
+
+    impl Upsert for SumUpsert {
+        type K = String;
+        type V = i32;
+
+        fn key(&self) -> Self::K {
+            self.key.clone()
+        }
+
+        fn upsert(self, current: Option<Self::V>) -> UpsertAction<Self::V> {
+            if self.delta == -1 {
+                return UpsertAction::Delete;
+            }
+
+            match current {
+                Some(_) if self.delta == 0 => UpsertAction::NoChange,
+                Some(v) => UpsertAction::Change(v + self.delta),
+                None => UpsertAction::Change(self.delta),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    enum TestAction {
+        Change(i32),
+        Delete,
+        NoChange,
+    }
+
+    #[derive(Clone)]
+    struct FixedUpsert {
+        key: String,
+        action: TestAction,
+    }
+
+    impl Upsert for FixedUpsert {
+        type K = String;
+        type V = i32;
+
+        fn key(&self) -> Self::K {
+            self.key.clone()
+        }
+
+        fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V> {
+            match self.action {
+                TestAction::Change(v) => UpsertAction::Change(v),
+                TestAction::Delete => UpsertAction::Delete,
+                TestAction::NoChange => UpsertAction::NoChange,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_inserts_and_deletes_keys() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, u64> = KVStore::new(path, "apply-test".to_string())
+            .await
+            .expect("create store");
+
+        let items = vec![
+            Ok(("one".to_string(), Some(1))),
+            Ok(("two".to_string(), Some(2))),
+            Ok(("one".to_string(), None)),
+        ];
+
+        let written = store
+            .apply::<DBError>(stream::iter(items).boxed())
+            .await
+            .expect("apply items");
+
+        assert_eq!(written, 3);
+
+        let final_values: Vec<_> = store.stream().try_collect().await.expect("collect");
+        assert_eq!(final_values, vec![("two".to_string(), 2u64)]);
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn apply_deletes_when_value_is_none() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "apply-delete".to_string())
+            .await
+            .expect("create store");
+
+        let initial = vec![
+            Ok(("keep".to_string(), Some(7))),
+            Ok(("remove".to_string(), Some(3))),
+        ];
+        store
+            .apply::<DBError>(stream::iter(initial).boxed())
+            .await
+            .expect("seed store");
+
+        let updates = vec![
+            Ok(("remove".to_string(), None)),
+            Ok(("absent".to_string(), None)),
+        ];
+
+        let count = store
+            .apply::<DBError>(stream::iter(updates).boxed())
+            .await
+            .expect("apply deletes");
+
+        assert_eq!(count, 2);
+
+        let contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        assert_eq!(contents, vec![("keep".to_string(), 7)]);
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn upsert_tracks_previous_and_changes() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "upsert-test".to_string())
+            .await
+            .expect("create store");
+
+        let upserts = vec![
+            Ok(SumUpsert {
+                key: "alpha".to_string(),
+                delta: 1,
+            }),
+            Ok(SumUpsert {
+                key: "alpha".to_string(),
+                delta: 2,
+            }),
+            Ok(SumUpsert {
+                key: "alpha".to_string(),
+                delta: 0,
+            }),
+            Ok(SumUpsert {
+                key: "alpha".to_string(),
+                delta: -1,
+            }),
+        ];
+
+        let updated = store
+            .upsert(stream::iter(upserts).boxed())
+            .await
+            .expect("run upserts");
+
+        // Two changes and one delete should count as three mutations.
+        assert_eq!(updated, 3);
+
+        let contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        assert!(contents.is_empty());
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn upsert_handles_all_action_combinations() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "upsert-combos".to_string())
+            .await
+            .expect("create store");
+
+        let seed = vec![
+            Ok(("existing".to_string(), Some(10))),
+            Ok(("to-delete".to_string(), Some(5))),
+        ];
+
+        store
+            .apply::<DBError>(stream::iter(seed).boxed())
+            .await
+            .expect("seed store");
+
+        let upserts = vec![
+            Ok(FixedUpsert {
+                key: "existing".to_string(),
+                action: TestAction::Change(11),
+            }),
+            Ok(FixedUpsert {
+                key: "new".to_string(),
+                action: TestAction::Change(1),
+            }),
+            Ok(FixedUpsert {
+                key: "existing".to_string(),
+                action: TestAction::NoChange,
+            }),
+            Ok(FixedUpsert {
+                key: "to-delete".to_string(),
+                action: TestAction::Delete,
+            }),
+            Ok(FixedUpsert {
+                key: "missing".to_string(),
+                action: TestAction::Delete,
+            }),
+        ];
+
+        let updated = store
+            .upsert(stream::iter(upserts).boxed())
+            .await
+            .expect("run upserts");
+
+        assert_eq!(updated, 3);
+
+        let mut contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        contents.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(
+            contents,
+            vec![("existing".to_string(), 11), ("new".to_string(), 1)],
+        );
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn streaming_upsert_reports_previous_values() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "streaming-upsert".to_string())
+            .await
+            .expect("create store");
+
+        let upserts: Vec<Result<_, DBError>> = vec![
+            Ok(SumUpsert {
+                key: "beta".to_string(),
+                delta: 4,
+            }),
+            Ok(SumUpsert {
+                key: "beta".to_string(),
+                delta: 1,
+            }),
+        ];
+
+        let (changes, handle) = store.streaming_upsert(stream::iter(upserts).boxed());
+
+        let results: Vec<_> = changes.try_collect().await.expect("collect changes");
+        let count = handle
+            .await
+            .expect("join streaming_upsert")
+            .expect("count ok");
+
+        assert_eq!(count, 2);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].previous_value.is_none());
+        assert_eq!(results[1].previous_value, Some(4));
+
+        let entries: Vec<_> = store.stream().try_collect().await.expect("collect store");
+        assert_eq!(entries, vec![("beta".to_string(), 5)]);
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn streaming_upsert_covers_all_branches_and_reports_previous() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "streaming-all".to_string())
+            .await
+            .expect("create store");
+
+        let seed = vec![
+            Ok(("existing_change".to_string(), Some(10))),
+            Ok(("existing_delete".to_string(), Some(20))),
+            Ok(("existing_nochange".to_string(), Some(30))),
+        ];
+
+        store
+            .apply::<DBError>(stream::iter(seed).boxed())
+            .await
+            .expect("seed store");
+
+        let upserts: Vec<Result<_, DBError>> = vec![
+            Ok(FixedUpsert {
+                key: "new_change".to_string(),
+                action: TestAction::Change(1),
+            }),
+            Ok(FixedUpsert {
+                key: "existing_change".to_string(),
+                action: TestAction::Change(11),
+            }),
+            Ok(FixedUpsert {
+                key: "existing_delete".to_string(),
+                action: TestAction::Delete,
+            }),
+            Ok(FixedUpsert {
+                key: "missing_delete".to_string(),
+                action: TestAction::Delete,
+            }),
+            Ok(FixedUpsert {
+                key: "existing_nochange".to_string(),
+                action: TestAction::NoChange,
+            }),
+            Ok(FixedUpsert {
+                key: "missing_nochange".to_string(),
+                action: TestAction::NoChange,
+            }),
+        ];
+
+        let (changes, handle) = store.streaming_upsert(stream::iter(upserts).boxed());
+
+        let mut results: Vec<_> = changes.try_collect().await.expect("collect changes");
+        results.sort_by(|a, b| a.upsert.key.cmp(&b.upsert.key));
+
+        let processed = handle
+            .await
+            .expect("join streaming_upsert")
+            .expect("count ok");
+        assert_eq!(processed, 6);
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|r| (r.upsert.key.as_str(), r.previous_value))
+                .collect::<Vec<_>>(),
+            vec![
+                ("existing_change", Some(10)),
+                ("existing_delete", Some(20)),
+                ("existing_nochange", Some(30)),
+                ("missing_delete", None),
+                ("missing_nochange", None),
+                ("new_change", None),
+            ],
+        );
+
+        let mut entries: Vec<_> = store.stream().try_collect().await.expect("collect store");
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            entries,
+            vec![
+                ("existing_change".to_string(), 11),
+                ("existing_nochange".to_string(), 30),
+                ("new_change".to_string(), 1),
+            ],
+        );
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn left_join_returns_values_when_present() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "left-join".to_string())
+            .await
+            .expect("create store");
+
+        let seed = vec![
+            Ok(("have".to_string(), Some(9))),
+            Ok(("also".to_string(), Some(2))),
+        ];
+
+        store
+            .apply::<DBError>(stream::iter(seed).boxed())
+            .await
+            .expect("seed store");
+
+        let keys: Vec<Result<_, DBError>> = vec![
+            Ok("have".to_string()),
+            Ok("missing".to_string()),
+            Ok("also".to_string()),
+        ];
+
+        let results: Vec<_> = store
+            .left_join(stream::iter(keys).boxed(), |k: String| k.clone())
+            .try_collect()
+            .await
+            .expect("collect left join");
+
+        assert_eq!(
+            results,
+            vec![
+                ("have".to_string(), Some(9)),
+                ("missing".to_string(), None),
+                ("also".to_string(), Some(2)),
+            ],
+        );
+
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn streaming_upsert_with_only_nochange_performs_no_mutations() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: KVStore<String, i32> = KVStore::new(path, "streaming-nochange".to_string())
+            .await
+            .expect("create store");
+
+        let seed = vec![Ok(("existing".to_string(), Some(42)))];
+        store
+            .apply::<DBError>(stream::iter(seed).boxed())
+            .await
+            .expect("seed store");
+
+        let upserts: Vec<Result<_, DBError>> = vec![
+            Ok(FixedUpsert {
+                key: "existing".to_string(),
+                action: TestAction::NoChange,
+            }),
+            Ok(FixedUpsert {
+                key: "missing".to_string(),
+                action: TestAction::NoChange,
+            }),
+        ];
+
+        let (changes, handle) = store.streaming_upsert(stream::iter(upserts).boxed());
+
+        let mut results: Vec<_> = changes.try_collect().await.expect("collect changes");
+        results.sort_by(|a, b| a.upsert.key.cmp(&b.upsert.key));
+
+        let processed = handle
+            .await
+            .expect("join streaming_upsert")
+            .expect("count ok");
+        assert_eq!(processed, 2);
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|r| (r.upsert.key.as_str(), r.previous_value))
+                .collect::<Vec<_>>(),
+            vec![("existing", Some(42)), ("missing", None),]
+        );
+
+        let entries: Vec<_> = store.stream().try_collect().await.expect("collect store");
+        assert_eq!(entries, vec![("existing".to_string(), 42)]);
+
+        store.close().await.expect("close store");
     }
 }
