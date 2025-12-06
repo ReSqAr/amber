@@ -812,6 +812,7 @@ mod tests {
         store.close().await.expect("close store");
     }
 
+    #[allow(clippy::indexing_slicing)]
     #[tokio::test]
     async fn streaming_upsert_reports_previous_values() {
         let dir = TempDir::new().expect("tempdir");

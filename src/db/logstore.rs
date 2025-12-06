@@ -492,6 +492,7 @@ fn pump_range_blocking<V>(
     // tx dropped by caller when stream ends.
 }
 
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use super::*;

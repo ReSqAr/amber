@@ -68,6 +68,7 @@ impl<T: Observable> Observer<T> {
     }
 }
 
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use super::*;

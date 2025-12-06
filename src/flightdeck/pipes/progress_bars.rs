@@ -410,6 +410,7 @@ impl ProgressBarPipe {
     }
 }
 
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use super::*;
