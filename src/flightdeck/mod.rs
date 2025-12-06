@@ -69,6 +69,7 @@ pub async fn flightdeck<E: From<tokio::task::JoinError>>(
 }
 
 impl FlightDeck {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -105,6 +106,7 @@ impl FlightDeck {
         }
     }
 
+    #[must_use]
     pub fn with_terminal(self, output: Output, level_filter: log::LevelFilter) -> Self {
         Self {
             manager: self

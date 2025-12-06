@@ -43,6 +43,7 @@ impl Tracer {
         }
     }
 
+    #[allow(clippy::must_use_candidate)]
     pub fn measure(self) -> Duration {
         let mut obs = self.obs;
         let mut elapsed = self.elapsed;

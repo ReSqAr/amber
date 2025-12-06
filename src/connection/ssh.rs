@@ -218,7 +218,12 @@ async fn setup_app_via_ssh(
             for pubkey in identities {
                 let hash_alg = match pubkey.algorithm() {
                     Algorithm::Dsa | Algorithm::Rsa { .. } => hash_alg,
-                    _ => None, // upstream bug
+                    Algorithm::Ecdsa { .. }
+                    | Algorithm::Ed25519
+                    | Algorithm::SkEcdsaSha2NistP256
+                    | Algorithm::SkEd25519
+                    | Algorithm::Other(_) => None,
+                    _ => None,
                 };
 
                 let auth_result = session
@@ -411,6 +416,7 @@ fn rclone_obscure_password(input: &str) -> String {
     buffer.extend_from_slice(&iv);
     buffer.extend_from_slice(input.as_bytes());
     let mut cipher = Aes256Ctr::new(&RCLONE_KEY.into(), &iv.into());
+    #[allow(clippy::indexing_slicing)]
     cipher.apply_keystream(&mut buffer[16..]);
     let engine = base64::engine::GeneralPurpose::new(
         &base64::alphabet::URL_SAFE,
