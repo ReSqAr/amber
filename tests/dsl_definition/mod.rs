@@ -9,7 +9,6 @@ mod amber;
 mod asserts;
 mod fs;
 mod parser;
-mod redb;
 mod ssh;
 mod types;
 mod writer;
@@ -218,13 +217,6 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     if let Some(s) = ssh_connection.remove(&repo) {
                         s.await
                     }
-                }
-                CommandLine::Redb { repo, action } => {
-                    let repo_instance = env
-                        .repos
-                        .get(&repo)
-                        .ok_or_else(|| anyhow!("Repository {} not found for redb command", repo))?;
-                    redb::run_action(&repo_instance.path, action).await?;
                 }
             }
         }

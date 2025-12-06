@@ -1,10 +1,8 @@
-use crate::utils::redb_bridge::{impl_redb_bincode_key, impl_redb_bincode_value};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct Uid(pub(crate) u64);
-impl_redb_bincode_key!(Uid);
 impl From<u64> for Uid {
     fn from(v: u64) -> Self {
         Self(v)
@@ -17,11 +15,9 @@ impl From<Uid> for u64 {
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct Path(pub(crate) String);
-impl_redb_bincode_key!(Path);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct BlobID(pub(crate) String);
-impl_redb_bincode_value!(BlobID);
 
 impl BlobID {
     pub fn path(&self) -> PathBuf {
@@ -38,14 +34,12 @@ impl BlobID {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub(crate) struct RepoID(pub(crate) String);
-impl_redb_bincode_key!(RepoID);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct BlobRef {
     pub(crate) blob_id: BlobID,
     pub(crate) repo_id: RepoID,
 }
-impl_redb_bincode_key!(BlobRef);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentBlob {
@@ -53,35 +47,30 @@ pub(crate) struct CurrentBlob {
     pub(crate) blob_path: Option<Path>,
     pub(crate) valid_from: DateTime<Utc>,
 }
-impl_redb_bincode_value!(CurrentBlob);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SizedBlobID {
     pub blob_id: BlobID,
     pub blob_size: u64,
 }
-impl_redb_bincode_value!(SizedBlobID);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentFile {
     pub(crate) blob_id: BlobID,
     pub(crate) valid_from: DateTime<Utc>,
 }
-impl_redb_bincode_value!(CurrentFile);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentMaterialisation {
     pub(crate) blob_id: BlobID,
     pub(crate) valid_from: DateTime<Utc>,
 }
-impl_redb_bincode_value!(CurrentMaterialisation);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentRepositoryName {
     pub(crate) name: String,
     pub(crate) valid_from: DateTime<Utc>,
 }
-impl_redb_bincode_value!(CurrentRepositoryName);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentObservation {
@@ -90,20 +79,17 @@ pub(crate) struct CurrentObservation {
     pub(crate) fs_last_modified_dttm: DateTime<Utc>,
     pub(crate) fs_last_size: u64,
 }
-impl_redb_bincode_value!(CurrentObservation);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CurrentCheck {
     pub(crate) check_last_dttm: DateTime<Utc>,
     pub(crate) check_last_hash: BlobID,
 }
-impl_redb_bincode_value!(CurrentCheck);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentRepository {
     pub repo_id: RepoID,
 }
-impl_redb_bincode_value!(CurrentRepository);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepositoryMetadata {
@@ -111,20 +97,17 @@ pub struct RepositoryMetadata {
     pub last_blob_index: Option<u64>,
     pub last_name_index: Option<u64>,
 }
-impl_redb_bincode_value!(RepositoryMetadata);
 
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
 )]
 pub struct ConnectionName(pub(crate) String);
-impl_redb_bincode_key!(ConnectionName);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConnectionMetadata {
     pub connection_type: ConnectionType,
     pub parameter: String,
 }
-impl_redb_bincode_value!(ConnectionMetadata);
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ConnectionType {
@@ -141,7 +124,6 @@ pub struct Connection {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct TableName(pub(crate) String);
-impl_redb_bincode_key!(TableName);
 
 impl From<&'static str> for TableName {
     fn from(value: &'static str) -> Self {
@@ -153,7 +135,6 @@ impl From<&'static str> for TableName {
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Ord, PartialOrd,
 )]
 pub struct LogOffset(pub(crate) u64);
-impl_redb_bincode_value!(LogOffset);
 
 impl From<LogOffset> for behemoth::Offset {
     fn from(o: LogOffset) -> Self {

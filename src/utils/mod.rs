@@ -5,7 +5,6 @@ pub(crate) mod path;
 pub(crate) mod pipe;
 pub(crate) mod port;
 pub(crate) mod rclone;
-pub(crate) mod redb_bridge;
 pub(crate) mod stream;
 pub(crate) mod units;
 pub(crate) mod walker;

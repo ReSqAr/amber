@@ -12,7 +12,6 @@ use crate::utils::pipe::TryForwardIntoExt;
 use chrono::Utc;
 use futures::{StreamExt, TryStreamExt, stream};
 use rand::Rng;
-use redb::TableDefinition;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -110,9 +109,9 @@ pub(crate) async fn rm(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = kvstore::KVStore::<models::Path, models::BlobID>::new(
-        transfer_path.join("scratch.redb").abs().to_owned(),
-        TableDefinition::new("scratch"),
+    let scratch = kvstore::KVStore::<models::Path, models::BlobID>::new(
+        transfer_path.join("scratch.rocksdb").abs().to_owned(),
+        "scratch".to_string(),
     )
     .await?;
 
@@ -123,7 +122,7 @@ pub(crate) async fn rm(
             .map_err(InternalError::DBError)
             .boxed();
         let s = s.map_ok(|(p, b)| AlwaysUpsert(p, b)).boxed();
-        let (s, bg) = redb.streaming_upsert(s);
+        let (s, bg) = scratch.streaming_upsert(s);
         let count = s
             .try_forward_into::<_, _, _, _, InternalError>(|s| async {
                 Ok::<_, InternalError>(s.count().await)
@@ -143,7 +142,8 @@ pub(crate) async fn rm(
     if error_count.load(Ordering::Relaxed) == 0 {
         let now = Utc::now();
         let local = local.clone();
-        redb.stream()
+        scratch
+            .stream()
             .map_ok(move |(p, _)| InsertFile {
                 path: p.clone(),
                 blob_id: None,
@@ -156,7 +156,8 @@ pub(crate) async fn rm(
             .inspect_err(|e| log::error!("fs::rm: db failed: {e}"))?;
 
         let local_clone = local.clone();
-        redb.stream()
+        scratch
+            .stream()
             .map({
                 move |e| {
                     let root = root.clone();
@@ -252,7 +253,7 @@ pub(crate) async fn rm(
         .await
         .observe_termination(log::Level::Info, format!("{msg} in {duration:.2?}"));
 
-    redb.close().await?;
+    scratch.close().await?;
     if error_count > 0 {
         Err(AppError::RmErrors.into())
     } else {
@@ -285,9 +286,9 @@ pub(crate) async fn mv(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let redb = kvstore::KVStore::<models::Path, models::BlobID>::new(
-        transfer_path.join("scratch.redb").abs().to_owned(),
-        TableDefinition::new("scratch"),
+    let scratch = kvstore::KVStore::<models::Path, models::BlobID>::new(
+        transfer_path.join("scratch.rocksdb").abs().to_owned(),
+        "scratch".to_string(),
     )
     .await?;
 
@@ -324,7 +325,7 @@ pub(crate) async fn mv(
         .map_err(InternalError::DBError);
 
     let s = s.map_ok(|(p, b)| AlwaysUpsert(p, b)).boxed();
-    let (s, bg) = redb.streaming_upsert(s.boxed());
+    let (s, bg) = scratch.streaming_upsert(s.boxed());
     let s = s.map_ok(
         |UpsertedValue {
              upsert: AlwaysUpsert(p, b),
@@ -374,7 +375,8 @@ pub(crate) async fn mv(
     if error_count.load(Ordering::Relaxed) == 0 {
         let dst_clone = dst.clone();
         let now = Utc::now();
-        redb.stream()
+        scratch
+            .stream()
             .map_ok(move |(src, b)| {
                 stream::iter::<[Result<_, InternalError>; _]>([
                     Ok(InsertFile {
@@ -397,7 +399,8 @@ pub(crate) async fn mv(
             .await
             .inspect_err(|e| log::error!("fs::mv: db failed: {e}"))?;
 
-        redb.stream()
+        scratch
+            .stream()
             .map({
                 move |e| {
                     let root = root.clone();
@@ -514,7 +517,7 @@ pub(crate) async fn mv(
     let duration = start_time.elapsed();
     let msg = format!("{msg} in {duration:.2?}");
 
-    redb.close().await?;
+    scratch.close().await?;
     obs.lock().await.observe_termination(log::Level::Info, msg);
 
     if error_count > 0 {
