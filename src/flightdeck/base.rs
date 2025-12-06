@@ -477,6 +477,7 @@ pub enum Style {
     },
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl From<Style> for PGStyle {
     fn from(val: Style) -> Self {
         match val {
@@ -520,17 +521,20 @@ pub struct BaseLayoutBuilder {
 }
 
 impl BaseLayoutBuilder {
+    #[must_use]
     pub fn boxed(self) -> Box<dyn LayoutItemBuilder> {
         Box::new(self)
     }
 }
 
 impl BaseLayoutBuilderBuilder {
+    #[must_use]
     pub fn infallible_build(self) -> BaseLayoutBuilder {
         let Ok(build) = self.build();
         build
     }
 
+    #[must_use]
     pub fn termination_action(self, termination_action: TerminationAction) -> Self {
         Self {
             type_key: self.type_key,
@@ -541,6 +545,8 @@ impl BaseLayoutBuilderBuilder {
             style: self.style,
         }
     }
+
+    #[must_use]
     pub fn state_transformer(self, state_transformer: StateTransformer) -> Self {
         Self {
             type_key: self.type_key,
@@ -593,6 +599,7 @@ mod tests {
     use indicatif::ProgressBar;
     use std::collections::HashMap;
 
+    #[allow(clippy::indexing_slicing)]
     #[test]
     fn test_base_observable() {
         let mut observable = BaseObservable::with_id("task", "123");

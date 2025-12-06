@@ -2,6 +2,7 @@ use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{BlobID, ConnectionName};
 use crate::utils::walker;
+use log::ParseLevelError;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
@@ -66,6 +67,8 @@ pub enum InternalError {
     Tonic(#[from] tonic::transport::Error),
     #[error("grpc error: {0}")]
     Grpc(String),
+    #[error("parser level error: {0}")]
+    ParseLevel(#[from] ParseLevelError),
     #[error("db error: {0}")]
     DBError(#[from] DBError),
     #[error("I/O error: {0}")]
@@ -109,6 +112,7 @@ impl<T> From<SendError<T>> for InternalError {
 // Implement conversion from AppError to Status
 impl From<InternalError> for tonic::Status {
     fn from(error: InternalError) -> Self {
+        #[allow(clippy::wildcard_enum_match_arm)]
         match error {
             InternalError::Status(e) => e,
             _ => tonic::Status::from_error(Box::new(error)),

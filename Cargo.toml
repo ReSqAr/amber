@@ -86,3 +86,10 @@ debug = false         # Removes debug information to reduce binary size
 lto = true            # Enables Link Time Optimisation for better performance
 codegen-units = 1     # Improves optimisation by allowing the compiler to optimise across the entire crate
 panic = 'abort'       # Reduces binary size and potentially improves performance by aborting on panic
+
+[lints.clippy]
+indexing_slicing = "deny"
+fallible_impl_from = "deny"
+wildcard_enum_match_arm = "deny"
+fn_params_excessive_bools = "deny"
+must_use_candidate = "deny"

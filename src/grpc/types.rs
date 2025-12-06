@@ -7,6 +7,7 @@ use crate::grpc::definitions::{
     Repository, RepositoryName, TransferItem,
 };
 use chrono::{DateTime, TimeZone, Utc};
+use log::ParseLevelError;
 use prost_types::Timestamp;
 use std::str::FromStr;
 
@@ -160,12 +161,13 @@ impl From<models::CopiedTransferItem> for CopiedTransferItem {
     }
 }
 
-impl From<FlightdeckMessage> for flightdeck::observation::Message {
-    fn from(m: FlightdeckMessage) -> Self {
-        Self {
-            level: log::Level::from_str(&m.level).unwrap_or(log::Level::Info),
+impl TryFrom<FlightdeckMessage> for flightdeck::observation::Message {
+    type Error = ParseLevelError;
+    fn try_from(m: FlightdeckMessage) -> Result<Self, Self::Error> {
+        Ok(Self {
+            level: log::Level::from_str(&m.level)?,
             observation: m.observation.unwrap().into(),
-        }
+        })
     }
 }
 
@@ -202,6 +204,7 @@ impl From<flightdeck::observation::Observation> for FlightdeckObservation {
     }
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl From<FlightdeckData> for flightdeck::observation::Data {
     fn from(m: FlightdeckData) -> Self {
         Self {

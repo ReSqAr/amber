@@ -9,6 +9,7 @@ pub enum Output {
 }
 
 impl Output {
+    #[must_use]
     pub fn multi_progress_bar(&self) -> Option<indicatif::MultiProgress> {
         match self {
             Output::Raw => None,

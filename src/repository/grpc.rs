@@ -1,6 +1,5 @@
 use crate::db::models;
 use crate::db::models::RepoID;
-use crate::flightdeck;
 use crate::flightdeck::global::send;
 use crate::flightdeck::observation::Message;
 use crate::flightdeck::tracked::stream::Trackable;
@@ -135,7 +134,10 @@ impl GRPCClient {
             .flightdeck_messages(flightdesk_request)
             .await?
             .into_inner()
-            .map_ok(flightdeck::observation::Message::from);
+            .map(|m| {
+                m.map_err(Into::<InternalError>::into)
+                    .and_then(|m| Message::try_from(m).map_err(Into::into))
+            });
 
         let forward_handle = tokio::spawn(async move {
             while let Some(msg) = stream.next().await {

@@ -33,7 +33,12 @@ pub(crate) async fn compute_blake3_and_size(file_path: &RepoPath) -> io::Result<
         if bytes_read == 0 {
             break;
         }
-        hasher.update(&buffer[..bytes_read]);
+
+        let chunk = buffer
+            .get(..bytes_read)
+            .ok_or_else(|| io::Error::other("read beyond buffer size"))?;
+
+        hasher.update(chunk);
         size += bytes_read as u64;
         obs.observe_position(log::Level::Trace, size);
     }
