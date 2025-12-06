@@ -21,6 +21,7 @@
   * [SSH](#ssh)
   * [rclone Supported Storage: S3/Backblaze/...](#rclone-supported-storage-s3backblaze)
   * [Syncing Metadata](#syncing-metadata)
+  * [Updating gRPC bindings](#updating-grpc-bindings)
   * [I don't have any data but still want to play around with amber](#i-dont-have-any-data-but-still-want-to-play-around-with-amber)
 <!-- TOC -->
 
@@ -49,7 +50,7 @@ Built in Rust for speed and robustness, amber provides a clear and efficient way
 - You collaborate with others → _amber might be for you - conflict resolution is simply 'most recently added file wins'_
 
 Requirements are:
-- your filesystem supports hard links
+- your filesystem supports hard links or ref links
 - you have `rclone` installed
 - you understand that amber sets your files read-only to protect the files' integrity. Do not interfere  
 
@@ -81,7 +82,7 @@ amber push external
 ```
 ![external_drive.gif](docs/res/external_drive.gif)
 
-You'll find that after the you run the push command,
+You'll find that after you run the push command,
 the external disk doesn't show any files.
 In this case just run `amber sync` to materialise all available files.
 
@@ -99,7 +100,7 @@ amber remote add medina ssh holden@tycho.com:22/home/holden
 amber push medina
 ```
 
-You'll find that after the you run the push command,
+You'll find that after thyou run the push command,
 the SSH remote doesn't show any files in the directory.
 In this case just run `amber sync` to materialise all available files.
 
