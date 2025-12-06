@@ -13,6 +13,8 @@ use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
+type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Offset(pub(crate) u64);
 
@@ -85,7 +87,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn current_watermark(&self) -> Result<Option<Offset>, Error> {
+    fn current_watermark(&self) -> Result<Option<Offset>> {
         self.watermark
             .read()
             .map(|g| *g)
@@ -153,7 +155,7 @@ fn make_options() -> Options {
     // Dynamic level bytes works well for most workloads
     opts.set_level_compaction_dynamic_level_bytes(true);
 
-    // Memtable / write buffers (see next section)
+    // Memtable / write buffers
     opts.set_write_buffer_size(64 * 1024 * 1024);
     opts.set_max_write_buffer_number(3);
     opts.set_min_write_buffer_number_to_merge(1);
@@ -168,11 +170,32 @@ fn make_options() -> Options {
     opts
 }
 
+fn offset_to_key(offset: u64) -> [u8; 8] {
+    offset.to_be_bytes()
+}
+
+fn offset_from_key(key: &[u8]) -> Result<Offset> {
+    if key.len() != 8 {
+        return Err(Error::KeyConversion);
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(key);
+    Ok(Offset(u64::from_be_bytes(buf)))
+}
+
+fn max_offset_from_db(db: &DB) -> Result<Option<Offset>> {
+    let mut iter = db.iterator(IteratorMode::End);
+    iter.next()
+        .transpose()?
+        .map(|(k, _)| offset_from_key(&k))
+        .transpose()
+}
+
 impl<V> Writer<V>
 where
     V: Serialize + DeserializeOwned + Send + 'static,
 {
-    pub fn open(path: PathBuf) -> Result<Self, Error> {
+    pub fn open(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -180,26 +203,13 @@ where
         let opts = make_options();
         let db = DB::open(&opts, &path)?;
 
-        let max_offset: Option<Offset> = {
-            let mut iter = db.iterator(IteratorMode::End);
-            if let Some(row) = iter.next() {
-                let (k, _) = row?;
-                if k.len() == 8 {
-                    let mut buf = [0u8; 8];
-                    buf.copy_from_slice(&k);
-                    Some(Offset(u64::from_be_bytes(buf)))
-                } else {
-                    return Err(Error::KeyConversion);
-                }
-            } else {
-                None
-            }
-        };
+        let max_offset = max_offset_from_db(&db)?;
 
-        let next_offset = match max_offset {
-            Some(o) => AtomicU64::new(o.0 + 1),
-            None => AtomicU64::new(0),
-        };
+        let next_offset = AtomicU64::new(match max_offset {
+            Some(o) => o.0.saturating_add(1),
+            None => 0,
+        });
+
         let watermark = RwLock::new(max_offset);
         let (watermark_tx, _) = watch::channel(max_offset);
 
@@ -218,7 +228,7 @@ where
         })
     }
 
-    pub fn watermark(&self) -> Result<Option<Offset>, Error> {
+    pub fn watermark(&self) -> Result<Option<Offset>> {
         self.inner.current_watermark()
     }
 
@@ -229,7 +239,7 @@ where
         }
     }
 
-    pub fn transaction(&self) -> Result<Transaction<V>, Error> {
+    pub fn transaction(&self) -> Result<Transaction<V>> {
         let mut guard = self.inner.active_tx.write().map_err(|_| Error::Poisoned)?;
 
         if *guard {
@@ -251,7 +261,7 @@ impl<V> Transaction<V>
 where
     V: Serialize + DeserializeOwned + Send + 'static,
 {
-    pub fn put(&mut self, v: &V) -> Result<(), Error> {
+    pub fn put(&mut self, v: &V) -> Result<()> {
         if self.closed {
             return Err(Error::ClosedTransaction);
         }
@@ -259,7 +269,7 @@ where
         let offset_u64 = self.inner.next_offset.fetch_add(1, Ordering::SeqCst);
         let offset = Offset(offset_u64);
 
-        let key = offset_u64.to_be_bytes();
+        let key = offset_to_key(offset_u64);
         let bytes = bincode::serialize(v)?;
 
         self.inner.db.put(key, &bytes)?;
@@ -268,11 +278,11 @@ where
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<Option<Offset>, Error> {
+    pub fn flush(&mut self) -> Result<Option<Offset>> {
         self.persist_and_publish()
     }
 
-    pub fn close(mut self) -> Result<Option<Offset>, Error> {
+    pub fn close(mut self) -> Result<Option<Offset>> {
         let res = self.persist_and_publish();
         self.closed = true;
 
@@ -289,7 +299,7 @@ where
         res
     }
 
-    fn persist_and_publish(&mut self) -> Result<Option<Offset>, Error> {
+    fn persist_and_publish(&mut self) -> Result<Option<Offset>> {
         let Some(offset) = self.last_offset else {
             return Ok(None); // nothing written in this tx
         };
@@ -307,13 +317,10 @@ where
         Ok(Some(offset))
     }
 
-    pub fn tail(
-        &self,
-        from: impl Into<TailFrom>,
-    ) -> BoxStream<'static, Result<(Offset, V), Error>> {
+    pub fn tail(&self, from: impl Into<TailFrom>) -> BoxStream<'static, Result<(Offset, V)>> {
         let db = Arc::clone(&self.inner.db);
         let mut watermark_rx = self.inner.watermark_tx.subscribe();
-        let (tx, rx) = mpsc::channel::<Result<(Offset, V), Error>>(128);
+        let (tx, rx) = mpsc::channel::<Result<(Offset, V)>>(128);
 
         let watermark_snapshot = self.inner.current_watermark().ok().flatten();
 
@@ -322,7 +329,7 @@ where
             TailFrom::Offset(o) => (o, true),
             TailFrom::Head => {
                 let start = watermark_snapshot
-                    .map(|w| w.increment())
+                    .map(Offset::increment)
                     .unwrap_or_else(Offset::start);
                 (start, false)
             }
@@ -342,17 +349,15 @@ where
                 && let Some(wm) = watermark_snapshot
                 && wm.0 >= next.0
             {
-                let db_cl = db.clone();
-                let tx_cl = tx.clone();
-                let from_local = next;
-                let to_local = wm;
-
-                if let Err(join_err) = tokio::task::spawn_blocking(move || {
-                    pump_range_blocking::<V>(db_cl, from_local, to_local, tx_cl);
+                if let Err(join_err) = tokio::task::spawn_blocking({
+                    let db = db.clone();
+                    let tx = tx.clone();
+                    move || pump_range_blocking::<V>(db, next, wm, tx)
                 })
                 .await
                 {
-                    panic!("spawn_blocking failed: {:?}", join_err);
+                    eprintln!("tail initial snapshot join error: {join_err:?}");
+                    return;
                 }
 
                 next = wm.increment();
@@ -365,18 +370,14 @@ where
                     _ = &mut cancel_rx => {
                         // Final drain up to *current* watermark, then exit.
                         let new_wm = *watermark_rx.borrow();
-                        if let Some(wm) = new_wm && wm.0 >= next.0 {
-                            let db_cl = db.clone();
-                            let tx_cl = tx.clone();
-                            let from_local = next;
-                            let to_local = wm;
-
-                            if let Err(join_err) = tokio::task::spawn_blocking(move || {
-                                pump_range_blocking::<V>(db_cl, from_local, to_local, tx_cl);
-                            }).await {
-                                panic!("spawn_blocking failed: {:?}", join_err);
+                        if let Some(wm) = new_wm && wm.0 >= next.0 &&
+                            let Err(join_err) = tokio::task::spawn_blocking({
+                                    let db = db.clone();
+                                    let tx = tx.clone();
+                                    move || pump_range_blocking::<V>(db, next, wm, tx)
+                               }).await {
+                                eprintln!("tail final drain join error: {join_err:?}");
                             }
-                        }
                         break;
                     }
 
@@ -388,24 +389,22 @@ where
                         }
 
                         let new_wm = *watermark_rx.borrow();
-                        if let Some(wm) = new_wm {
-                            if wm.0 < next.0 {
-                                continue;
-                            }
+                        let Some(wm) = new_wm else { continue };
 
-                            let db_cl = db.clone();
-                            let tx_cl = tx.clone();
-                            let from_local = next;
-                            let to_local = wm;
-
-                            if let Err(join_err) = tokio::task::spawn_blocking(move || {
-                                pump_range_blocking::<V>(db_cl, from_local, to_local, tx_cl);
-                            }).await {
-                                panic!("spawn_blocking failed: {:?}", join_err);
-                            }
-
-                            next = wm.increment();
+                        if wm.0 < next.0 {
+                            continue;
                         }
+
+                        if let Err(join_err) = tokio::task::spawn_blocking({
+                            let db = db.clone();
+                            let tx = tx.clone();
+                            move || pump_range_blocking::<V>(db, next, wm, tx)
+                        }).await {
+                            eprintln!("tail live join error: {join_err:?}");
+                            break;
+                        }
+
+                        next = wm.increment();
                     }
                 }
             }
@@ -420,10 +419,11 @@ impl<V> Reader<V>
 where
     V: DeserializeOwned + Send + 'static,
 {
-    pub fn watermark(&self) -> Result<Option<Offset>, Error> {
+    pub fn watermark(&self) -> Result<Option<Offset>> {
         self.inner.current_watermark()
     }
-    pub fn from(&self, from: Offset) -> BoxStream<'static, Result<(Offset, V), Error>> {
+
+    pub fn from(&self, from: Offset) -> BoxStream<'static, Result<(Offset, V)>> {
         let upper = match self.inner.current_watermark() {
             Ok(Some(w)) if from.0 <= w.0 => w,
             Ok(Some(_)) | Ok(None) => return stream::empty().boxed(),
@@ -431,7 +431,7 @@ where
         };
 
         let db = Arc::clone(&self.inner.db);
-        let (tx, rx) = mpsc::channel::<Result<(Offset, V), Error>>(128);
+        let (tx, rx) = mpsc::channel::<Result<(Offset, V)>>(128);
 
         tokio::task::spawn_blocking(move || {
             pump_range_blocking::<V>(db, from, upper, tx);
@@ -445,11 +445,11 @@ fn pump_range_blocking<V>(
     db: Arc<DB>,
     from: Offset,
     to: Offset,
-    tx: mpsc::Sender<Result<(Offset, V), Error>>,
+    tx: mpsc::Sender<Result<(Offset, V)>>,
 ) where
     V: DeserializeOwned + Send + 'static,
 {
-    let start_key = from.0.to_be_bytes();
+    let start_key = offset_to_key(from.0);
     let iter = db.iterator(IteratorMode::From(&start_key, Direction::Forward));
 
     for row in iter {
@@ -461,34 +461,32 @@ fn pump_range_blocking<V>(
             }
         };
 
-        if k.len() != 8 {
-            let _ = tx.blocking_send(Err(Error::KeyConversion));
-            break;
-        }
+        let off = match offset_from_key(&k) {
+            Ok(off) => off,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(e));
+                break;
+            }
+        };
 
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&k);
-        let off_u64 = u64::from_be_bytes(buf);
-
-        if off_u64 < from.0 {
+        if off.0 < from.0 {
             continue;
         }
-        if off_u64 > to.0 {
+        if off.0 > to.0 {
             break;
         }
 
         let value = match bincode::deserialize::<V>(&v) {
             Ok(v) => v,
             Err(e) => {
-                if let Err(send_err) = tx.blocking_send(Err(Error::Serde(e))) {
-                    panic!("send error: {:?}", send_err);
-                }
+                let _ = tx.blocking_send(Err(Error::Serde(e)));
                 break;
             }
         };
 
-        if let Err(send_err) = tx.blocking_send(Ok((Offset(off_u64), value))) {
-            panic!("send error: {:?}", send_err);
+        if tx.blocking_send(Ok((off, value))).is_err() {
+            // Receiver dropped; nothing more to do.
+            break;
         }
     }
     // tx dropped by caller when stream ends.
