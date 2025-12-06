@@ -188,9 +188,7 @@ pub(crate) async fn rm(
                                                 log::Level::Error,
                                                 format!("remove failed: {e}"),
                                             );
-                                            return Ok::<_, InternalError>(
-                                                stream::iter([]).boxed(),
-                                            );
+                                            return Ok::<_, InternalError>(stream::empty().boxed());
                                         }
                                         o.observe_termination(log::Level::Info, "removed");
                                         materialised_count.fetch_add(1, Ordering::Relaxed);
@@ -217,7 +215,7 @@ pub(crate) async fn rm(
                                     log::Level::Info,
                                     "removed (not materialised)",
                                 );
-                                Ok(stream::iter([]).boxed())
+                                Ok(stream::empty().boxed())
                             }
                         }
                     }
@@ -431,7 +429,7 @@ pub(crate) async fn mv(
                                 ),
                             );
 
-                            return Ok::<_, InternalError>(stream::iter([]).boxed());
+                            return Ok::<_, InternalError>(stream::empty().boxed());
                         }
 
                         let count = virtual_count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -480,7 +478,7 @@ pub(crate) async fn mv(
                             .boxed())
                         } else {
                             o.observe_termination(log::Level::Info, "moved (not materialised)");
-                            Ok(stream::iter([]).boxed())
+                            Ok(stream::empty().boxed())
                         }
                     }
                 }

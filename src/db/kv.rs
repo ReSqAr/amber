@@ -195,55 +195,52 @@ impl KVStores {
         let tracer = Tracer::new_on("KVStores::new");
 
         let known_blob_uids = KVStore::new(
-            base_path.join("known_blob_uids.rocksdb"),
+            base_path.join("known_blob_uids.kv"),
             "known_blob_uids".to_string(),
         );
         let known_file_uids = KVStore::new(
-            base_path.join("known_file_uids.rocksdb"),
+            base_path.join("known_file_uids.kv"),
             "known_file_uids".to_string(),
         );
         let known_repository_name_uids = KVStore::new(
-            base_path.join("known_repository_name_uids.rocksdb"),
+            base_path.join("known_repository_name_uids.kv"),
             "known_repository_name_uids".to_string(),
         );
         let current_blobs = KVStore::new(
-            base_path.join("current_blobs.rocksdb"),
+            base_path.join("current_blobs.kv"),
             "current_blobs".to_string(),
         );
         let current_files = KVStore::new(
-            base_path.join("current_files.rocksdb"),
+            base_path.join("current_files.kv"),
             "current_files".to_string(),
         );
         let current_materialisations = KVStore::new(
-            base_path.join("current_materialisations.rocksdb"),
+            base_path.join("current_materialisations.kv"),
             "current_materialisations".to_string(),
         );
         let current_repository_names = KVStore::new(
-            base_path.join("current_repository_names.rocksdb"),
+            base_path.join("current_repository_names.kv"),
             "current_repository_names".to_string(),
         );
         let current_observations = KVStore::new(
-            base_path.join("current_observations.rocksdb"),
+            base_path.join("current_observations.kv"),
             "current_observations".to_string(),
         );
         let current_checks = KVStore::new(
-            base_path.join("current_checks.rocksdb"),
+            base_path.join("current_checks.kv"),
             "current_checks".to_string(),
         );
         let current_repository = KVStore::new(
-            base_path.join("current_repository.rocksdb"),
+            base_path.join("current_repository.kv"),
             "current_repository".to_string(),
         );
         let repositories = KVStore::new(
-            base_path.join("repositories.rocksdb"),
+            base_path.join("repositories.kv"),
             "repositories".to_string(),
         );
-        let connections = KVStore::new(
-            base_path.join("connections.rocksdb"),
-            "connections".to_string(),
-        );
+        let connections = KVStore::new(base_path.join("connections.kv"), "connections".to_string());
         let current_reductions = KVStore::new(
-            base_path.join("current_reductions.rocksdb"),
+            base_path.join("current_reductions.kv"),
             "current_reductions".to_string(),
         );
 

@@ -14,7 +14,6 @@ async-stream = "0.3"
 async-trait = "0.1"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22"
-behemoth = { git = "https://github.com/ReSqAr/behemoth.git", version = "0.1.0", rev = "f4fce492937baa6e869534b2f179072af930396b" }
 bincode = "1.3"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
