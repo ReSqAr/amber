@@ -96,6 +96,7 @@ dependencies = [
  "indicatif",
  "indicatif-log-bridge",
  "log",
+ "num_cpus",
  "once_cell",
  "owo-colors",
  "parking_lot",
