@@ -1,6 +1,8 @@
 use crate::db::error::DBError;
 use crate::db::kv::KVStores;
 use crate::db::logs::Logs;
+use crate::db::logstore;
+use crate::db::logstore::{Offset, TailFrom};
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobRef, BlobTransferItem, Connection,
     ConnectionName, CurrentBlob, CurrentFile, CurrentRepository, File, FileCheck, FileSeen,
@@ -13,7 +15,6 @@ use crate::flightdeck::tracer::Tracer;
 use crate::flightdeck::tracked::mpsc_channel;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::stream::group_by_key;
-use behemoth::{Offset, StreamError, TailFrom};
 use chrono::Utc;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt, stream};
@@ -23,6 +24,7 @@ use std::fmt::Debug;
 use std::future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use tokio::task;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -143,7 +145,8 @@ impl Database {
 
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.files_writer.transaction()?;
+        let writer = self.logs.files_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn.tail(TailFrom::Head).track("add_files::log_stream");
         let bg = self.file_log_stream(tail.boxed());
 
@@ -155,20 +158,21 @@ impl Database {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
             tracer_push.on();
-            txn.push(&File {
-                uid,
-                path: file.path.clone(),
-                blob_id: file.blob_id.clone(),
-                valid_from: file.valid_from,
+            task::block_in_place(|| {
+                txn.put(&File {
+                    uid,
+                    path: file.path.clone(),
+                    blob_id: file.blob_id.clone(),
+                    valid_from: file.valid_from,
+                })
             })
-            .await
             .inspect_err(|e| log::error!("Database::add_files failed to add log: {e}"))?;
             tracer_push.off();
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
                 tracer_flush.on();
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
                 tracer_flush.off();
             }
         }
@@ -176,7 +180,7 @@ impl Database {
         tracer_flush.measure();
 
         let tracer_commit = Tracer::new_on("Database::add_files::commit");
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
         tracer_commit.measure();
 
@@ -193,7 +197,8 @@ impl Database {
 
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.blobs_writer.transaction()?;
+        let writer = self.logs.blobs_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn.tail(TailFrom::Head).track("add_blobs::log_stream");
         let bg = self.blob_log_stream(tail.boxed());
 
@@ -205,23 +210,24 @@ impl Database {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
             tracer_push.on();
-            txn.push(&Blob {
-                uid,
-                repo_id: blob.repo_id.clone(),
-                blob_id: blob.blob_id.clone(),
-                blob_size: blob.blob_size,
-                has_blob: blob.has_blob,
-                path: blob.path.clone(),
-                valid_from: blob.valid_from,
+            task::block_in_place(|| {
+                txn.put(&Blob {
+                    uid,
+                    repo_id: blob.repo_id.clone(),
+                    blob_id: blob.blob_id.clone(),
+                    blob_size: blob.blob_size,
+                    has_blob: blob.has_blob,
+                    path: blob.path.clone(),
+                    valid_from: blob.valid_from,
+                })
             })
-            .await
             .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
             tracer_push.off();
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
                 tracer_flush.on();
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
                 tracer_flush.off();
             }
         }
@@ -229,7 +235,7 @@ impl Database {
         tracer_flush.measure();
 
         let tracer_commit = Tracer::new_on("Database::add_blobs::commit");
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
         tracer_commit.measure();
 
@@ -250,9 +256,12 @@ impl Database {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
 
-        let blob_txn = self.logs.blobs_writer.transaction()?;
-        let file_txn = self.logs.files_writer.transaction()?;
-        let mat_txn = self.logs.materialisations_writer.transaction()?;
+        let b_writer = self.logs.blobs_writer.clone();
+        let f_writer = self.logs.files_writer.clone();
+        let m_writer = self.logs.materialisations_writer.clone();
+        let mut blob_txn = task::spawn_blocking(move || b_writer.transaction()).await??;
+        let mut file_txn = task::spawn_blocking(move || f_writer.transaction()).await??;
+        let mut mat_txn = task::spawn_blocking(move || m_writer.transaction()).await??;
 
         let blob_tail = blob_txn
             .tail(TailFrom::Head)
@@ -284,25 +293,19 @@ impl Database {
             let uid = (ts + (i as u64)).into();
 
             tracer_b.on();
-            blob_txn
-                .push(&Blob::from_insert_blob(blob, uid))
-                .await
-                .inspect_err(|e| {
-                    log::error!("Database::add_file_bundles failed to add blob log: {e}")
-                })?;
+            task::block_in_place(|| blob_txn.put(&Blob::from_insert_blob(blob, uid))).inspect_err(
+                |e| log::error!("Database::add_file_bundles failed to add blob log: {e}"),
+            )?;
             tracer_b.off();
 
             tracer_f.on();
-            file_txn
-                .push(&File::from_insert_file(file, uid))
-                .await
-                .inspect_err(|e| {
-                    log::error!("Database::add_file_bundles failed to add file log: {e}")
-                })?;
+            task::block_in_place(|| file_txn.put(&File::from_insert_file(file, uid))).inspect_err(
+                |e| log::error!("Database::add_file_bundles failed to add file log: {e}"),
+            )?;
             tracer_f.off();
 
             tracer_m.on();
-            mat_txn.push(&materialisation).await.inspect_err(|e| {
+            task::block_in_place(|| mat_txn.put(&materialisation)).inspect_err(|e| {
                 log::error!("Database::add_file_bundles failed to add materialisation log: {e}")
             })?;
             tracer_m.off();
@@ -312,15 +315,15 @@ impl Database {
             if i % self.logs.flush_size == 0 && i > 0 {
                 // in this order
                 tracer_b.on();
-                blob_txn.flush().await?;
+                task::block_in_place(|| blob_txn.flush())?;
                 tracer_b.off();
 
                 tracer_f.on();
-                file_txn.flush().await?;
+                task::block_in_place(|| file_txn.flush())?;
                 tracer_f.off();
 
                 tracer_m.on();
-                mat_txn.flush().await?;
+                task::block_in_place(|| mat_txn.flush())?;
                 tracer_m.off();
             }
         }
@@ -332,19 +335,19 @@ impl Database {
         // in this order
         {
             let tracer = Tracer::new_on("add_file_bundles::blob_txn::close");
-            blob_txn.close().await?;
+            task::block_in_place(|| blob_txn.close())?;
             tracer.measure();
         }
 
         {
             let tracer = Tracer::new_on("add_file_bundles::file_txn::close");
-            file_txn.close().await?;
+            task::block_in_place(|| file_txn.close())?;
             tracer.measure();
         }
 
         {
             let tracer = Tracer::new_on("add_file_bundles::mat_txn::close");
-            mat_txn.close().await?;
+            task::block_in_place(|| mat_txn.close())?;
             tracer.measure();
         }
 
@@ -383,7 +386,8 @@ impl Database {
 
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.repository_names_writer.transaction()?;
+        let writer = self.logs.repository_names_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn
             .tail(TailFrom::Head)
             .track("add_repository_names::log_stream");
@@ -397,13 +401,14 @@ impl Database {
             total_attempted += 1;
             let uid = (ts + (i as u64)).into();
             tracer_push.on();
-            txn.push(&RepositoryName {
-                uid,
-                repo_id: blob.repo_id.clone(),
-                name: blob.name.clone(),
-                valid_from: blob.valid_from,
+            task::block_in_place(|| {
+                txn.put(&RepositoryName {
+                    uid,
+                    repo_id: blob.repo_id.clone(),
+                    name: blob.name.clone(),
+                    valid_from: blob.valid_from,
+                })
             })
-            .await
             .inspect_err(|e| {
                 log::error!("Database::add_repository_names failed to add log: {e}")
             })?;
@@ -412,7 +417,7 @@ impl Database {
 
             if i % self.logs.flush_size == 0 {
                 tracer_flush.on();
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
                 tracer_flush.off();
             }
         }
@@ -420,7 +425,7 @@ impl Database {
         tracer_flush.measure();
 
         let tracer_commit = Tracer::new_on("Database::add_repository_names::commit");
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
         tracer_commit.measure();
 
@@ -449,7 +454,10 @@ impl Database {
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<File, DBError>> {
         let reader = self.logs.files_writer.reader();
-        let watermark = reader.snapshot_watermark();
+        let watermark = match reader.watermark() {
+            Ok(w) => w,
+            Err(e) => return stream::iter([Err(e.into())]).boxed(),
+        };
         let from = Self::next_offset(last_index);
         reader
             .from(from)
@@ -473,7 +481,10 @@ impl Database {
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<Blob, DBError>> {
         let reader = self.logs.blobs_writer.reader();
-        let watermark = reader.snapshot_watermark();
+        let watermark = match reader.watermark() {
+            Ok(w) => w,
+            Err(e) => return stream::iter([Err(e.into())]).boxed(),
+        };
         let from = Self::next_offset(last_index);
         reader
             .from(from)
@@ -497,7 +508,10 @@ impl Database {
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<RepositoryName, DBError>> {
         let reader = self.logs.repository_names_writer.reader();
-        let watermark = reader.snapshot_watermark();
+        let watermark = match reader.watermark() {
+            Ok(w) => w,
+            Err(e) => return stream::iter([Err(e.into())]).boxed(),
+        };
         let from = Self::next_offset(last_index);
         reader
             .from(from)
@@ -524,7 +538,8 @@ impl Database {
     pub async fn merge_files(&self, s: BoxStream<'static, File>) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.files_writer.transaction()?;
+        let writer = self.logs.files_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn.tail(TailFrom::Head).track("merge_files::log_stream");
         let bg = self.file_log_stream(tail.boxed());
 
@@ -537,17 +552,16 @@ impl Database {
             let (file, is_known) = file?;
             total_attempted += 1;
             if is_known.is_none() {
-                txn.push(&file)
-                    .await
+                task::block_in_place(|| txn.put(&file))
                     .inspect_err(|e| log::error!("Database::merge_files failed to add log: {e}"))?;
                 total_inserted += 1;
             }
             if i % self.logs.flush_size == 0 {
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
             }
         }
 
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
 
         debug!(
@@ -560,7 +574,8 @@ impl Database {
     pub async fn merge_blobs(&self, s: BoxStream<'static, Blob>) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.blobs_writer.transaction()?;
+        let writer = self.logs.blobs_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn.tail(TailFrom::Head).track("merge_blobs::log_stream");
         let bg = self.blob_log_stream(tail.boxed());
 
@@ -573,17 +588,16 @@ impl Database {
             let (blob, is_known) = blob?;
             total_attempted += 1;
             if is_known.is_none() {
-                txn.push(&blob)
-                    .await
+                task::block_in_place(|| txn.put(&blob))
                     .inspect_err(|e| log::error!("Database::merge_blobs failed to add log: {e}"))?;
                 total_inserted += 1;
             }
             if i % self.logs.flush_size == 0 {
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
             }
         }
 
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
 
         debug!(
@@ -599,7 +613,8 @@ impl Database {
     ) -> Result<(), DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.repository_names_writer.transaction()?;
+        let writer = self.logs.repository_names_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn
             .tail(TailFrom::Head)
             .track("merge_repository_names::log_stream");
@@ -614,17 +629,17 @@ impl Database {
             let (repository_name, is_known) = repository_name?;
             total_attempted += 1;
             if is_known.is_none() {
-                txn.push(&repository_name).await.inspect_err(|e| {
+                task::block_in_place(|| txn.put(&repository_name)).inspect_err(|e| {
                     log::error!("Database::merge_repository_names failed to add log: {e}")
                 })?;
                 total_inserted += 1;
             }
             if i % self.logs.flush_size == 0 {
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
             }
         }
 
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
 
         debug!(
@@ -659,9 +674,9 @@ impl Database {
 
     pub async fn update_last_indices(&self) -> Result<(), DBError> {
         let tracer = Tracer::new_on("Database::update_last_indices");
-        let last_file_index = self.logs.files_writer.watermark();
-        let last_blob_index = self.logs.blobs_writer.watermark();
-        let last_name_index = self.logs.repository_names_writer.watermark();
+        let last_file_index = self.logs.files_writer.watermark()?;
+        let last_blob_index = self.logs.blobs_writer.watermark()?;
+        let last_name_index = self.logs.repository_names_writer.watermark()?;
         self.kv
             .apply_repositories(
                 stream::iter([Ok(Repository {
@@ -783,7 +798,8 @@ impl Database {
     ) -> Result<u64, DBError> {
         let mut total_attempted: u64 = 0;
         let mut total_inserted: u64 = 0;
-        let txn = self.logs.materialisations_writer.transaction()?;
+        let writer = self.logs.materialisations_writer.clone();
+        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
         let tail = txn
             .tail(TailFrom::Head)
             .track("add_materialisations::log_stream");
@@ -792,17 +808,17 @@ impl Database {
         let mut s = s.enumerate();
         while let Some((i, mat)) = s.next().await {
             total_attempted += 1;
-            txn.push(&mat).await.inspect_err(|e| {
+            task::block_in_place(|| txn.put(&mat)).inspect_err(|e| {
                 log::error!("Database::add_materialisations failed to add log: {e}")
             })?;
             total_inserted += 1;
 
             if i % self.logs.flush_size == 0 {
-                txn.flush().await?;
+                task::block_in_place(|| txn.flush())?;
             }
         }
 
-        txn.close().await?;
+        task::block_in_place(|| txn.close())?;
         bg.await??;
 
         debug!(
@@ -1092,7 +1108,7 @@ impl Database {
 
     fn blob_log_stream(
         &self,
-        s: BoxStream<'static, Result<(Offset, Blob), StreamError>>,
+        s: BoxStream<'static, Result<(Offset, Blob), logstore::Error>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1104,7 +1120,7 @@ impl Database {
 
             let counter_clone = counter.clone();
             let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::then(s, move |e: Result<(Offset, Blob), StreamError>| {
+            let s = TokioStreamExt::then(s, move |e: Result<(Offset, Blob), logstore::Error>| {
                 let uid_tx = uid_tx.clone();
                 let counter_clone = counter_clone.clone();
                 let max_offset_clone = max_offset_clone.clone();
@@ -1144,7 +1160,7 @@ impl Database {
 
     fn file_log_stream(
         &self,
-        s: BoxStream<'static, Result<(Offset, File), StreamError>>,
+        s: BoxStream<'static, Result<(Offset, File), logstore::Error>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1156,7 +1172,7 @@ impl Database {
 
             let counter_clone = counter.clone();
             let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::then(s, move |e: Result<(Offset, File), StreamError>| {
+            let s = TokioStreamExt::then(s, move |e: Result<(Offset, File), logstore::Error>| {
                 let uid_tx = uid_tx.clone();
                 let counter_clone = counter_clone.clone();
                 let max_offset_clone = max_offset_clone.clone();
@@ -1196,7 +1212,7 @@ impl Database {
 
     fn materialisation_log_stream(
         &self,
-        s: BoxStream<'static, Result<(Offset, InsertMaterialisation), StreamError>>,
+        s: BoxStream<'static, Result<(Offset, InsertMaterialisation), logstore::Error>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1235,7 +1251,7 @@ impl Database {
 
     fn repository_name_log_stream(
         &self,
-        s: BoxStream<'static, Result<(Offset, RepositoryName), StreamError>>,
+        s: BoxStream<'static, Result<(Offset, RepositoryName), logstore::Error>>,
     ) -> JoinHandle<Result<usize, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -1249,7 +1265,7 @@ impl Database {
             let max_offset_clone = max_offset.clone();
             let s = TokioStreamExt::then(
                 s,
-                move |e: Result<(Offset, RepositoryName), StreamError>| {
+                move |e: Result<(Offset, RepositoryName), logstore::Error>| {
                     let uid_tx = uid_tx.clone();
                     let counter_clone = counter_clone.clone();
                     let max_offset_clone = max_offset_clone.clone();

@@ -1,3 +1,4 @@
+use crate::db::logstore;
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
@@ -136,14 +137,14 @@ impl From<&'static str> for TableName {
 )]
 pub struct LogOffset(pub(crate) u64);
 
-impl From<LogOffset> for behemoth::Offset {
+impl From<LogOffset> for logstore::Offset {
     fn from(o: LogOffset) -> Self {
         o.0.into()
     }
 }
 
-impl From<behemoth::Offset> for LogOffset {
-    fn from(o: behemoth::Offset) -> Self {
+impl From<logstore::Offset> for LogOffset {
+    fn from(o: logstore::Offset) -> Self {
         Self(o.into())
     }
 }

@@ -1,64 +1,46 @@
 use crate::db::error::DBError;
+use crate::db::logstore;
 use crate::db::models::{Blob, File, InsertMaterialisation, RepositoryName};
 use crate::flightdeck::tracer::Tracer;
-use behemoth::{AsyncStreamWriter, Compression, SerdeBincode, StreamConfig};
-use std::path::Path;
+use std::path::PathBuf;
+use tokio::task;
 
 #[derive(Clone)]
 pub(crate) struct Logs {
-    pub(crate) blobs_writer: AsyncStreamWriter<SerdeBincode<Blob>>,
-    pub(crate) files_writer: AsyncStreamWriter<SerdeBincode<File>>,
-    pub(crate) materialisations_writer: AsyncStreamWriter<SerdeBincode<InsertMaterialisation>>,
-    pub(crate) repository_names_writer: AsyncStreamWriter<SerdeBincode<RepositoryName>>,
+    pub(crate) blobs_writer: logstore::Writer<Blob>,
+    pub(crate) files_writer: logstore::Writer<File>,
+    pub(crate) materialisations_writer: logstore::Writer<InsertMaterialisation>,
+    pub(crate) repository_names_writer: logstore::Writer<RepositoryName>,
     pub(crate) flush_size: usize,
 }
 
 impl Logs {
-    pub(crate) async fn new(path: &Path) -> Result<Self, DBError> {
+    pub(crate) async fn new(base_path: PathBuf) -> Result<Self, DBError> {
         let tracer = Tracer::new_on("Logs::open");
 
-        let blobs_cfg = StreamConfig::builder(path.join("log/blobs"))
-            .compression(Compression::Zstd { level: 3 })
-            .build();
-        let blobs_writer =
-            AsyncStreamWriter::<SerdeBincode<Blob>>::open(blobs_cfg, SerdeBincode::new());
+        let b_path = base_path.join("blobs.log");
+        let b_writer = task::spawn_blocking(move || logstore::Writer::<Blob>::open(b_path));
 
-        let files_cfg = StreamConfig::builder(path.join("log/files"))
-            .compression(Compression::Zstd { level: 3 })
-            .build();
-        let files_writer =
-            AsyncStreamWriter::<SerdeBincode<File>>::open(files_cfg, SerdeBincode::new());
+        let f_path = base_path.join("files.log");
+        let f_writer = task::spawn_blocking(move || logstore::Writer::<File>::open(f_path));
 
-        let materialisations_cfg = StreamConfig::builder(path.join("log/materialisations"))
-            .compression(Compression::Zstd { level: 3 })
-            .build();
-        let materialisations_writer =
-            AsyncStreamWriter::<SerdeBincode<InsertMaterialisation>>::open(
-                materialisations_cfg,
-                SerdeBincode::new(),
-            );
+        let m_path = base_path.join("materialisations.log");
+        let m_writer =
+            task::spawn_blocking(move || logstore::Writer::<InsertMaterialisation>::open(m_path));
 
-        let repository_names_cfg = StreamConfig::builder(path.join("log/repository_names"))
-            .compression(Compression::Zstd { level: 3 })
-            .build();
-        let repository_names_writer = AsyncStreamWriter::<SerdeBincode<RepositoryName>>::open(
-            repository_names_cfg,
-            SerdeBincode::new(),
-        );
+        let rn_path = base_path.join("repository_names.log");
+        let rn_writer =
+            task::spawn_blocking(move || logstore::Writer::<RepositoryName>::open(rn_path));
 
-        let (blobs_writer, files_writer, materialisations_writer, repository_names_writer) = tokio::try_join!(
-            blobs_writer,
-            files_writer,
-            materialisations_writer,
-            repository_names_writer,
-        )?;
+        let (b_writer, f_writer, m_writer, rn_writer) =
+            tokio::try_join!(b_writer, f_writer, m_writer, rn_writer)?;
         tracer.measure();
 
         Ok(Self {
-            blobs_writer,
-            files_writer,
-            materialisations_writer,
-            repository_names_writer,
+            blobs_writer: b_writer?,
+            files_writer: f_writer?,
+            materialisations_writer: m_writer?,
+            repository_names_writer: rn_writer?,
             flush_size: 10000,
         })
     }
