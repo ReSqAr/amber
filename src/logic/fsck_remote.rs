@@ -17,7 +17,6 @@ use crate::utils::rclone::{
 use crate::utils::units;
 use chrono::{DateTime, Utc};
 use rand::Rng;
-use redb::TableDefinition;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,9 +49,9 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
-    let redb = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
-        fsck_path.join("scratch.redb").abs().to_owned(),
-        TableDefinition::new("scratch"),
+    let scratch = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
+        fsck_path.join("scratch.rocksdb").abs().to_owned(),
+        "scratch".to_string(),
     )
     .await?;
     let rclone_source =
@@ -126,7 +125,7 @@ pub(crate) async fn fsck_remote(
         );
         let stream = StreamExt::filter_map(stream, Result::transpose);
         let stream = StreamExt::map(stream, |e| e.map(|(p, s)| (p, Some(s))));
-        redb.apply(futures::StreamExt::boxed(stream)).await?;
+        scratch.apply(futures::StreamExt::boxed(stream)).await?;
 
         writing_task.await??;
 
@@ -170,7 +169,7 @@ pub(crate) async fn fsck_remote(
                 })
             }
         });
-        let s = redb
+        let s = scratch
             .left_join::<_, _, InternalError>(futures::StreamExt::boxed(s), |e: ObservedBlob| {
                 e.path
             });
@@ -192,7 +191,7 @@ pub(crate) async fn fsck_remote(
         })
         .await?;
 
-        redb.close().await?;
+        scratch.close().await?;
 
         Ok::<(), InternalError>(())
     });

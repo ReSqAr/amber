@@ -61,10 +61,6 @@ pub(crate) enum CommandLine {
     EndSsh {
         repo: String,
     },
-    Redb {
-        repo: String,
-        action: String,
-    },
 }
 
 /// A repository instance in our DSL environment.

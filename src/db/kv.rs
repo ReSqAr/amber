@@ -9,42 +9,9 @@ use crate::db::models::{
 use crate::flightdeck::tracer::Tracer;
 use futures::{StreamExt, TryStreamExt, stream};
 use futures_core::stream::BoxStream;
-use redb::TableDefinition;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use tokio::fs::create_dir_all;
-
-const KNOWN_BLOB_UIDS: TableDefinition<Uid, ()> = TableDefinition::new("known_blob_uids");
-const KNOWN_FILE_UIDS: TableDefinition<Uid, ()> = TableDefinition::new("known_file_uids");
-const KNOWN_REPOSITORY_NAME_UIDS: TableDefinition<Uid, ()> =
-    TableDefinition::new("known_repository_name_uids");
-
-const CURRENT_BLOBS: TableDefinition<BlobRef, CurrentBlob> = TableDefinition::new("current_blobs");
-
-const CURRENT_FILES: TableDefinition<Path, CurrentFile> = TableDefinition::new("current_files");
-
-const CURRENT_MATERIALISATIONS: TableDefinition<Path, CurrentMaterialisation> =
-    TableDefinition::new("current_materialisations");
-
-const CURRENT_REPOSITORY_NAMES: TableDefinition<RepoID, CurrentRepositoryName> =
-    TableDefinition::new("current_repository_names");
-
-const CURRENT_OBSERVATIONS: TableDefinition<Path, CurrentObservation> =
-    TableDefinition::new("current_observations");
-
-const CURRENT_CHECKS: TableDefinition<Path, CurrentCheck> = TableDefinition::new("current_checks");
-
-const CURRENT_REPOSITORY: TableDefinition<(), CurrentRepository> =
-    TableDefinition::new("current_repository");
-
-const REPOSITORIES: TableDefinition<RepoID, RepositoryMetadata> =
-    TableDefinition::new("repositories");
-
-const CONNECTIONS: TableDefinition<ConnectionName, ConnectionMetadata> =
-    TableDefinition::new("connections");
-
-const CURRENT_REDUCTIONS: TableDefinition<TableName, LogOffset> =
-    TableDefinition::new("current_reductions");
 
 struct UpsertBlob(Blob);
 impl Upsert for UpsertBlob {
@@ -227,36 +194,57 @@ impl KVStores {
 
         let tracer = Tracer::new_on("KVStores::new");
 
-        let known_blob_uids = KVStore::new(base_path.join("known_blob_uids.redb"), KNOWN_BLOB_UIDS);
-        let known_file_uids = KVStore::new(base_path.join("known_file_uids.redb"), KNOWN_FILE_UIDS);
-        let known_repository_name_uids = KVStore::new(
-            base_path.join("known_repository_name_uids.redb"),
-            KNOWN_REPOSITORY_NAME_UIDS,
+        let known_blob_uids = KVStore::new(
+            base_path.join("known_blob_uids.rocksdb"),
+            "known_blob_uids".to_string(),
         );
-        let current_blobs = KVStore::new(base_path.join("current_blobs.redb"), CURRENT_BLOBS);
-        let current_files = KVStore::new(base_path.join("current_files.redb"), CURRENT_FILES);
+        let known_file_uids = KVStore::new(
+            base_path.join("known_file_uids.rocksdb"),
+            "known_file_uids".to_string(),
+        );
+        let known_repository_name_uids = KVStore::new(
+            base_path.join("known_repository_name_uids.rocksdb"),
+            "known_repository_name_uids".to_string(),
+        );
+        let current_blobs = KVStore::new(
+            base_path.join("current_blobs.rocksdb"),
+            "current_blobs".to_string(),
+        );
+        let current_files = KVStore::new(
+            base_path.join("current_files.rocksdb"),
+            "current_files".to_string(),
+        );
         let current_materialisations = KVStore::new(
-            base_path.join("current_materialisations.redb"),
-            CURRENT_MATERIALISATIONS,
+            base_path.join("current_materialisations.rocksdb"),
+            "current_materialisations".to_string(),
         );
         let current_repository_names = KVStore::new(
-            base_path.join("current_repository_names.redb"),
-            CURRENT_REPOSITORY_NAMES,
+            base_path.join("current_repository_names.rocksdb"),
+            "current_repository_names".to_string(),
         );
         let current_observations = KVStore::new(
-            base_path.join("current_observations.redb"),
-            CURRENT_OBSERVATIONS,
+            base_path.join("current_observations.rocksdb"),
+            "current_observations".to_string(),
         );
-        let current_checks = KVStore::new(base_path.join("current_checks.redb"), CURRENT_CHECKS);
+        let current_checks = KVStore::new(
+            base_path.join("current_checks.rocksdb"),
+            "current_checks".to_string(),
+        );
         let current_repository = KVStore::new(
-            base_path.join("current_repository.redb"),
-            CURRENT_REPOSITORY,
+            base_path.join("current_repository.rocksdb"),
+            "current_repository".to_string(),
         );
-        let repositories = KVStore::new(base_path.join("repositories.redb"), REPOSITORIES);
-        let connections = KVStore::new(base_path.join("connections.redb"), CONNECTIONS);
+        let repositories = KVStore::new(
+            base_path.join("repositories.rocksdb"),
+            "repositories".to_string(),
+        );
+        let connections = KVStore::new(
+            base_path.join("connections.rocksdb"),
+            "connections".to_string(),
+        );
         let current_reductions = KVStore::new(
-            base_path.join("current_reductions.redb"),
-            CURRENT_REDUCTIONS,
+            base_path.join("current_reductions.rocksdb"),
+            "current_reductions".to_string(),
         );
 
         let (

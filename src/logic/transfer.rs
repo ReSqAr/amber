@@ -19,7 +19,6 @@ use crate::utils::rclone::{
 use crate::utils::units;
 use futures::StreamExt;
 use rand::Rng;
-use redb::TableDefinition;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -209,9 +208,9 @@ pub async fn transfer<T: TransferItem>(
         .await
         .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
-    let redb = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
-        transfer_path.join("scratch.redb").abs().to_owned(),
-        TableDefinition::new("scratch"),
+    let scratch = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
+        transfer_path.join("scratch.rocksdb").abs().to_owned(),
+        "scratch".to_string(),
     )
     .await?;
 
@@ -267,7 +266,7 @@ pub async fn transfer<T: TransferItem>(
         })
     })
     .boxed();
-    let (stream, _) = redb.streaming_upsert(stream);
+    let (stream, _) = scratch.streaming_upsert(stream);
     let stream = TokioStreamExt::filter_map(stream, move |item| match item {
         Ok(UpsertedValue {
             previous_value: Some(_),
@@ -352,7 +351,7 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let stream = TokioStreamExt::map(stream, Ok).boxed();
-    let stream = redb.left_join::<_, _, InternalError>(stream, models::Path);
+    let stream = scratch.left_join::<_, _, InternalError>(stream, models::Path);
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,
         Ok((p, Some(b))) => Some(Ok(CopiedTransferItem {
@@ -375,7 +374,7 @@ pub async fn transfer<T: TransferItem>(
 
     transfer_obs.observe_termination(log::Level::Debug, "done");
 
-    redb.close().await?;
+    scratch.close().await?;
 
     tracer.measure();
     if count < expected_count {
