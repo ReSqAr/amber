@@ -5,6 +5,7 @@ pub(crate) mod kvstore;
 pub(crate) mod logs;
 mod logstore;
 pub(crate) mod models;
+mod reduced;
 
 use crate::db::database::Database;
 use crate::db::kv::KVStores;
