@@ -1,3 +1,6 @@
+use crate::db::error::DBError;
+use crate::db::stores::guard::DatabaseGuard;
+use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode, Options};
@@ -11,6 +14,7 @@ use std::sync::{
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
+use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -47,8 +51,9 @@ impl From<Offset> for u64 {
 #[derive(Clone, Copy, Debug)]
 pub enum TailFrom {
     #[allow(dead_code)]
-    Offset(Offset),
     Head,
+    #[allow(dead_code)]
+    Offset(Offset),
     #[allow(dead_code)]
     Start,
 }
@@ -75,23 +80,35 @@ pub enum Error {
 
     #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
+
+    #[error("{0}")]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[error("database accessed after close")]
+    AccessAfterDrop,
 }
 
+const WATERMARK_SENTINEL: u64 = u64::MAX;
+
 struct Inner {
-    db: Arc<DB>,
+    name: String,
+    db: Arc<parking_lot::RwLock<DatabaseGuard>>,
+    // Next offset - committed or uncommitted
     next_offset: AtomicU64,
     // Last durably committed offset (None = empty).
-    watermark: RwLock<Option<Offset>>,
+    watermark: AtomicU64,
     watermark_tx: watch::Sender<Option<Offset>>,
     active_tx: RwLock<bool>,
 }
 
 impl Inner {
-    fn current_watermark(&self) -> Result<Option<Offset>> {
-        self.watermark
-            .read()
-            .map(|g| *g)
-            .map_err(|_| Error::Poisoned)
+    fn current_watermark(&self) -> Option<Offset> {
+        let w = self.watermark.load(Ordering::SeqCst);
+        if w == WATERMARK_SENTINEL {
+            None
+        } else {
+            Some(w.into())
+        }
     }
 }
 
@@ -195,26 +212,34 @@ impl<V> Writer<V>
 where
     V: Serialize + DeserializeOwned + Send + 'static,
 {
-    pub fn open(path: PathBuf) -> Result<Self> {
+    pub fn open(path: PathBuf, name: String) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         let opts = make_options();
+        let tracer = Tracer::new_on(format!("log::Writer({})::open", name));
         let db = DB::open(&opts, &path)?;
-
         let max_offset = max_offset_from_db(&db)?;
+        tracer.measure();
 
         let next_offset = AtomicU64::new(match max_offset {
             Some(o) => o.0.saturating_add(1),
             None => 0,
         });
-
-        let watermark = RwLock::new(max_offset);
+        let watermark = AtomicU64::new(match max_offset {
+            Some(o) => o.0,
+            None => WATERMARK_SENTINEL,
+        });
         let (watermark_tx, _) = watch::channel(max_offset);
 
-        let db = Arc::new(db);
+        let guard_name = name.clone();
+        let db = Arc::new(parking_lot::RwLock::new(DatabaseGuard {
+            db: Some(db),
+            name: guard_name,
+        }));
         let inner = Inner {
+            name,
             db,
             next_offset,
             watermark,
@@ -227,13 +252,32 @@ where
             _marker: PhantomData,
         })
     }
-    
+
     pub async fn close(&self) -> Result<()> {
-        // TODO
+        let db = self.inner.db.clone();
+        task::spawn_blocking(move || {
+            let mut guard = db.write();
+            guard.close_sync();
+        })
+        .await?;
         Ok(())
     }
 
-    pub fn watermark(&self) -> Result<Option<Offset>> {
+    pub(crate) async fn compact(&self) -> std::result::Result<(), DBError> {
+        let tracer = Tracer::new_on(format!("Writer({})::compact", self.inner.name));
+        let db = self.inner.db.clone();
+        task::spawn_blocking(move || {
+            let mut guard = db.write();
+            let db_ref = guard.as_mut().ok_or(DBError::AccessAfterDrop)?;
+            db_ref.compact_range(None::<&[u8]>, None::<&[u8]>);
+            Ok::<_, DBError>(())
+        })
+        .await??;
+        tracer.measure();
+        Ok(())
+    }
+
+    pub fn watermark(&self) -> Option<Offset> {
         self.inner.current_watermark()
     }
 
@@ -266,7 +310,7 @@ impl<V> Transaction<V>
 where
     V: Serialize + DeserializeOwned + Send + 'static,
 {
-    pub fn put(&mut self, v: &V) -> Result<()> {
+    pub fn put_blocking(&mut self, v: &V) -> Result<()> {
         if self.closed {
             return Err(Error::ClosedTransaction);
         }
@@ -277,18 +321,20 @@ where
         let key = offset_to_key(offset_u64);
         let bytes = bincode::serialize(v)?;
 
-        self.inner.db.put(key, &bytes)?;
+        let guard = self.inner.db.read();
+        let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
+        db_ref.put(key, &bytes)?;
         self.last_offset = Some(offset);
 
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<Option<Offset>> {
-        self.persist_and_publish()
+    pub fn flush_blocking(&mut self) -> Result<Option<Offset>> {
+        self.persist_and_publish_blocking()
     }
 
-    pub fn close(mut self) -> Result<Option<Offset>> {
-        let res = self.persist_and_publish();
+    pub fn close_blocking(mut self) -> Result<Option<Offset>> {
+        let res = self.persist_and_publish_blocking();
         self.closed = true;
 
         if let Ok(mut guard) = self.tail_cancels.lock() {
@@ -304,18 +350,21 @@ where
         res
     }
 
-    fn persist_and_publish(&mut self) -> Result<Option<Offset>> {
+    fn persist_and_publish_blocking(&mut self) -> Result<Option<Offset>> {
         let Some(offset) = self.last_offset else {
-            return Ok(None); // nothing written in this tx
+            return Ok(None);
         };
 
-        self.inner.db.flush_wal(true)?;
+        let tracer = Tracer::new_on(format!(
+            "log::Transaction({})::persist_and_publish_blocking",
+            self.inner.name
+        ));
+        let guard = self.inner.db.read();
+        let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
+        db_ref.flush_wal(true)?;
+        tracer.measure();
 
-        // Advance in-memory watermark.
-        {
-            let mut guard = self.inner.watermark.write().map_err(|_| Error::Poisoned)?;
-            *guard = Some(offset);
-        }
+        self.inner.watermark.store(offset.0, Ordering::SeqCst);
 
         let _ = self.inner.watermark_tx.send(Some(offset));
 
@@ -327,7 +376,7 @@ where
         let mut watermark_rx = self.inner.watermark_tx.subscribe();
         let (tx, rx) = mpsc::channel::<Result<(Offset, V)>>(128);
 
-        let watermark_snapshot = self.inner.current_watermark().ok().flatten();
+        let watermark_snapshot = self.inner.current_watermark();
 
         let (start_offset, include_existing) = match from.into() {
             TailFrom::Start => (Offset::start(), true),
@@ -424,15 +473,15 @@ impl<V> Reader<V>
 where
     V: DeserializeOwned + Send + 'static,
 {
-    pub fn watermark(&self) -> Result<Option<Offset>> {
+    #[allow(dead_code)]
+    pub fn watermark(&self) -> Option<Offset> {
         self.inner.current_watermark()
     }
 
     pub fn from(&self, from: Offset) -> BoxStream<'static, Result<(Offset, V)>> {
         let upper = match self.inner.current_watermark() {
-            Ok(Some(w)) if from.0 <= w.0 => w,
-            Ok(Some(_)) | Ok(None) => return stream::empty().boxed(),
-            Err(e) => return stream::iter([Err(e)]).boxed(),
+            Some(w) if from.0 <= w.0 => w,
+            Some(_) | None => return stream::empty().boxed(),
         };
 
         let db = Arc::clone(&self.inner.db);
@@ -447,13 +496,22 @@ where
 }
 
 fn pump_range_blocking<V>(
-    db: Arc<DB>,
+    db: Arc<parking_lot::RwLock<DatabaseGuard>>,
     from: Offset,
     to: Offset,
     tx: mpsc::Sender<Result<(Offset, V)>>,
 ) where
     V: DeserializeOwned + Send + 'static,
 {
+    let guard = db.read();
+    let db = match guard.as_ref().ok_or(Error::AccessAfterDrop) {
+        Ok(db) => db,
+        Err(e) => {
+            let _ = tx.blocking_send(Err(e));
+            return;
+        }
+    };
+
     let start_key = offset_to_key(from.0);
     let iter = db.iterator(IteratorMode::From(&start_key, Direction::Forward));
 
@@ -514,14 +572,19 @@ mod tests {
         let mut opts = Options::default();
         opts.create_if_missing(true);
 
-        let db = Arc::new(DB::open(&opts, path).expect("open db"));
-
         let (watermark_tx, _watermark_rx) = watch::channel(None);
 
+        let db = DB::open(&opts, path).expect("open db");
+        let db = Arc::new(parking_lot::RwLock::new(DatabaseGuard {
+            db: Some(db),
+            name: "test".to_string(),
+        }));
+
         let inner = Arc::new(Inner {
+            name: "test".to_string(),
             db,
             next_offset: AtomicU64::new(0),
-            watermark: RwLock::new(None),
+            watermark: AtomicU64::new(WATERMARK_SENTINEL),
             watermark_tx,
             active_tx: RwLock::new(false),
         });
@@ -538,12 +601,12 @@ mod tests {
 
         // Write a few items.
         let mut tx = writer.transaction().expect("start transaction");
-        tx.put(&"one".to_string()).expect("put one");
-        tx.put(&"two".to_string()).expect("put two");
-        tx.put(&"three".to_string()).expect("put three");
+        tx.put_blocking(&"one".to_string()).expect("put one");
+        tx.put_blocking(&"two".to_string()).expect("put two");
+        tx.put_blocking(&"three".to_string()).expect("put three");
 
         // Close (fsync + publish watermark).
-        let last = tx.close().expect("close transaction");
+        let last = tx.close_blocking().expect("close transaction");
         assert_eq!(last, Some(Offset(2)));
 
         // Read back from the start.
@@ -567,15 +630,15 @@ mod tests {
 
         // Write some items, but only commit part of them.
         let mut tx = writer.transaction().expect("start transaction");
-        tx.put(&10).expect("put 10");
-        tx.put(&20).expect("put 20");
+        tx.put_blocking(&10).expect("put 10");
+        tx.put_blocking(&20).expect("put 20");
 
         // First flush: watermark at offset 1
-        let last = tx.flush().expect("flush tx");
+        let last = tx.flush_blocking().expect("flush tx");
         assert_eq!(last, Some(Offset(1)));
 
         // Add one more unflushed write
-        tx.put(&30).expect("put 30 (unflushed)");
+        tx.put_blocking(&30).expect("put 30 (unflushed)");
 
         // Now read from offset 0; we should only see the first two.
         let reader = writer.reader();
@@ -594,26 +657,28 @@ mod tests {
 
         // First instance: write some data and close.
         {
-            let writer: Writer<String> = Writer::open(path.clone()).expect("create writer");
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("create writer");
 
             let mut tx = writer.transaction().expect("start tx");
-            tx.put(&"alpha".to_string()).expect("put alpha");
-            tx.put(&"beta".to_string()).expect("put beta");
-            tx.put(&"gamma".to_string()).expect("put gamma");
+            tx.put_blocking(&"alpha".to_string()).expect("put alpha");
+            tx.put_blocking(&"beta".to_string()).expect("put beta");
+            tx.put_blocking(&"gamma".to_string()).expect("put gamma");
 
-            let last = tx.close().expect("close tx");
+            let last = tx.close_blocking().expect("close tx");
             assert_eq!(last, Some(Offset(2)));
 
-            let wm = writer.watermark().expect("wm ok");
+            let wm = writer.watermark();
             assert_eq!(wm, Some(Offset(2)));
         }
 
         // Second instance: reopen and verify recovery.
         {
-            let writer: Writer<String> = Writer::open(path.clone()).expect("reopen writer");
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("reopen writer");
 
             // Watermark should be recovered.
-            let wm = writer.watermark().expect("wm ok");
+            let wm = writer.watermark();
             assert_eq!(wm, Some(Offset(2)));
 
             // Reading from the start should give us the same data.
@@ -629,11 +694,11 @@ mod tests {
 
             // Next transaction should continue from offset 3.
             let mut tx = writer.transaction().expect("start tx 2");
-            tx.put(&"delta".to_string()).expect("put delta");
-            let last = tx.close().expect("close tx 2");
+            tx.put_blocking(&"delta".to_string()).expect("put delta");
+            let last = tx.close_blocking().expect("close tx 2");
             assert_eq!(last, Some(Offset(3)));
 
-            let wm2 = writer.watermark().expect("wm ok 2");
+            let wm2 = writer.watermark();
             assert_eq!(wm2, Some(Offset(3)));
         }
     }
@@ -644,19 +709,19 @@ mod tests {
 
         // Initial data, committed.
         let mut tx = writer.transaction().expect("start tx");
-        tx.put(&1).expect("put 1");
-        tx.put(&2).expect("put 2");
-        tx.put(&3).expect("put 3");
-        let _ = tx.close().expect("close tx");
+        tx.put_blocking(&1).expect("put 1");
+        tx.put_blocking(&2).expect("put 2");
+        tx.put_blocking(&3).expect("put 3");
+        let _ = tx.close_blocking().expect("close tx");
 
         // Start tail from the beginning.
         let mut tx = writer.transaction().expect("start tail tx");
         let tail_stream = tx.tail(TailFrom::Start);
 
         // Add more data and commit.
-        tx.put(&4).expect("put 4");
-        tx.put(&5).expect("put 5");
-        let _ = tx.close().expect("close tx2");
+        tx.put_blocking(&4).expect("put 4");
+        tx.put_blocking(&5).expect("put 5");
+        let _ = tx.close_blocking().expect("close tx2");
 
         // Now the tail stream should be finite and complete after close.
         let items: Vec<(Offset, u64)> = tail_stream
@@ -681,18 +746,18 @@ mod tests {
 
         // Initial committed data.
         let mut tx = writer.transaction().expect("start tx");
-        tx.put(&"old1".to_string()).expect("put old1");
-        tx.put(&"old2".to_string()).expect("put old2");
-        let _ = tx.close().expect("close tx");
+        tx.put_blocking(&"old1".to_string()).expect("put old1");
+        tx.put_blocking(&"old2".to_string()).expect("put old2");
+        let _ = tx.close_blocking().expect("close tx");
 
         // Start tail from head: should NOT replay old1/old2.
         let mut tx = writer.transaction().expect("start tx");
         let tail_stream = tx.tail(TailFrom::Head);
 
         // New committed data.
-        tx.put(&"new1".to_string()).expect("put new1");
-        tx.put(&"new2".to_string()).expect("put new2");
-        let _ = tx.close().expect("close tx2");
+        tx.put_blocking(&"new1".to_string()).expect("put new1");
+        tx.put_blocking(&"new2".to_string()).expect("put new2");
+        let _ = tx.close_blocking().expect("close tx2");
 
         let items: Vec<(Offset, String)> = tail_stream
             .try_collect()
@@ -726,15 +791,15 @@ mod tests {
         let writer: Writer<u64> = make_writer();
 
         // Initially empty.
-        assert_eq!(writer.watermark().expect("wm ok at start"), None);
+        assert_eq!(writer.watermark(), None);
 
         // Start a tx but don't write anything.
         let mut tx = writer.transaction().expect("start tx");
-        let res = tx.flush().expect("flush empty tx");
+        let res = tx.flush_blocking().expect("flush empty tx");
 
         // No last_offset => no watermark advance.
         assert_eq!(res, None);
-        assert_eq!(writer.watermark().expect("wm ok after flush"), None);
+        assert_eq!(writer.watermark(), None);
 
         // Reader sees nothing.
         let reader = writer.reader();
@@ -753,33 +818,24 @@ mod tests {
         let mut tx = writer.transaction().expect("start tx");
 
         // First write + flush.
-        tx.put(&10).expect("put 10");
-        let last = tx.flush().expect("first flush");
+        tx.put_blocking(&10).expect("put 10");
+        let last = tx.flush_blocking().expect("first flush");
         assert_eq!(last, Some(Offset(0)));
-        assert_eq!(
-            writer.watermark().expect("wm after first flush"),
-            Some(Offset(0))
-        );
+        assert_eq!(writer.watermark(), Some(Offset(0)));
 
         // Second write + flush.
-        tx.put(&20).expect("put 20");
-        let last = tx.flush().expect("second flush");
+        tx.put_blocking(&20).expect("put 20");
+        let last = tx.flush_blocking().expect("second flush");
         assert_eq!(last, Some(Offset(1)));
-        assert_eq!(
-            writer.watermark().expect("wm after second flush"),
-            Some(Offset(1))
-        );
+        assert_eq!(writer.watermark(), Some(Offset(1)));
 
         // Third write, only committed on close.
-        tx.put(&30).expect("put 30");
-        assert_eq!(
-            writer.watermark().expect("wm before close"),
-            Some(Offset(1))
-        );
+        tx.put_blocking(&30).expect("put 30");
+        assert_eq!(writer.watermark(), Some(Offset(1)));
 
-        let last = tx.close().expect("close tx");
+        let last = tx.close_blocking().expect("close tx");
         assert_eq!(last, Some(Offset(2)));
-        assert_eq!(writer.watermark().expect("wm after close"), Some(Offset(2)));
+        assert_eq!(writer.watermark(), Some(Offset(2)));
 
         // Reader should see all three values in order.
         let reader = writer.reader();
@@ -800,11 +856,11 @@ mod tests {
 
         // Write and commit two items at offsets 0 and 1.
         let mut tx = writer.transaction().expect("start tx");
-        tx.put(&100).expect("put 100");
-        tx.put(&200).expect("put 200");
-        let _ = tx.close().expect("close tx");
+        tx.put_blocking(&100).expect("put 100");
+        tx.put_blocking(&200).expect("put 200");
+        let _ = tx.close_blocking().expect("close tx");
 
-        assert_eq!(writer.watermark().expect("wm ok"), Some(Offset(1)));
+        assert_eq!(writer.watermark(), Some(Offset(1)));
 
         // Start reading from offset 5 (> 1): should be empty.
         let reader = writer.reader();
@@ -827,9 +883,9 @@ mod tests {
         {
             let mut tx = writer.transaction().expect("start tx");
             for i in 0u64..5u64 {
-                tx.put(&i).expect("put initial");
+                tx.put_blocking(&i).expect("put initial");
             }
-            let last = tx.close().expect("close tx");
+            let last = tx.close_blocking().expect("close tx");
             assert_eq!(last, Some(Offset(4)));
         }
 
@@ -838,9 +894,9 @@ mod tests {
         let tail_stream = tx.tail(TailFrom::Offset(Offset(2)));
 
         // New committed data at offsets 5 and 6.
-        tx.put(&100).expect("put 100");
-        tx.put(&101).expect("put 101");
-        let _ = tx.close().expect("close tail tx");
+        tx.put_blocking(&100).expect("put 100");
+        tx.put_blocking(&101).expect("put 101");
+        let _ = tx.close_blocking().expect("close tail tx");
 
         let items: Vec<(Offset, u64)> = tail_stream
             .try_collect()
@@ -868,14 +924,14 @@ mod tests {
 
         {
             let mut tx1 = writer.transaction().expect("start first tx");
-            tx1.put(&1).expect("put 1");
-            let _ = tx1.close().expect("close first tx");
+            tx1.put_blocking(&1).expect("put 1");
+            let _ = tx1.close_blocking().expect("close first tx");
         }
 
         // After closing, we should be able to start another transaction.
         let mut tx2 = writer.transaction().expect("start second tx");
-        tx2.put(&2).expect("put 2");
-        let last = tx2.close().expect("close second tx");
+        tx2.put_blocking(&2).expect("put 2");
+        let last = tx2.close_blocking().expect("close second tx");
 
         assert_eq!(last, Some(Offset(1)));
 
@@ -892,17 +948,17 @@ mod tests {
     async fn tail_from_start_on_empty_log_sees_only_new() {
         let writer: Writer<u64> = make_writer();
 
-        assert_eq!(writer.watermark().expect("wm ok"), None);
+        assert_eq!(writer.watermark(), None);
 
         // Start a tx solely to create the tail stream.
         let mut tx = writer.transaction().expect("start tx for tail");
         let tail_stream = tx.tail(TailFrom::Start);
 
         // Now write and commit some items; these are the first ever entries.
-        tx.put(&10).expect("put 10");
-        tx.put(&20).expect("put 20");
-        tx.put(&30).expect("put 30");
-        let _ = tx.close().expect("close tx");
+        tx.put_blocking(&10).expect("put 10");
+        tx.put_blocking(&20).expect("put 20");
+        tx.put_blocking(&30).expect("put 30");
+        let _ = tx.close_blocking().expect("close tx");
 
         let items: Vec<(Offset, u64)> = tail_stream
             .try_collect()

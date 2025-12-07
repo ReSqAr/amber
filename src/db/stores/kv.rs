@@ -1,4 +1,5 @@
 use crate::db::error::DBError;
+use crate::db::stores::guard::DatabaseGuard;
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
@@ -58,50 +59,7 @@ pub(crate) struct UpsertedValue<U, V> {
     pub(crate) previous_value: Option<V>,
 }
 
-pub(crate) struct DatabaseGuard {
-    pub(crate) name: String,
-    pub(crate) db: Option<DB>,
-}
-
-impl std::ops::Deref for DatabaseGuard {
-    type Target = Option<DB>;
-    fn deref(&self) -> &Self::Target {
-        &self.db
-    }
-}
-
-impl std::ops::DerefMut for DatabaseGuard {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.db
-    }
-}
-
-impl DatabaseGuard {
-    pub(crate) fn close_sync(&mut self) {
-        let db = self.db.take();
-        let name = self.name.clone();
-        let tracer = Tracer::new_on(format!("KVStore({})::close", name));
-        drop(db);
-        tracer.measure();
-    }
-}
-
-impl Drop for DatabaseGuard {
-    fn drop(&mut self) {
-        if let Some(_db) = self.db.take() {
-            if cfg!(feature = "__kv-drop-dev-assert") {
-                panic!("Use ::close instead of relying on the default Drop behaviour");
-            } else {
-                log::error!("Use ::close instead of relying on the default Drop behaviour");
-                let tracer = Tracer::new_on(format!("KVStore({})::drop", self.name));
-                drop(_db);
-                tracer.measure();
-            }
-        }
-    }
-}
-
-pub(crate) struct KVStore<K, V>
+pub(crate) struct Store<K, V>
 where
     K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
@@ -111,7 +69,7 @@ where
     _marker: PhantomData<(K, V)>,
 }
 
-impl<K, V> Clone for KVStore<K, V>
+impl<K, V> Clone for Store<K, V>
 where
     K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
@@ -170,7 +128,7 @@ fn make_options() -> Options {
     opts
 }
 
-impl<K, V> KVStore<K, V>
+impl<K, V> Store<K, V>
 where
     K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
@@ -181,8 +139,10 @@ where
                 std::fs::create_dir_all(parent)?;
             }
 
+            let tracer = Tracer::new_on(format!("kv::Store({})::open", name));
             let opts = make_options();
             let db = DB::open(&opts, &path)?;
+            tracer.measure();
 
             let guard_name = name.clone();
             let db = Arc::new(RwLock::new(DatabaseGuard {
@@ -258,7 +218,7 @@ where
 
     pub(crate) async fn apply<E: From<DBError> + Send + Sync + 'static>(
         &self,
-        s: BoxStream<'static, Result<(K, Option<V>), E>>,
+        s: BoxStream<'_, Result<(K, Option<V>), E>>,
     ) -> Result<u64, E> {
         let (tx, mut rx) = mpsc::channel::<Result<_, E>>(DEFAULT_BUFFER_SIZE);
         let db = self.db.clone();
@@ -651,7 +611,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, u64> = KVStore::new(path, "apply-test".to_string())
+        let store: Store<String, u64> = Store::new(path, "apply-test".to_string())
             .await
             .expect("create store");
 
@@ -679,7 +639,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "apply-delete".to_string())
+        let store: Store<String, i32> = Store::new(path, "apply-delete".to_string())
             .await
             .expect("create store");
 
@@ -715,7 +675,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "upsert-test".to_string())
+        let store: Store<String, i32> = Store::new(path, "upsert-test".to_string())
             .await
             .expect("create store");
 
@@ -757,7 +717,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "upsert-combos".to_string())
+        let store: Store<String, i32> = Store::new(path, "upsert-combos".to_string())
             .await
             .expect("create store");
 
@@ -818,7 +778,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "streaming-upsert".to_string())
+        let store: Store<String, i32> = Store::new(path, "streaming-upsert".to_string())
             .await
             .expect("create store");
 
@@ -857,7 +817,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "streaming-all".to_string())
+        let store: Store<String, i32> = Store::new(path, "streaming-all".to_string())
             .await
             .expect("create store");
 
@@ -944,7 +904,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "left-join".to_string())
+        let store: Store<String, i32> = Store::new(path, "left-join".to_string())
             .await
             .expect("create store");
 
@@ -987,7 +947,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("db");
 
-        let store: KVStore<String, i32> = KVStore::new(path, "streaming-nochange".to_string())
+        let store: Store<String, i32> = Store::new(path, "streaming-nochange".to_string())
             .await
             .expect("create store");
 

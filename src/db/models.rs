@@ -1,9 +1,11 @@
-use crate::db::logstore;
+use crate::db::stores::log;
+use crate::db::stores::reduced::Always;
+use crate::db::stores::reduced::{RowStatus, Status, ValidFrom};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
-pub struct Uid(pub(crate) u64);
+pub struct Uid(pub u64);
 impl From<u64> for Uid {
     fn from(v: u64) -> Self {
         Self(v)
@@ -15,10 +17,10 @@ impl From<Uid> for u64 {
     }
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
-pub struct Path(pub(crate) String);
+pub struct Path(pub String);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
-pub struct BlobID(pub(crate) String);
+pub struct BlobID(pub String);
 
 impl BlobID {
     pub fn path(&self) -> PathBuf {
@@ -34,61 +36,204 @@ impl BlobID {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
-pub(crate) struct RepoID(pub(crate) String);
+pub struct RepoID(pub String);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct BlobRef {
-    pub(crate) blob_id: BlobID,
-    pub(crate) repo_id: RepoID,
+pub struct BlobRef {
+    pub blob_id: BlobID,
+    pub repo_id: RepoID,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentBlob {
-    pub(crate) blob_size: u64,
-    pub(crate) blob_path: Option<Path>,
-    pub(crate) valid_from: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct SizedBlobID {
+pub struct SizedBlobID {
     pub blob_id: BlobID,
     pub blob_size: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentFile {
-    pub(crate) blob_id: BlobID,
-    pub(crate) valid_from: DateTime<Utc>,
+pub struct Blob {
+    pub uid: Uid,
+    pub repo_id: RepoID,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+    pub has_blob: bool,
+    pub path: Option<Path>,
+    pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentMaterialisation {
-    pub(crate) blob_id: BlobID,
-    pub(crate) valid_from: DateTime<Utc>,
+pub struct BlobMeta {
+    pub size: u64,
+    pub path: Option<Path>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentRepositoryName {
-    pub(crate) name: String,
-    pub(crate) valid_from: DateTime<Utc>,
+pub struct HasBlob(pub bool);
+
+impl Status for HasBlob {
+    type V = ();
+    fn status(&self) -> RowStatus<Self::V> {
+        match *self {
+            HasBlob(true) => RowStatus::Keep(()),
+            HasBlob(false) => RowStatus::Delete,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InsertBlob {
+    pub repo_id: RepoID,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+    pub has_blob: bool,
+    pub path: Option<Path>,
+    pub valid_from: DateTime<Utc>,
+}
+
+impl From<InsertBlob> for (BlobRef, BlobMeta, HasBlob, ValidFrom) {
+    fn from(b: InsertBlob) -> Self {
+        (
+            BlobRef {
+                blob_id: b.blob_id,
+                repo_id: b.repo_id,
+            },
+            BlobMeta {
+                size: b.blob_size,
+                path: b.path,
+            },
+            HasBlob(b.has_blob),
+            ValidFrom {
+                valid_from: b.valid_from,
+            },
+        )
+    }
+}
+
+impl From<Blob> for (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom) {
+    fn from(b: Blob) -> Self {
+        (
+            b.uid,
+            BlobRef {
+                blob_id: b.blob_id,
+                repo_id: b.repo_id,
+            },
+            BlobMeta {
+                size: b.blob_size,
+                path: b.path,
+            },
+            HasBlob(b.has_blob),
+            ValidFrom {
+                valid_from: b.valid_from,
+            },
+        )
+    }
+}
+
+impl From<(Uid, BlobRef, BlobMeta, HasBlob, ValidFrom)> for Blob {
+    fn from((u, br, lb, hb, vf): (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom)) -> Self {
+        Self {
+            uid: u,
+            repo_id: br.repo_id,
+            blob_id: br.blob_id,
+            blob_size: lb.size,
+            has_blob: hb.0,
+            path: lb.path,
+            valid_from: vf.valid_from,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentObservation {
-    pub(crate) fs_last_seen_id: i64,
-    pub(crate) fs_last_seen_dttm: DateTime<Utc>,
-    pub(crate) fs_last_modified_dttm: DateTime<Utc>,
-    pub(crate) fs_last_size: u64,
+pub struct CurrentFile {
+    pub blob_id: BlobID,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CurrentCheck {
-    pub(crate) check_last_dttm: DateTime<Utc>,
-    pub(crate) check_last_hash: BlobID,
+pub struct File {
+    pub uid: Uid,
+    pub path: Path,
+    pub blob_id: Option<BlobID>,
+    pub valid_from: DateTime<Utc>,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileBlobID(pub Option<BlobID>);
+
+impl Status for FileBlobID {
+    type V = BlobID;
+    fn status(&self) -> RowStatus<Self::V> {
+        match self.clone() {
+            FileBlobID(Some(blob_id)) => RowStatus::Keep(blob_id),
+            FileBlobID(None) => RowStatus::Delete,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InsertFile {
+    pub path: Path,
+    pub blob_id: Option<BlobID>,
+    pub valid_from: DateTime<Utc>,
+}
+
+impl From<InsertFile> for (Path, (), FileBlobID, ValidFrom) {
+    fn from(file: InsertFile) -> Self {
+        (
+            file.path,
+            (),
+            FileBlobID(file.blob_id),
+            ValidFrom {
+                valid_from: file.valid_from,
+            },
+        )
+    }
+}
+impl From<File> for (Uid, Path, (), FileBlobID, ValidFrom) {
+    fn from(file: File) -> Self {
+        (
+            file.uid,
+            file.path,
+            (),
+            FileBlobID(file.blob_id),
+            ValidFrom {
+                valid_from: file.valid_from,
+            },
+        )
+    }
+}
+
+impl From<(Uid, Path, (), FileBlobID, ValidFrom)> for File {
+    fn from((uid, path, _, fb, vf): (Uid, Path, (), FileBlobID, ValidFrom)) -> Self {
+        Self {
+            uid,
+            path,
+            blob_id: fb.0,
+            valid_from: vf.valid_from,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CurrentRepository {
+pub struct Materialisation {
+    pub blob_id: BlobID,
+    pub valid_from: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CurrentObservation {
+    pub fs_last_seen_id: i64,
+    pub fs_last_seen_dttm: DateTime<Utc>,
+    pub fs_last_modified_dttm: DateTime<Utc>,
+    pub fs_last_size: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CurrentCheck {
+    pub check_last_dttm: DateTime<Utc>,
+    pub check_last_hash: BlobID,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LocalRepository {
     pub repo_id: RepoID,
 }
 
@@ -102,7 +247,7 @@ pub struct RepositoryMetadata {
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
 )]
-pub struct ConnectionName(pub(crate) String);
+pub struct ConnectionName(pub String);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConnectionMetadata {
@@ -123,28 +268,19 @@ pub struct Connection {
     pub parameter: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
-pub struct TableName(pub(crate) String);
-
-impl From<&'static str> for TableName {
-    fn from(value: &'static str) -> Self {
-        Self(value.to_string())
-    }
-}
-
 #[derive(
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Ord, PartialOrd,
 )]
-pub struct LogOffset(pub(crate) u64);
+pub struct LogOffset(pub u64);
 
-impl From<LogOffset> for logstore::Offset {
+impl From<LogOffset> for log::Offset {
     fn from(o: LogOffset) -> Self {
         o.0.into()
     }
 }
 
-impl From<logstore::Offset> for LogOffset {
-    fn from(o: logstore::Offset) -> Self {
+impl From<log::Offset> for LogOffset {
+    fn from(o: log::Offset) -> Self {
         Self(o.into())
     }
 }
@@ -179,31 +315,31 @@ pub enum VirtualFileState {
     Ok {
         file: CurrentFile,
         #[allow(dead_code)]
-        blob: CurrentBlob,
+        blob: BlobMeta,
     },
     OkMaterialisationMissing {
         file: CurrentFile,
         #[allow(dead_code)]
-        blob: CurrentBlob,
+        blob: BlobMeta,
     },
     OkBlobMissing {
         file: CurrentFile,
     },
     Altered {
         file: CurrentFile,
-        blob: Option<CurrentBlob>,
+        blob: Option<BlobMeta>,
     },
     Outdated {
         file: Option<CurrentFile>,
-        blob: Option<CurrentBlob>,
+        blob: Option<BlobMeta>,
         #[allow(dead_code)]
-        mat: CurrentMaterialisation,
+        mat: Materialisation,
     },
     NeedsCheck,
     CorruptionDetected {
         file: CurrentFile,
         #[allow(dead_code)]
-        blob: Option<CurrentBlob>,
+        blob: Option<BlobMeta>,
     },
 }
 
@@ -211,13 +347,13 @@ pub enum VirtualFileState {
 pub struct VirtualFile {
     pub file_seen: FileSeen,
     pub current_file: Option<CurrentFile>,
-    pub current_blob: Option<CurrentBlob>,
-    pub current_materialisation: Option<CurrentMaterialisation>,
+    pub current_blob: Option<BlobMeta>,
+    pub current_materialisation: Option<Materialisation>,
     pub current_check: Option<CurrentCheck>,
 }
 
 impl VirtualFile {
-    pub(crate) fn state(&self) -> VirtualFileState {
+    pub fn state(&self) -> VirtualFileState {
         if self.current_blob.is_none() && self.current_materialisation.is_none() {
             VirtualFileState::New
         } else if let Some(check) = &self.current_check
@@ -243,7 +379,7 @@ impl VirtualFile {
                         }
                     }
                 } else if let Some(blob) = &self.current_blob {
-                    if self.file_seen.size != blob.blob_size {
+                    if self.file_seen.size != blob.size {
                         // shouldn't have trusted the check that the blob ids are the same
                         VirtualFileState::CorruptionDetected {
                             file: file.clone(),
@@ -285,67 +421,6 @@ impl VirtualFile {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct File {
-    pub uid: Uid,
-    pub path: Path,
-    pub blob_id: Option<BlobID>,
-    pub valid_from: DateTime<Utc>,
-}
-
-impl File {
-    pub fn from_insert_file(file: InsertFile, uid: Uid) -> Self {
-        Self {
-            uid,
-            path: file.path,
-            blob_id: file.blob_id,
-            valid_from: file.valid_from,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct InsertFile {
-    pub path: Path,
-    pub blob_id: Option<BlobID>,
-    pub valid_from: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Blob {
-    pub uid: Uid,
-    pub repo_id: RepoID,
-    pub blob_id: BlobID,
-    pub blob_size: u64,
-    pub has_blob: bool,
-    pub path: Option<Path>,
-    pub valid_from: DateTime<Utc>,
-}
-
-impl Blob {
-    pub fn from_insert_blob(blob: InsertBlob, uid: Uid) -> Self {
-        Self {
-            uid,
-            repo_id: blob.repo_id,
-            blob_id: blob.blob_id,
-            blob_size: blob.blob_size,
-            has_blob: blob.has_blob,
-            path: blob.path,
-            valid_from: blob.valid_from,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct InsertBlob {
-    pub repo_id: RepoID,
-    pub blob_id: BlobID,
-    pub blob_size: u64,
-    pub has_blob: bool,
-    pub path: Option<Path>,
-    pub valid_from: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone)]
 pub struct Repository {
     pub repo_id: RepoID,
@@ -370,8 +445,47 @@ pub struct InsertRepositoryName {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RawRepositoryName {
+pub struct LogRepositoryName {
     pub name: String,
+}
+
+impl From<InsertRepositoryName> for (RepoID, LogRepositoryName, Always, ValidFrom) {
+    fn from(rn: InsertRepositoryName) -> Self {
+        (
+            rn.repo_id,
+            LogRepositoryName { name: rn.name },
+            Always(),
+            ValidFrom {
+                valid_from: rn.valid_from,
+            },
+        )
+    }
+}
+impl From<RepositoryName> for (Uid, RepoID, LogRepositoryName, Always, ValidFrom) {
+    fn from(rn: RepositoryName) -> Self {
+        (
+            rn.uid,
+            rn.repo_id,
+            LogRepositoryName { name: rn.name },
+            Always(),
+            ValidFrom {
+                valid_from: rn.valid_from,
+            },
+        )
+    }
+}
+
+impl From<(Uid, RepoID, LogRepositoryName, Always, ValidFrom)> for RepositoryName {
+    fn from(
+        (uid, repo_id, name, _, vf): (Uid, RepoID, LogRepositoryName, Always, ValidFrom),
+    ) -> Self {
+        Self {
+            uid,
+            repo_id,
+            name: name.name,
+            valid_from: vf.valid_from,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
