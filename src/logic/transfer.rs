@@ -1,7 +1,8 @@
 use crate::connection::EstablishedConnection;
-use crate::db::kvstore::{AlwaysUpsert, UpsertedValue};
+use crate::db::models;
 use crate::db::models::CopiedTransferItem;
-use crate::db::{kvstore, models};
+use crate::db::stores::kv;
+use crate::db::stores::kv::{AlwaysUpsert, UpsertedValue};
 use crate::flightdeck;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
@@ -208,7 +209,7 @@ pub async fn transfer<T: TransferItem>(
         .await
         .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
-    let scratch = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
+    let scratch = kv::Store::<models::Path, models::SizedBlobID>::new(
         transfer_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )

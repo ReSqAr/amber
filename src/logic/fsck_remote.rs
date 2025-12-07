@@ -1,6 +1,7 @@
 use crate::connection::EstablishedConnection;
+use crate::db::models;
 use crate::db::models::{AvailableBlob, InsertBlob, RepoID, SizedBlobID};
-use crate::db::{kvstore, models};
+use crate::db::stores::kv;
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
@@ -49,7 +50,7 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
-    let scratch = kvstore::KVStore::<models::Path, models::SizedBlobID>::new(
+    let scratch = kv::Store::<models::Path, models::SizedBlobID>::new(
         fsck_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )

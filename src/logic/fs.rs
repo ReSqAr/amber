@@ -1,6 +1,7 @@
-use crate::db::kvstore::{AlwaysUpsert, UpsertedValue};
+use crate::db::models;
 use crate::db::models::{InsertFile, InsertMaterialisation, Path};
-use crate::db::{kvstore, models};
+use crate::db::stores::kv;
+use crate::db::stores::kv::{AlwaysUpsert, UpsertedValue};
 use crate::flightdeck::base::BaseObserver;
 use crate::logic::{files, unblobify};
 use crate::repository::local::LocalRepository;
@@ -109,7 +110,7 @@ pub(crate) async fn rm(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let scratch = kvstore::KVStore::<models::Path, models::BlobID>::new(
+    let scratch = kv::Store::<models::Path, models::BlobID>::new(
         transfer_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )
@@ -284,7 +285,7 @@ pub(crate) async fn mv(
     fs::create_dir_all(&transfer_path)
         .await
         .inspect_err(|e| log::error!("mv: create_dir_all failed: {e}"))?;
-    let scratch = kvstore::KVStore::<models::Path, models::BlobID>::new(
+    let scratch = kv::Store::<models::Path, models::BlobID>::new(
         transfer_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )

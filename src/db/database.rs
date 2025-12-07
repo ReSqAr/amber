@@ -1,95 +1,61 @@
 use crate::db::error::DBError;
 use crate::db::kv::KVStores;
-use crate::db::logs::{Always, Logs};
-use crate::db::logstore;
-use crate::db::logstore::{Offset, TailFrom};
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobRef, BlobTransferItem, Connection,
-    ConnectionName, CurrentBlob, CurrentFile, CurrentRepository, File, FileCheck, FileSeen,
-    FileTransferItem, InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation,
-    InsertRepositoryName, LogOffset, MissingFile, Path, RawRepositoryName, RepoID, Repository,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobMeta, BlobRef, BlobTransferItem,
+    Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck, FileSeen,
+    FileTransferItem, HasBlob, InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation,
+    InsertRepositoryName, LocalRepository, MissingFile, Path, RepoID, Repository,
     RepositoryMetadata, RepositoryName, Uid, VirtualFile,
 };
-use crate::db::reduced::{TransactionLike, UidState, ValidFrom};
-use crate::flightdeck::base::BaseObserver;
+use crate::db::reduced;
+use crate::db::reduced::Reduced;
+use crate::db::stores::log::Offset;
+use crate::db::stores::reduced::{Transaction, TransactionLike, UidState, ValidFrom};
+use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
-use crate::flightdeck::tracked::mpsc_channel;
+use crate::flightdeck::tracked::sender::{Adapter, TrackedSender};
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::utils::stream::group_by_key;
 use chrono::Utc;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt, stream};
-use log::debug;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use tokio::task::JoinHandle;
-use tokio::{task, try_join};
+use tokio::try_join;
 use uuid::Uuid;
-
-const UID_BUFFER: usize = 100;
 
 #[derive(Clone)]
 pub struct Database {
     kv: KVStores,
-    logs: Logs,
+    logs: Reduced,
 }
 
-const FILE_TABLE_NAME: &str = "files";
-const BLOB_TABLE_NAME: &str = "blobs";
-const MAT_TABLE_NAME: &str = "materialisations";
-
 impl Database {
-    pub fn new(kv: KVStores, logs: Logs) -> Self {
+    pub fn new(kv: KVStores, logs: Reduced) -> Self {
         Self { kv, logs }
     }
 
     pub async fn clean(&self) -> Result<(), DBError> {
-        let reductions: HashMap<_, _> = self.kv.stream_current_reductions().try_collect().await?;
-        let tracer = Tracer::new_on("clean");
+        let tracer = Tracer::new_on("Database::clean");
 
-        let mut ob = BaseObserver::without_id("Database::clean::blobs");
-        let mut of = BaseObserver::without_id("Database::clean::files");
-        let mut om = BaseObserver::without_id("Database::clean::materialisations");
-
-        let blob_offset = Self::next_offset(reductions.get(&BLOB_TABLE_NAME.into()).copied());
-        let file_offset = Self::next_offset(reductions.get(&FILE_TABLE_NAME.into()).copied());
-        let mat_offset = Self::next_offset(reductions.get(&MAT_TABLE_NAME.into()).copied());
-
-        let b_reader = self.logs.blobs_writer.reader();
-        let f_reader = self.logs.files_writer.reader();
-        let m_reader = self.logs.materialisations_writer.reader();
-
-        let b = self.blob_log_stream(b_reader.from(blob_offset).boxed());
-        let f = self.file_log_stream(f_reader.from(file_offset).boxed());
-        let m = self.materialisation_log_stream(m_reader.from(mat_offset).boxed());
-
-        let rn2 = async {
+        let b = async {
+            let txn = self.logs.blobs.transaction().await?;
+            txn.close().await?;
+            Ok::<_, DBError>(())
+        };
+        let f = async {
+            let txn = self.logs.files.transaction().await?;
+            txn.close().await?;
+            Ok::<_, DBError>(())
+        };
+        let rn = async {
             let txn = self.logs.repository_names.transaction().await?;
             txn.close().await?;
             Ok::<_, DBError>(())
         };
 
-        let (b_count, f_count, m_count) = tokio::try_join!(b, f, m)?;
-        ob.observe_termination_ext(
-            log::Level::Debug,
-            "reduced",
-            [("count".into(), b_count? as u64)],
-        );
-        of.observe_termination_ext(
-            log::Level::Debug,
-            "reduced",
-            [("count".into(), f_count? as u64)],
-        );
-        om.observe_termination_ext(
-            log::Level::Debug,
-            "reduced",
-            [("count".into(), m_count? as u64)],
-        );
-
-        tokio::try_join!(rn2)?;
+        try_join!(b, f, rn)?;
 
         tracer.measure();
         Ok(())
@@ -101,7 +67,7 @@ impl Database {
     }
 
     pub async fn compact(&self) -> Result<(), DBError> {
-        self.kv.compact().await?;
+        try_join!(self.kv.compact(), self.logs.compact())?;
         Ok(())
     }
 
@@ -112,14 +78,14 @@ impl Database {
         }
     }
 
-    pub async fn get_or_create_current_repository(&self) -> Result<CurrentRepository, DBError> {
-        match self.kv.load_current_repository().await? {
+    pub async fn get_or_create_current_repository(&self) -> Result<LocalRepository, DBError> {
+        match self.kv.load_local_repository().await? {
             Some(current) => Ok(current),
             None => {
                 let repo_id = RepoID(Uuid::new_v4().to_string());
-                let current = CurrentRepository { repo_id };
+                let current = LocalRepository { repo_id };
                 self.kv.store_current_repository(current).await?;
-                Ok(self.kv.load_current_repository().await?.expect("was set"))
+                Ok(self.kv.load_local_repository().await?.expect("was set"))
             }
         }
     }
@@ -136,245 +102,87 @@ impl Database {
 
         assert_eq!(r.len(), 1, "expected precisely 1 repository lookup result");
         let (_, result) = r.into_iter().next().unwrap()?;
-        Ok(result.map(|r| r.name))
-    }
-
-    pub async fn add_files(&self, s: BoxStream<'_, InsertFile>) -> Result<u64, DBError> {
-        let tracer = Tracer::new_on("Database::add_files");
-
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.files_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn.tail(TailFrom::Head).track("add_files::log_stream");
-        let bg = self.file_log_stream(tail.boxed());
-
-        let mut tracer_push = Tracer::new_off("Database::add_files::push");
-        let mut tracer_flush = Tracer::new_off("Database::add_files::flush");
-        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
-        let mut s = s.enumerate();
-        while let Some((i, file)) = s.next().await {
-            total_attempted += 1;
-            let uid = (ts + (i as u64)).into();
-            tracer_push.on();
-            task::block_in_place(|| {
-                txn.put(&File {
-                    uid,
-                    path: file.path.clone(),
-                    blob_id: file.blob_id.clone(),
-                    valid_from: file.valid_from,
-                })
-            })
-            .inspect_err(|e| log::error!("Database::add_files failed to add log: {e}"))?;
-            tracer_push.off();
-            total_inserted += 1;
-
-            if i % self.logs.flush_size == 0 {
-                tracer_flush.on();
-                task::block_in_place(|| txn.flush())?;
-                tracer_flush.off();
-            }
-        }
-        tracer_push.measure();
-        tracer_flush.measure();
-
-        let tracer_commit = Tracer::new_on("Database::add_files::commit");
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-        tracer_commit.measure();
-
-        debug!(
-            "files added: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
-        tracer.measure();
-        Ok(total_inserted)
+        Ok(result.map(|(r, _)| r.name))
     }
 
     pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
-        let tracer = Tracer::new_on("Database::add_blobs");
+        use tokio_stream::StreamExt as TokioStreamExt;
 
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.blobs_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn.tail(TailFrom::Head).track("add_blobs::log_stream");
-        let bg = self.blob_log_stream(tail.boxed());
-
-        let mut tracer_push = Tracer::new_off("Database::add_blobs::push");
-        let mut tracer_flush = Tracer::new_off("Database::add_blobs::flush");
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
-        let mut s = s.enumerate();
-        while let Some((i, blob)) = s.next().await {
-            total_attempted += 1;
-            let uid = (ts + (i as u64)).into();
-            tracer_push.on();
-            task::block_in_place(|| {
-                txn.put(&Blob {
-                    uid,
-                    repo_id: blob.repo_id.clone(),
-                    blob_id: blob.blob_id.clone(),
-                    blob_size: blob.blob_size,
-                    has_blob: blob.has_blob,
-                    path: blob.path.clone(),
-                    valid_from: blob.valid_from,
-                })
-            })
-            .inspect_err(|e| log::error!("Database::add_blobs failed to add log: {e}"))?;
-            tracer_push.off();
-            total_inserted += 1;
+        let s = TokioStreamExt::map(s.enumerate(), |(i, b)| {
+            let (k, v, s, vf) = b.into();
+            Ok((Uid(ts + (i as u64)), k, v, s, vf))
+        });
 
-            if i % self.logs.flush_size == 0 {
-                tracer_flush.on();
-                task::block_in_place(|| txn.flush())?;
-                tracer_flush.off();
-            }
-        }
-        tracer_push.measure();
-        tracer_flush.measure();
+        reduced::add(
+            s.boxed(),
+            self.logs.blobs.transaction().await?,
+            self.logs.blobs.name().clone(),
+            self.logs.flush_size,
+        )
+        .await
+    }
 
-        let tracer_commit = Tracer::new_on("Database::add_blobs::commit");
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-        tracer_commit.measure();
+    pub async fn add_files(&self, s: BoxStream<'_, InsertFile>) -> Result<u64, DBError> {
+        use tokio_stream::StreamExt as TokioStreamExt;
 
-        debug!(
-            "blobs added: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
-        tracer.measure();
-        Ok(total_inserted)
+        let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        let s = TokioStreamExt::map(s.enumerate(), |(i, f)| {
+            let (k, v, s, vf) = f.into();
+            Ok((Uid(ts + (i as u64)), k, v, s, vf))
+        });
+
+        reduced::add(
+            s.boxed(),
+            self.logs.files.transaction().await?,
+            self.logs.files.name().clone(),
+            self.logs.flush_size,
+        )
+        .await
     }
 
     pub async fn add_file_bundles(
         &self,
         s: BoxStream<'_, InsertFileBundle>,
     ) -> Result<u64, DBError> {
-        let tracer = Tracer::new_on("Database::add_file_bundles");
-
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-
-        let b_writer = self.logs.blobs_writer.clone();
-        let f_writer = self.logs.files_writer.clone();
-        let m_writer = self.logs.materialisations_writer.clone();
-        let mut blob_txn = task::spawn_blocking(move || b_writer.transaction()).await??;
-        let mut file_txn = task::spawn_blocking(move || f_writer.transaction()).await??;
-        let mut mat_txn = task::spawn_blocking(move || m_writer.transaction()).await??;
-
-        let blob_tail = blob_txn
-            .tail(TailFrom::Head)
-            .track("add_file_bundles::blob::log_stream");
-        let file_tail = file_txn
-            .tail(TailFrom::Head)
-            .track("add_file_bundles::file::log_stream");
-        let mat_tail = mat_txn
-            .tail(TailFrom::Head)
-            .track("add_file_bundles::mat::log_stream");
-        let blob_bg = self.blob_log_stream(blob_tail.boxed());
-        let file_bg = self.file_log_stream(file_tail.boxed());
-        let mat_bg = self.materialisation_log_stream(mat_tail.boxed());
-
-        let mut tracer_b = Tracer::new_off("add_file_bundles::blob_txn::push");
-        let mut tracer_f = Tracer::new_off("add_file_bundles::file_txn::push");
-        let mut tracer_m = Tracer::new_off("add_file_bundles::mat_txn::push");
+        use tokio_stream::StreamExt as TokioStreamExt;
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
-        let mut s = s.enumerate();
-        while let Some((i, bundle)) = s.next().await {
-            total_attempted += 1;
-            let InsertFileBundle {
-                file,
-                blob,
-                materialisation,
-            } = bundle;
-
-            let uid = (ts + (i as u64)).into();
-
-            tracer_b.on();
-            task::block_in_place(|| blob_txn.put(&Blob::from_insert_blob(blob, uid))).inspect_err(
-                |e| log::error!("Database::add_file_bundles failed to add blob log: {e}"),
-            )?;
-            tracer_b.off();
-
-            tracer_f.on();
-            task::block_in_place(|| file_txn.put(&File::from_insert_file(file, uid))).inspect_err(
-                |e| log::error!("Database::add_file_bundles failed to add file log: {e}"),
-            )?;
-            tracer_f.off();
-
-            tracer_m.on();
-            task::block_in_place(|| mat_txn.put(&materialisation)).inspect_err(|e| {
-                log::error!("Database::add_file_bundles failed to add materialisation log: {e}")
-            })?;
-            tracer_m.off();
-
-            total_inserted += 1;
-
-            if i % self.logs.flush_size == 0 && i > 0 {
-                // in this order
-                tracer_b.on();
-                task::block_in_place(|| blob_txn.flush())?;
-                tracer_b.off();
-
-                tracer_f.on();
-                task::block_in_place(|| file_txn.flush())?;
-                tracer_f.off();
-
-                tracer_m.on();
-                task::block_in_place(|| mat_txn.flush())?;
-                tracer_m.off();
-            }
-        }
-
-        tracer_b.measure();
-        tracer_f.measure();
-        tracer_m.measure();
-
-        // in this order
-        {
-            let tracer = Tracer::new_on("add_file_bundles::blob_txn::close");
-            task::block_in_place(|| blob_txn.close())?;
-            tracer.measure();
-        }
-
-        {
-            let tracer = Tracer::new_on("add_file_bundles::file_txn::close");
-            task::block_in_place(|| file_txn.close())?;
-            tracer.measure();
-        }
-
-        {
-            let tracer = Tracer::new_on("add_file_bundles::mat_txn::close");
-            task::block_in_place(|| mat_txn.close())?;
-            tracer.measure();
-        }
-
-        {
-            let tracer = Tracer::new_on("add_file_bundles::blob_bg::wait");
-            blob_bg.await??;
-            tracer.measure();
-        }
-
-        {
-            let tracer = Tracer::new_on("add_file_bundles::file_bg::wait");
-            file_bg.await??;
-            tracer.measure();
-        }
-
-        {
-            let tracer = Tracer::new_on("add_file_bundles::mat_bg::wait");
-            mat_bg.await??;
-            tracer.measure();
-        }
-
-        debug!(
-            "file bundles added: attempted={} inserted={}",
-            total_attempted, total_inserted
+        let s = TokioStreamExt::map(
+            s.enumerate(),
+            |(
+                i,
+                InsertFileBundle {
+                    file,
+                    blob,
+                    materialisation,
+                },
+            )| {
+                let (k, v, s, vf) = blob.into();
+                let blob = (Uid(ts + (i as u64)), k, v, s, vf);
+                let (k, v, s, vf) = file.into();
+                let file = (Uid(ts + (i as u64)), k, v, s, vf);
+                Ok((blob, file, materialisation))
+            },
         );
 
-        tracer.measure();
-        Ok(total_inserted)
+        let (tx, rx) = flightdeck::tracked::mpsc_channel("Database::add_file_bundles::mat", 100);
+        let bg_mat = self.kv.apply_materialisations(rx.boxed());
+
+        let txn = FileBundleTransaction {
+            blob_txn: self.logs.blobs.transaction().await?,
+            file_txn: self.logs.files.transaction().await?,
+            mat_tx: tx,
+        };
+        let bg_add = reduced::add(
+            s.boxed(),
+            txn,
+            "file_bundles".to_string(),
+            self.logs.flush_size,
+        );
+
+        let (c, _) = try_join!(bg_add, bg_mat)?;
+        Ok(c)
     }
 
     pub async fn add_repository_names(
@@ -385,29 +193,38 @@ impl Database {
 
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
         let s = TokioStreamExt::map(s.enumerate(), |(i, rn)| {
-            Ok((
-                Uid(ts + (i as u64)),
-                rn.repo_id,
-                RawRepositoryName { name: rn.name },
-                Always(),
-                ValidFrom {
-                    valid_from: rn.valid_from,
-                },
-            ))
+            let (k, v, s, vf) = rn.into();
+            Ok((Uid(ts + (i as u64)), k, v, s, vf))
         });
 
-        self.logs.add_repository_names(s.boxed()).await
+        reduced::add(
+            s.boxed(),
+            self.logs.repository_names.transaction().await?,
+            self.logs.repository_names.name().clone(),
+            self.logs.flush_size,
+        )
+        .await
     }
 
-    pub async fn select_repositories(&self) -> BoxStream<'static, Result<Repository, DBError>> {
-        self.kv
-            .stream_repositories()
-            .map_ok(|(repo_id, m)| Repository {
-                repo_id,
-                last_file_index: m.last_file_index,
-                last_blob_index: m.last_blob_index,
-                last_name_index: m.last_name_index,
+    pub async fn select_blobs(
+        &self,
+        last_index: Option<u64>,
+    ) -> BoxStream<'static, Result<Blob, DBError>> {
+        let watermark = self.logs.blobs.watermark();
+        let from = Self::next_offset(last_index);
+        self.logs
+            .blobs
+            .select(from)
+            .await
+            .take_while(move |r| {
+                future::ready(match r {
+                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
+                    Err(_) => true,
+                })
             })
+            .map_ok(|(_, t)| t.into())
+            .boxed()
+            .track("db::select_blobs")
             .boxed()
     }
 
@@ -415,53 +232,21 @@ impl Database {
         &self,
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<File, DBError>> {
-        let reader = self.logs.files_writer.reader();
-        let watermark = match reader.watermark() {
-            Ok(w) => w,
-            Err(e) => return stream::iter([Err(e.into())]).boxed(),
-        };
+        let watermark = self.logs.files.watermark();
         let from = Self::next_offset(last_index);
-        reader
-            .from(from)
+        self.logs
+            .files
+            .select(from)
+            .await
             .take_while(move |r| {
                 future::ready(match r {
                     Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
                     Err(_) => true,
                 })
             })
-            .map(|r| match r {
-                Ok((_, f)) => Ok(f),
-                Err(e) => Err(e.into()),
-            })
+            .map_ok(|(_, t)| t.into())
             .boxed()
             .track("db::select_files")
-            .boxed()
-    }
-
-    pub async fn select_blobs(
-        &self,
-        last_index: Option<u64>,
-    ) -> BoxStream<'static, Result<Blob, DBError>> {
-        let reader = self.logs.blobs_writer.reader();
-        let watermark = match reader.watermark() {
-            Ok(w) => w,
-            Err(e) => return stream::iter([Err(e.into())]).boxed(),
-        };
-        let from = Self::next_offset(last_index);
-        reader
-            .from(from)
-            .take_while(move |r| {
-                future::ready(match r {
-                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
-                    Err(_) => true,
-                })
-            })
-            .map(|r| match r {
-                Ok((_, f)) => Ok(f),
-                Err(e) => Err(e.into()),
-            })
-            .boxed()
-            .track("db::select_blobs")
             .boxed()
     }
 
@@ -469,99 +254,71 @@ impl Database {
         &self,
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<RepositoryName, DBError>> {
+        let watermark = self.logs.repository_names.watermark();
         let from = Self::next_offset(last_index);
         self.logs
             .repository_names
             .select(from)
             .await
-            .map(|r| match r {
-                Ok((_, (uid, repo_id, name, _, valid_from))) => Ok(RepositoryName {
-                    uid,
-                    repo_id,
-                    name: name.name,
-                    valid_from: valid_from.valid_from,
-                }),
-                Err(e) => Err(e),
+            .take_while(move |r| {
+                future::ready(match r {
+                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
+                    Err(_) => true,
+                })
             })
+            .map_ok(|(_, t)| t.into())
             .boxed()
             .track("db::select_repository_names")
             .boxed()
     }
 
-    pub async fn merge_repositories(&self, s: BoxStream<'_, Repository>) -> Result<(), DBError> {
-        self.kv.apply_repositories(s.map(Ok).boxed()).await?;
+    pub async fn merge_blobs(&self, s: BoxStream<'static, Blob>) -> Result<(), DBError> {
+        use tokio_stream::StreamExt as TokioStreamExt;
+
+        let s = TokioStreamExt::map(s, Ok);
+        let s = self
+            .logs
+            .blobs
+            .left_join_known_uids(s.boxed(), |rn: Blob| rn.uid)
+            .boxed();
+        let s = TokioStreamExt::filter_map(s, |e| match e {
+            Ok((_, UidState::Known)) => None,
+            Ok((b, UidState::Unknown)) => Some(Ok(b.into())),
+            Err(e) => Some(Err(e)),
+        });
+
+        reduced::add(
+            s.boxed(),
+            self.logs.blobs.transaction().await?,
+            self.logs.blobs.name().clone(),
+            self.logs.flush_size,
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn merge_files(&self, s: BoxStream<'static, File>) -> Result<(), DBError> {
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.files_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn.tail(TailFrom::Head).track("merge_files::log_stream");
-        let bg = self.file_log_stream(tail.boxed());
+        use tokio_stream::StreamExt as TokioStreamExt;
 
+        let s = TokioStreamExt::map(s, Ok);
         let s = self
-            .kv
-            .left_join_known_file_uids(s.map(Ok).boxed(), |f: File| f.uid)
+            .logs
+            .files
+            .left_join_known_uids(s.boxed(), |rn: File| rn.uid)
             .boxed();
-        let mut s = s.enumerate();
-        while let Some((i, file)) = s.next().await {
-            let (file, is_known) = file?;
-            total_attempted += 1;
-            if is_known.is_none() {
-                task::block_in_place(|| txn.put(&file))
-                    .inspect_err(|e| log::error!("Database::merge_files failed to add log: {e}"))?;
-                total_inserted += 1;
-            }
-            if i % self.logs.flush_size == 0 {
-                task::block_in_place(|| txn.flush())?;
-            }
-        }
+        let s = TokioStreamExt::filter_map(s, |e| match e {
+            Ok((_, UidState::Known)) => None,
+            Ok((f, UidState::Unknown)) => Some(Ok(f.into())),
+            Err(e) => Some(Err(e)),
+        });
 
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-
-        debug!(
-            "files merged: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
-        Ok(())
-    }
-
-    pub async fn merge_blobs(&self, s: BoxStream<'static, Blob>) -> Result<(), DBError> {
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.blobs_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn.tail(TailFrom::Head).track("merge_blobs::log_stream");
-        let bg = self.blob_log_stream(tail.boxed());
-
-        let s = self
-            .kv
-            .left_join_known_blob_uids(s.map(Ok).boxed(), |b: Blob| b.uid)
-            .boxed();
-        let mut s = s.enumerate();
-        while let Some((i, blob)) = s.next().await {
-            let (blob, is_known) = blob?;
-            total_attempted += 1;
-            if is_known.is_none() {
-                task::block_in_place(|| txn.put(&blob))
-                    .inspect_err(|e| log::error!("Database::merge_blobs failed to add log: {e}"))?;
-                total_inserted += 1;
-            }
-            if i % self.logs.flush_size == 0 {
-                task::block_in_place(|| txn.flush())?;
-            }
-        }
-
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-
-        debug!(
-            "blobs merged: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
+        reduced::add(
+            s.boxed(),
+            self.logs.files.transaction().await?,
+            self.logs.files.name().clone(),
+            self.logs.flush_size,
+        )
+        .await?;
         Ok(())
     }
 
@@ -579,19 +336,34 @@ impl Database {
             .boxed();
         let s = TokioStreamExt::filter_map(s, |e| match e {
             Ok((_, UidState::Known)) => None,
-            Ok((rn, UidState::Unknown)) => Some(Ok((
-                rn.uid,
-                rn.repo_id,
-                RawRepositoryName { name: rn.name },
-                Always(),
-                ValidFrom {
-                    valid_from: rn.valid_from,
-                },
-            ))),
+            Ok((rn, UidState::Unknown)) => Some(Ok(rn.into())),
             Err(e) => Some(Err(e)),
         });
 
-        self.logs.add_repository_names(s.boxed()).await?;
+        reduced::add(
+            s.boxed(),
+            self.logs.repository_names.transaction().await?,
+            self.logs.repository_names.name().clone(),
+            self.logs.flush_size,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn select_repositories(&self) -> BoxStream<'static, Result<Repository, DBError>> {
+        self.kv
+            .stream_repositories()
+            .map_ok(|(repo_id, m)| Repository {
+                repo_id,
+                last_file_index: m.last_file_index,
+                last_blob_index: m.last_blob_index,
+                last_name_index: m.last_name_index,
+            })
+            .boxed()
+    }
+
+    pub async fn merge_repositories(&self, s: BoxStream<'_, Repository>) -> Result<(), DBError> {
+        self.kv.apply_repositories(s.map(Ok).boxed()).await?;
         Ok(())
     }
 
@@ -620,9 +392,9 @@ impl Database {
 
     pub async fn update_last_indices(&self) -> Result<(), DBError> {
         let tracer = Tracer::new_on("Database::update_last_indices");
-        let last_file_index = self.logs.files_writer.watermark()?;
-        let last_blob_index = self.logs.blobs_writer.watermark()?;
-        let last_name_index = self.logs.repository_names.watermark()?;
+        let last_file_index = self.logs.files.watermark();
+        let last_blob_index = self.logs.blobs.watermark();
+        let last_name_index = self.logs.repository_names.watermark();
         self.kv
             .apply_repositories(
                 stream::iter([Ok(Repository {
@@ -645,16 +417,23 @@ impl Database {
     ) -> BoxStream<'static, Result<AvailableBlob, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
-        let s = self.kv.stream_current_blobs();
+        let s = self.logs.blobs.current();
         TokioStreamExt::filter_map(s, {
             move |r| match r {
-                Ok((blob_ref, blob)) => {
+                Ok((
+                    blob_ref,
+                    BlobMeta {
+                        path: blob_path,
+                        size: blob_size,
+                    },
+                    (),
+                )) => {
                     if blob_ref.repo_id == repo_id {
                         Some(Ok(AvailableBlob {
                             repo_id: repo_id.clone(),
                             blob_id: blob_ref.blob_id,
-                            blob_size: blob.blob_size,
-                            path: blob.blob_path.map(|p| p.0),
+                            blob_size,
+                            path: blob_path.map(|p| p.0),
                         }))
                     } else {
                         None
@@ -674,7 +453,7 @@ impl Database {
             .logs
             .repository_names
             .current()
-            .map(|e| e.map(|(k, v)| (k, v.name)))
+            .map(|e| e.map(|(k, v, _)| (k, v.name)))
             .try_collect()
             .await
         {
@@ -682,15 +461,18 @@ impl Database {
             Err(e) => return stream::iter(vec![Err(e)]).boxed(),
         };
 
-        let s = self.kv.stream_current_files();
+        let s = self.logs.files.current();
 
         // filter down to blobs which are not available locally
-        let s = self.kv.left_join_current_blobs(s, move |(_, f)| BlobRef {
-            blob_id: f.blob_id,
-            repo_id: repo_id.clone(),
-        });
+        let s = self
+            .logs
+            .blobs
+            .left_join_current(s, move |(_, _, blob_id)| BlobRef {
+                blob_id,
+                repo_id: repo_id.clone(),
+            });
         let s = s.filter_map(async |x| match x {
-            Ok(((p, cf), None)) => Some(Ok((p, cf.blob_id))),
+            Ok(((p, _, blob_id), None)) => Some(Ok((p, blob_id))),
             Ok((_, Some(_))) => None,
             Err(e) => Some(Err(e)),
         });
@@ -709,8 +491,9 @@ impl Database {
         });
         let s = s.flatten().boxed();
         let s = self
-            .kv
-            .left_join_current_blobs(s, move |(_, b, r): (Path, BlobID, RepoID)| BlobRef {
+            .logs
+            .blobs
+            .left_join_current(s, move |(_, b, r): (Path, BlobID, RepoID)| BlobRef {
                 blob_id: b,
                 repo_id: r,
             });
@@ -743,36 +526,7 @@ impl Database {
         &self,
         s: BoxStream<'_, InsertMaterialisation>,
     ) -> Result<u64, DBError> {
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.materialisations_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn
-            .tail(TailFrom::Head)
-            .track("add_materialisations::log_stream");
-        let bg = self.materialisation_log_stream(tail.boxed());
-
-        let mut s = s.enumerate();
-        while let Some((i, mat)) = s.next().await {
-            total_attempted += 1;
-            task::block_in_place(|| txn.put(&mat)).inspect_err(|e| {
-                log::error!("Database::add_materialisations failed to add log: {e}")
-            })?;
-            total_inserted += 1;
-
-            if i % self.logs.flush_size == 0 {
-                task::block_in_place(|| txn.flush())?;
-            }
-        }
-
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-
-        debug!(
-            "materialisations added: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
-        Ok(total_inserted)
+        self.kv.apply_materialisations(s.map(Ok).boxed()).await
     }
 
     pub async fn select_missing_files_on_virtual_filesystem(
@@ -786,15 +540,13 @@ impl Database {
             Err(e) => return stream::iter(vec![Err(e)]).boxed(),
         };
 
-        let s = self.kv.stream_current_files();
-        let s = self
-            .kv
-            .left_join_current_observations(s, |(p, _)| p.clone());
+        let s = self.logs.files.current();
+        let s = self.kv.left_join_observations(s, |(p, _, _)| p.clone());
         let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((p, cf), co)) => {
+            Ok(((p, _, blob_id), co)) => {
                 let was_file_observed = co.is_some_and(|o| o.fs_last_seen_id == last_seen_id);
                 if !was_file_observed {
-                    Some(Ok((p, cf.blob_id)))
+                    Some(Ok((p, blob_id)))
                 } else {
                     None
                 }
@@ -802,7 +554,7 @@ impl Database {
             Err(e) => Some(Err(e)),
         })
         .boxed();
-        let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
+        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: repo_id.clone(),
         });
@@ -838,27 +590,31 @@ impl Database {
         repo_id: RepoID,
     ) -> BoxStream<'static, Result<VirtualFile, DBError>> {
         let s = s.map(Ok).boxed();
-        let s = self.kv.left_join_current_files(s, move |f| f.path);
+        let s = self.logs.files.left_join_current(s, move |f| f.path);
         let s = self
-            .kv
-            .left_join_current_blobs(s, move |(_, cf)| BlobRef {
-                blob_id: cf.map(|c| c.blob_id).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
+            .logs
+            .blobs
+            .left_join_current(s, move |(_, cf)| BlobRef {
+                blob_id: cf.map(|(_, b)| b).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
                 repo_id: repo_id.clone(),
             })
             .map_ok(|((f, cf), cb)| (f, cf, cb))
             .boxed();
         let s = self
             .kv
-            .left_join_current_materialisations(s, move |(f, _, _)| f.path)
+            .left_join_materialisations(s, move |(f, _, _)| f.path)
             .map_ok(|((f, cf, cb), cm)| (f, cf, cb, cm))
             .boxed();
         let s = self
             .kv
-            .left_join_current_check(s, move |(f, _, _, _)| f.path)
+            .left_join_check(s, move |(f, _, _, _)| f.path)
             .map_ok(|((f, cf, cb, cm), cc)| VirtualFile {
                 file_seen: f,
-                current_file: cf,
-                current_blob: cb,
+                current_file: cf.map(|(_, b)| CurrentFile { blob_id: b }),
+                current_blob: cb.map(|(b, _)| BlobMeta {
+                    size: b.size,
+                    path: b.path,
+                }),
                 current_materialisation: cm,
                 current_check: cc,
             })
@@ -915,9 +671,9 @@ impl Database {
             Err(e) => return stream::iter(vec![Err(e)]).boxed(),
         };
 
-        let s = self.kv.stream_current_files();
+        let s = self.logs.files.current();
         let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok((p, CurrentFile { blob_id, .. })) => {
+            Ok((p, (), blob_id)) => {
                 if prefixes.is_empty() || prefixes.iter().any(|prefix| p.0.starts_with(prefix)) {
                     Some(Ok((p, blob_id)))
                 } else {
@@ -929,8 +685,9 @@ impl Database {
         .boxed();
 
         let s = self
-            .kv
-            .left_join_current_blobs(s, move |(_, b)| BlobRef {
+            .logs
+            .blobs
+            .left_join_current(s, move |(_, b)| BlobRef {
                 blob_id: b.clone(),
                 repo_id: repo_id.clone(),
             })
@@ -941,18 +698,18 @@ impl Database {
             Err(e) => Some(Err(e)),
         })
         .boxed();
-        let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
+        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: remote_repo_id.clone(),
         });
         TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((_, b), Some(cb))) => {
+            Ok(((_, b), Some((lb, _)))) => {
                 let blob_path = Path(b.path().to_string_lossy().to_string());
                 Some(Ok(BlobTransferItem {
                     transfer_id,
                     blob_id: b,
                     path: blob_path,
-                    blob_size: cb.blob_size,
+                    blob_size: lb.size,
                 }))
             }
             Ok((_, None)) => None,
@@ -970,9 +727,9 @@ impl Database {
     ) -> BoxStream<'static, Result<FileTransferItem, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
-        let s = self.kv.stream_current_files();
+        let s = self.logs.files.current();
         let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok((p, CurrentFile { blob_id, .. })) => {
+            Ok((p, (), blob_id)) => {
                 if prefixes.is_empty() || prefixes.iter().any(|prefix| p.0.starts_with(prefix)) {
                     Some(Ok((p, blob_id)))
                 } else {
@@ -983,7 +740,7 @@ impl Database {
         })
         .boxed();
 
-        let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
+        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: local_repo_id.clone(),
         });
@@ -993,16 +750,16 @@ impl Database {
             Err(e) => Some(Err(e)),
         })
         .boxed();
-        let s = self.kv.left_join_current_blobs(s, move |(_, b)| BlobRef {
+        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
             blob_id: b.clone(),
             repo_id: remote_repo_id.clone(),
         });
 
         TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((p, b), Some(CurrentBlob { blob_size, .. }))) => Some(Ok(FileTransferItem {
+            Ok(((p, b), Some((lb, ())))) => Some(Ok(FileTransferItem {
                 transfer_id,
                 blob_id: b,
-                blob_size,
+                blob_size: lb.size,
                 path: p,
             })),
             Ok((_, None)) => None,
@@ -1018,7 +775,7 @@ impl Database {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = stream::iter([Ok(Path(file_or_dir.clone()))]).boxed();
-        let s = self.kv.left_join_current_files(s, |p| p);
+        let s = self.logs.files.left_join_current(s, |p| p);
         let s: Vec<_> = TokioStreamExt::collect(s).await;
         let (p, cf) = match s.into_iter().next().unwrap() {
             Ok(e) => e,
@@ -1026,12 +783,12 @@ impl Database {
         };
 
         match cf {
-            Some(cf) => stream::iter([Ok((p, cf.blob_id))]).boxed(),
+            Some(((), b)) => stream::iter([Ok((p, b))]).boxed(),
             None => {
-                let s = self.kv.stream_current_files();
+                let s = self.logs.files.current();
                 let s = TokioStreamExt::filter_map(s, move |p| match p {
-                    Ok((p, cf)) => match p.0.starts_with(&file_or_dir) {
-                        true => Some(Ok((p, cf.blob_id))),
+                    Ok((p, (), b)) => match p.0.starts_with(&file_or_dir) {
+                        true => Some(Ok((p, b))),
                         false => None,
                     },
                     Err(e) => Some(Err(e)),
@@ -1050,149 +807,54 @@ impl Database {
         s: BoxStream<'static, Result<K, E>>,
         key_func: impl Fn(K) -> Path + Sync + Send + 'static,
     ) -> BoxStream<'a, Result<(K, Option<CurrentFile>), E>> {
-        self.kv.left_join_current_files(s, key_func).boxed()
+        self.logs
+            .files
+            .left_join_current(s, key_func)
+            .map_ok(|(k, f)| {
+                let v = f.map(|(_, blob_id)| CurrentFile { blob_id });
+                (k, v)
+            })
+            .boxed()
+    }
+}
+
+struct FileBundleTransaction {
+    blob_txn: Transaction<BlobRef, BlobMeta, HasBlob>,
+    file_txn: Transaction<Path, (), FileBlobID>,
+    mat_tx: TrackedSender<Result<InsertMaterialisation, DBError>, Adapter>,
+}
+
+impl
+    TransactionLike<(
+        (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom),
+        (Uid, Path, (), FileBlobID, ValidFrom),
+        InsertMaterialisation,
+    )> for FileBundleTransaction
+{
+    async fn put(
+        &mut self,
+        (b, f, m): &(
+            (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom),
+            (Uid, Path, (), FileBlobID, ValidFrom),
+            InsertMaterialisation,
+        ),
+    ) -> Result<(), DBError> {
+        self.blob_txn.put(b).await?;
+        self.file_txn.put(f).await?;
+        self.mat_tx.send(Ok(m.clone())).await?;
+        Ok(())
     }
 
-    fn blob_log_stream(
-        &self,
-        s: BoxStream<'static, Result<(Offset, Blob), logstore::Error>>,
-    ) -> JoinHandle<Result<usize, DBError>> {
-        use tokio_stream::StreamExt as TokioStreamExt;
-
-        let inner = self.clone();
-        tokio::spawn(async move {
-            let (uid_tx, uid_rx) = mpsc_channel("blob_log_stream::uid", UID_BUFFER);
-            let counter = Arc::new(AtomicUsize::new(0));
-            let max_offset = Arc::new(AtomicU64::new(0));
-
-            let counter_clone = counter.clone();
-            let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::then(s, move |e: Result<(Offset, Blob), logstore::Error>| {
-                let uid_tx = uid_tx.clone();
-                let counter_clone = counter_clone.clone();
-                let max_offset_clone = max_offset_clone.clone();
-                async move {
-                    match e {
-                        Ok((o, b)) => {
-                            counter_clone.fetch_add(1, Ordering::Relaxed);
-                            max_offset_clone.store(o.into(), Ordering::SeqCst);
-                            uid_tx.send(Ok(b.uid)).await?;
-                            Ok(b)
-                        }
-                        Err(e) => Err::<_, DBError>(e.into()),
-                    }
-                }
-            })
-            .boxed();
-
-            tokio::try_join!(
-                inner.kv.apply_blobs(s),
-                inner.kv.apply_known_blob_uids(uid_rx.boxed()),
-            )?;
-
-            let counter = counter.load(Ordering::Relaxed);
-            if counter > 0 {
-                let max_offset = max_offset.load(Ordering::SeqCst);
-                inner
-                    .kv
-                    .apply_current_reductions(
-                        stream::iter([(BLOB_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
-                    )
-                    .await?;
-            }
-
-            Ok(counter)
-        })
+    async fn flush(&mut self) -> Result<(), DBError> {
+        self.blob_txn.flush().await?;
+        self.file_txn.flush().await?;
+        Ok(())
     }
 
-    fn file_log_stream(
-        &self,
-        s: BoxStream<'static, Result<(Offset, File), logstore::Error>>,
-    ) -> JoinHandle<Result<usize, DBError>> {
-        use tokio_stream::StreamExt as TokioStreamExt;
-
-        let inner = self.clone();
-        tokio::spawn(async move {
-            let (uid_tx, uid_rx) = mpsc_channel("file_log_stream::uid", UID_BUFFER);
-            let counter = Arc::new(AtomicUsize::new(0));
-            let max_offset = Arc::new(AtomicU64::new(0));
-
-            let counter_clone = counter.clone();
-            let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::then(s, move |e: Result<(Offset, File), logstore::Error>| {
-                let uid_tx = uid_tx.clone();
-                let counter_clone = counter_clone.clone();
-                let max_offset_clone = max_offset_clone.clone();
-                async move {
-                    match e {
-                        Ok((o, f)) => {
-                            counter_clone.fetch_add(1, Ordering::Relaxed);
-                            max_offset_clone.store(o.into(), Ordering::SeqCst);
-                            uid_tx.send(Ok(f.uid)).await?;
-                            Ok(f)
-                        }
-                        Err(e) => Err::<_, DBError>(e.into()),
-                    }
-                }
-            })
-            .boxed();
-
-            tokio::try_join!(
-                inner.kv.apply_files(s),
-                inner.kv.apply_known_file_uids(uid_rx.boxed()),
-            )?;
-
-            let counter = counter.load(Ordering::Relaxed);
-            if counter > 0 {
-                let max_offset = max_offset.load(Ordering::SeqCst);
-                inner
-                    .kv
-                    .apply_current_reductions(
-                        stream::iter([(FILE_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
-                    )
-                    .await?;
-            }
-
-            Ok(counter)
-        })
-    }
-
-    fn materialisation_log_stream(
-        &self,
-        s: BoxStream<'static, Result<(Offset, InsertMaterialisation), logstore::Error>>,
-    ) -> JoinHandle<Result<usize, DBError>> {
-        use tokio_stream::StreamExt as TokioStreamExt;
-
-        let inner = self.clone();
-        tokio::spawn(async move {
-            let counter = Arc::new(AtomicUsize::new(0));
-            let max_offset = Arc::new(AtomicU64::new(0));
-
-            let counter_clone = counter.clone();
-            let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::map(s, move |e| match e {
-                Ok((o, m)) => {
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                    max_offset_clone.store(o.into(), Ordering::SeqCst);
-                    Ok(m)
-                }
-                Err(e) => Err(e.into()),
-            })
-            .boxed();
-            inner.kv.apply_materialisations(s).await?;
-
-            let counter = counter.load(Ordering::Relaxed);
-            if counter > 0 {
-                let max_offset = max_offset.load(Ordering::SeqCst);
-                inner
-                    .kv
-                    .apply_current_reductions(
-                        stream::iter([(MAT_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
-                    )
-                    .await?;
-            }
-
-            Ok(counter)
-        })
+    async fn close(self) -> Result<(), DBError> {
+        self.blob_txn.close().await?;
+        self.file_txn.close().await?;
+        drop(self.mat_tx);
+        Ok(())
     }
 }

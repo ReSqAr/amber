@@ -1,10 +1,10 @@
 use crate::db::error::DBError;
-use crate::db::kvstore::{KVStore, Upsert, UpsertAction};
 use crate::db::models::{
-    Blob, BlobRef, Connection, ConnectionMetadata, ConnectionName, CurrentBlob, CurrentCheck,
-    CurrentFile, CurrentMaterialisation, CurrentObservation, CurrentRepository, File, FileCheck, FileSeen, InsertMaterialisation, LogOffset, Path,
-    RepoID, Repository, RepositoryMetadata, TableName, Uid,
+    Connection, ConnectionMetadata, ConnectionName, CurrentCheck, CurrentObservation, FileCheck,
+    FileSeen, InsertMaterialisation, LocalRepository, Materialisation, Path, RepoID, Repository,
+    RepositoryMetadata,
 };
+use crate::db::stores::kv::{Store, Upsert, UpsertAction};
 use crate::flightdeck::tracer::Tracer;
 use futures::{StreamExt, TryStreamExt, stream};
 use futures_core::stream::BoxStream;
@@ -12,71 +12,16 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 use tokio::fs::create_dir_all;
 
-struct UpsertBlob(Blob);
-impl Upsert for UpsertBlob {
-    type K = BlobRef;
-    type V = CurrentBlob;
-
-    fn key(&self) -> BlobRef {
-        BlobRef {
-            blob_id: self.0.blob_id.clone(),
-            repo_id: self.0.repo_id.clone(),
-        }
-    }
-
-    fn upsert(self, v: Option<CurrentBlob>) -> UpsertAction<CurrentBlob> {
-        if let Some(v) = v
-            && v.valid_from > self.0.valid_from
-        {
-            return UpsertAction::NoChange;
-        }
-
-        match self.0.has_blob {
-            true => UpsertAction::Change(CurrentBlob {
-                blob_path: self.0.path,
-                valid_from: self.0.valid_from,
-                blob_size: self.0.blob_size,
-            }),
-            false => UpsertAction::Delete,
-        }
-    }
-}
-
-struct UpsertFile(File);
-impl Upsert for UpsertFile {
-    type K = Path;
-    type V = CurrentFile;
-
-    fn key(&self) -> Path {
-        self.0.path.clone()
-    }
-
-    fn upsert(self, v: Option<CurrentFile>) -> UpsertAction<CurrentFile> {
-        if let Some(v) = v
-            && v.valid_from > self.0.valid_from
-        {
-            return UpsertAction::NoChange;
-        }
-
-        match self.0.blob_id {
-            Some(blob_id) => UpsertAction::Change(CurrentFile {
-                blob_id,
-                valid_from: self.0.valid_from,
-            }),
-            None => UpsertAction::Delete,
-        }
-    }
-}
 struct UpsertMaterialisation(InsertMaterialisation);
 impl Upsert for UpsertMaterialisation {
     type K = Path;
-    type V = CurrentMaterialisation;
+    type V = Materialisation;
 
     fn key(&self) -> Path {
         self.0.path.clone()
     }
 
-    fn upsert(self, v: Option<CurrentMaterialisation>) -> UpsertAction<CurrentMaterialisation> {
+    fn upsert(self, v: Option<Materialisation>) -> UpsertAction<Materialisation> {
         if let Some(v) = v
             && v.valid_from > self.0.valid_from
         {
@@ -84,35 +29,11 @@ impl Upsert for UpsertMaterialisation {
         }
 
         match self.0.blob_id {
-            Some(blob_id) => UpsertAction::Change(CurrentMaterialisation {
+            Some(blob_id) => UpsertAction::Change(Materialisation {
                 blob_id,
                 valid_from: self.0.valid_from,
             }),
             None => UpsertAction::Delete,
-        }
-    }
-}
-
-
-struct UpsertCurrentReduction(TableName, LogOffset);
-impl Upsert for UpsertCurrentReduction {
-    type K = TableName;
-    type V = LogOffset;
-
-    fn key(&self) -> TableName {
-        self.0.clone()
-    }
-
-    fn upsert(self, v: Option<LogOffset>) -> UpsertAction<LogOffset> {
-        match v {
-            None => UpsertAction::Change(self.1),
-            Some(o) => {
-                if self.1 > o {
-                    UpsertAction::Change(self.1)
-                } else {
-                    UpsertAction::NoChange
-                }
-            }
         }
     }
 }
@@ -150,17 +71,12 @@ impl Upsert for UpsertRepositoryMetadata {
 
 #[derive(Clone)]
 pub(crate) struct KVStores {
-    known_blob_uids: KVStore<Uid, ()>,
-    known_file_uids: KVStore<Uid, ()>,
-    current_blobs: KVStore<BlobRef, CurrentBlob>,
-    current_files: KVStore<Path, CurrentFile>,
-    current_materialisations: KVStore<Path, CurrentMaterialisation>,
-    current_observations: KVStore<Path, CurrentObservation>,
-    current_checks: KVStore<Path, CurrentCheck>,
-    current_repository: KVStore<(), CurrentRepository>,
-    repositories: KVStore<RepoID, RepositoryMetadata>,
-    connections: KVStore<ConnectionName, ConnectionMetadata>,
-    current_reductions: KVStore<TableName, LogOffset>,
+    materialisations: Store<Path, Materialisation>,
+    observations: Store<Path, CurrentObservation>,
+    checks: Store<Path, CurrentCheck>,
+    local_repository: Store<(), LocalRepository>,
+    repositories: Store<RepoID, RepositoryMetadata>,
+    connections: Store<ConnectionName, ConnectionMetadata>,
 }
 
 impl KVStores {
@@ -168,168 +84,81 @@ impl KVStores {
         create_dir_all(&base_path).await?;
 
         let tracer = Tracer::new_on("KVStores::new");
-
-        let known_blob_uids = KVStore::new(
-            base_path.join("known_blob_uids.kv"),
-            "known_blob_uids".to_string(),
+        let materialisations = Store::new(
+            base_path.join("materialisations.kv"),
+            "materialisations".to_string(),
         );
-        let known_file_uids = KVStore::new(
-            base_path.join("known_file_uids.kv"),
-            "known_file_uids".to_string(),
+        let observations = Store::new(
+            base_path.join("observations.kv"),
+            "observations".to_string(),
         );
-        let current_blobs = KVStore::new(
-            base_path.join("current_blobs.kv"),
-            "current_blobs".to_string(),
+        let checks = Store::new(base_path.join("checks.kv"), "checks".to_string());
+        let local_repository = Store::new(
+            base_path.join("local_repository.kv"),
+            "local_repository".to_string(),
         );
-        let current_files = KVStore::new(
-            base_path.join("current_files.kv"),
-            "current_files".to_string(),
-        );
-        let current_materialisations = KVStore::new(
-            base_path.join("current_materialisations.kv"),
-            "current_materialisations".to_string(),
-        );
-        let current_observations = KVStore::new(
-            base_path.join("current_observations.kv"),
-            "current_observations".to_string(),
-        );
-        let current_checks = KVStore::new(
-            base_path.join("current_checks.kv"),
-            "current_checks".to_string(),
-        );
-        let current_repository = KVStore::new(
-            base_path.join("current_repository.kv"),
-            "current_repository".to_string(),
-        );
-        let repositories = KVStore::new(
+        let repositories = Store::new(
             base_path.join("repositories.kv"),
             "repositories".to_string(),
         );
-        let connections = KVStore::new(base_path.join("connections.kv"), "connections".to_string());
-        let current_reductions = KVStore::new(
-            base_path.join("current_reductions.kv"),
-            "current_reductions".to_string(),
-        );
+        let connections = Store::new(base_path.join("connections.kv"), "connections".to_string());
 
-        let (
-            known_blob_uids,
-            known_file_uids,
-            current_blobs,
-            current_files,
-            current_materialisations,
-            current_observations,
-            current_checks,
-            current_repository,
-            repositories,
-            connections,
-            current_reductions,
-        ) = tokio::try_join!(
-            known_blob_uids,
-            known_file_uids,
-            current_blobs,
-            current_files,
-            current_materialisations,
-            current_observations,
-            current_checks,
-            current_repository,
-            repositories,
-            connections,
-            current_reductions,
-        )?;
+        let (materialisations, observations, checks, local_repository, repositories, connections) =
+            tokio::try_join!(
+                materialisations,
+                observations,
+                checks,
+                local_repository,
+                repositories,
+                connections,
+            )?;
         tracer.measure();
 
         Ok(Self {
-            known_blob_uids,
-            known_file_uids,
-            current_blobs,
-            current_files,
-            current_materialisations,
-            current_observations,
-            current_checks,
-            current_repository,
+            materialisations,
+            observations,
+            checks,
+            local_repository,
             repositories,
             connections,
-            current_reductions,
         })
     }
 
     pub(crate) async fn close(&self) -> Result<(), DBError> {
         tokio::try_join!(
-            self.known_blob_uids.close(),
-            self.known_file_uids.close(),
-            self.current_blobs.close(),
-            self.current_files.close(),
-            self.current_materialisations.close(),
-            self.current_observations.close(),
-            self.current_checks.close(),
-            self.current_repository.close(),
+            self.materialisations.close(),
+            self.observations.close(),
+            self.checks.close(),
+            self.local_repository.close(),
             self.repositories.close(),
             self.connections.close(),
-            self.current_reductions.close(),
         )?;
         Ok(())
     }
 
     pub(crate) async fn compact(&self) -> Result<(), DBError> {
         tokio::try_join!(
-            self.known_blob_uids.compact(),
-            self.known_file_uids.compact(),
-            self.current_blobs.compact(),
-            self.current_files.compact(),
-            self.current_materialisations.compact(),
-            self.current_observations.compact(),
-            self.current_checks.compact(),
-            self.current_repository.compact(),
+            self.materialisations.compact(),
+            self.observations.compact(),
+            self.checks.compact(),
+            self.local_repository.compact(),
             self.repositories.compact(),
             self.connections.compact(),
-            self.current_reductions.compact(),
         )?;
         Ok(())
     }
 
-    pub(crate) async fn apply_known_blob_uids(
-        &self,
-        s: BoxStream<'static, Result<Uid, DBError>>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(|e| e.map(|u| (u, Some(())))).boxed();
-        self.known_blob_uids.apply(s).await
-    }
-
-    pub(crate) async fn apply_known_file_uids(
-        &self,
-        s: BoxStream<'static, Result<Uid, DBError>>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(|e| e.map(|u| (u, Some(())))).boxed();
-        self.known_file_uids.apply(s).await
-    }
-
-    pub(crate) async fn apply_blobs(
-        &self,
-        s: BoxStream<'static, Result<Blob, DBError>>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertBlob)).boxed();
-        self.current_blobs.upsert(s).await
-    }
-
-    pub(crate) async fn apply_files(
-        &self,
-        s: BoxStream<'static, Result<File, DBError>>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertFile)).boxed();
-        self.current_files.upsert(s).await
-    }
-
     pub(crate) async fn apply_materialisations(
         &self,
-        s: BoxStream<'static, Result<InsertMaterialisation, DBError>>,
+        s: BoxStream<'_, Result<InsertMaterialisation, DBError>>,
     ) -> Result<u64, DBError> {
         let s = s.map(move |r| r.map(UpsertMaterialisation)).boxed();
-        self.current_materialisations.upsert(s).await
+        self.materialisations.upsert(s).await
     }
-    
+
     pub(crate) async fn apply_file_seen(
         &self,
-        s: BoxStream<'static, Result<FileSeen, DBError>>,
+        s: BoxStream<'_, Result<FileSeen, DBError>>,
     ) -> Result<u64, DBError> {
         let map = |e: FileSeen| {
             (
@@ -343,7 +172,7 @@ impl KVStores {
             )
         };
         let s = s.map(move |r| r.map(map)).boxed();
-        self.current_observations.apply(s).await
+        self.observations.apply(s).await
     }
 
     pub(crate) async fn apply_file_checks(
@@ -360,24 +189,16 @@ impl KVStores {
             )
         };
         let s = s.map(move |r| r.map(map)).boxed();
-        self.current_checks.apply(s).await
+        self.checks.apply(s).await
     }
 
     pub(crate) async fn store_current_repository(
         &self,
-        current_repository: CurrentRepository,
+        current_repository: LocalRepository,
     ) -> Result<u64, DBError> {
-        self.current_repository
+        self.local_repository
             .apply(stream::iter([Ok(((), Some(current_repository)))]).boxed())
             .await
-    }
-
-    pub(crate) async fn apply_current_reductions(
-        &self,
-        s: BoxStream<'static, (TableName, LogOffset)>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(|(t, o)| Ok(UpsertCurrentReduction(t, o))).boxed();
-        self.current_reductions.upsert(s).await
     }
 
     pub(crate) async fn store_connection(
@@ -410,22 +231,8 @@ impl KVStores {
         self.repositories.upsert(s).await
     }
 
-    pub(crate) fn stream_current_blobs(
-        &self,
-    ) -> BoxStream<'static, Result<(BlobRef, CurrentBlob), DBError>> {
-        self.current_blobs.stream()
-    }
-
-    pub(crate) fn stream_current_files(
-        &self,
-    ) -> BoxStream<'static, Result<(Path, CurrentFile), DBError>> {
-        self.current_files.stream()
-    }
-
-    pub(crate) async fn load_current_repository(
-        &self,
-    ) -> Result<Option<CurrentRepository>, DBError> {
-        let v: Vec<_> = self.current_repository.stream().try_collect().await?;
+    pub(crate) async fn load_local_repository(&self) -> Result<Option<LocalRepository>, DBError> {
+        let v: Vec<_> = self.local_repository.stream().try_collect().await?;
         Ok(v.into_iter().next().map(|(_, cr)| cr))
     }
 
@@ -441,49 +248,7 @@ impl KVStores {
         self.connections.stream()
     }
 
-    pub(crate) fn stream_current_reductions(
-        &self,
-    ) -> BoxStream<'static, Result<(TableName, LogOffset), DBError>> {
-        self.current_reductions.stream()
-    }
-
-    pub(crate) fn left_join_current_blobs<IK, KF>(
-        &self,
-        s: BoxStream<'static, Result<IK, DBError>>,
-        key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<CurrentBlob>), DBError>>
-    where
-        KF: Fn(IK) -> BlobRef + Sync + Send + 'static,
-        IK: Clone + Send + Sync + 'static,
-    {
-        self.current_blobs.left_join(s, key_func)
-    }
-
-    pub(crate) fn left_join_known_blob_uids<IK, KF>(
-        &self,
-        s: BoxStream<'static, Result<IK, DBError>>,
-        key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<()>), DBError>>
-    where
-        KF: Fn(IK) -> Uid + Sync + Send + 'static,
-        IK: Clone + Send + Sync + 'static,
-    {
-        self.known_blob_uids.left_join(s, key_func)
-    }
-
-    pub(crate) fn left_join_known_file_uids<IK, KF>(
-        &self,
-        s: BoxStream<'static, Result<IK, DBError>>,
-        key_func: KF,
-    ) -> BoxStream<'_, Result<(IK, Option<()>), DBError>>
-    where
-        KF: Fn(IK) -> Uid + Sync + Send + 'static,
-        IK: Clone + Send + Sync + 'static,
-    {
-        self.known_file_uids.left_join(s, key_func)
-    }
-
-    pub(crate) fn left_join_current_files<
+    pub(crate) fn left_join_materialisations<
         IK,
         KF,
         E: From<DBError> + Debug + Send + Sync + 'static,
@@ -491,35 +256,15 @@ impl KVStores {
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<CurrentFile>), E>>
+    ) -> BoxStream<'static, Result<(IK, Option<Materialisation>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
-        self.current_files.left_join(s, key_func)
+        self.materialisations.left_join(s, key_func)
     }
 
-    pub(crate) fn left_join_current_materialisations<
-        IK,
-        KF,
-        E: From<DBError> + Debug + Send + Sync + 'static,
-    >(
-        &self,
-        s: BoxStream<'static, Result<IK, E>>,
-        key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<CurrentMaterialisation>), E>>
-    where
-        KF: Fn(IK) -> Path + Sync + Send + 'static,
-        IK: Clone + Send + Sync + 'static,
-    {
-        self.current_materialisations.left_join(s, key_func)
-    }
-
-    pub(crate) fn left_join_current_observations<
-        IK,
-        KF,
-        E: From<DBError> + Debug + Send + Sync + 'static,
-    >(
+    pub(crate) fn left_join_observations<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
@@ -528,14 +273,10 @@ impl KVStores {
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
-        self.current_observations.left_join(s, key_func)
+        self.observations.left_join(s, key_func)
     }
 
-    pub(crate) fn left_join_current_check<
-        IK,
-        KF,
-        E: From<DBError> + Debug + Send + Sync + 'static,
-    >(
+    pub(crate) fn left_join_check<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
@@ -544,7 +285,7 @@ impl KVStores {
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
-        self.current_checks.left_join(s, key_func)
+        self.checks.left_join(s, key_func)
     }
 
     pub(crate) fn left_join_repositories<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(

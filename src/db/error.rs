@@ -1,13 +1,11 @@
-use crate::db::logstore;
 use thiserror::Error;
-use tokio::task::JoinError;
 
 #[derive(Error, Debug)]
 pub enum DBError {
     #[error("an inconsistency was detected: {0}")]
     InconsistencyError(String),
     #[error("{0}")]
-    JoinError(#[from] JoinError),
+    JoinError(#[from] tokio::task::JoinError),
     #[error("rocksdb error: {0}")]
     RocksDB(#[from] rocksdb::Error),
     #[error("io error: {0}")]
@@ -21,7 +19,7 @@ pub enum DBError {
     #[error("scratch file {0} already exists")]
     ScratchFileExists(String),
     #[error("LogStore error {0}")]
-    LogStore(#[from] logstore::Error),
+    LogStore(#[from] crate::db::stores::log::Error),
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for DBError {
