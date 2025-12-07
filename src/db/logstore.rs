@@ -227,6 +227,11 @@ where
             _marker: PhantomData,
         })
     }
+    
+    pub async fn close(&self) -> Result<()> {
+        // TODO
+        Ok(())
+    }
 
     pub fn watermark(&self) -> Result<Option<Offset>> {
         self.inner.current_watermark()

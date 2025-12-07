@@ -1,15 +1,16 @@
 use crate::db::error::DBError;
 use crate::db::kv::KVStores;
-use crate::db::logs::Logs;
+use crate::db::logs::{Always, Logs};
 use crate::db::logstore;
 use crate::db::logstore::{Offset, TailFrom};
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobRef, BlobTransferItem, Connection,
     ConnectionName, CurrentBlob, CurrentFile, CurrentRepository, File, FileCheck, FileSeen,
     FileTransferItem, InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation,
-    InsertRepositoryName, LogOffset, MissingFile, Path, RepoID, Repository, RepositoryMetadata,
-    RepositoryName, VirtualFile,
+    InsertRepositoryName, LogOffset, MissingFile, Path, RawRepositoryName, RepoID, Repository,
+    RepositoryMetadata, RepositoryName, Uid, VirtualFile,
 };
+use crate::db::reduced::{TransactionLike, UidState, ValidFrom};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::tracer::Tracer;
 use crate::flightdeck::tracked::mpsc_channel;
@@ -24,8 +25,8 @@ use std::fmt::Debug;
 use std::future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use tokio::task;
 use tokio::task::JoinHandle;
+use tokio::{task, try_join};
 use uuid::Uuid;
 
 const UID_BUFFER: usize = 100;
@@ -39,7 +40,6 @@ pub struct Database {
 const FILE_TABLE_NAME: &str = "files";
 const BLOB_TABLE_NAME: &str = "blobs";
 const MAT_TABLE_NAME: &str = "materialisations";
-const NAME_TABLE_NAME: &str = "repository_names";
 
 impl Database {
     pub fn new(kv: KVStores, logs: Logs) -> Self {
@@ -53,24 +53,26 @@ impl Database {
         let mut ob = BaseObserver::without_id("Database::clean::blobs");
         let mut of = BaseObserver::without_id("Database::clean::files");
         let mut om = BaseObserver::without_id("Database::clean::materialisations");
-        let mut orn = BaseObserver::without_id("Database::clean::repository_names");
 
         let blob_offset = Self::next_offset(reductions.get(&BLOB_TABLE_NAME.into()).copied());
         let file_offset = Self::next_offset(reductions.get(&FILE_TABLE_NAME.into()).copied());
         let mat_offset = Self::next_offset(reductions.get(&MAT_TABLE_NAME.into()).copied());
-        let name_offset = Self::next_offset(reductions.get(&NAME_TABLE_NAME.into()).copied());
 
         let b_reader = self.logs.blobs_writer.reader();
         let f_reader = self.logs.files_writer.reader();
         let m_reader = self.logs.materialisations_writer.reader();
-        let rn_reader = self.logs.repository_names_writer.reader();
 
         let b = self.blob_log_stream(b_reader.from(blob_offset).boxed());
         let f = self.file_log_stream(f_reader.from(file_offset).boxed());
         let m = self.materialisation_log_stream(m_reader.from(mat_offset).boxed());
-        let rn = self.repository_name_log_stream(rn_reader.from(name_offset).boxed());
 
-        let (b_count, f_count, m_count, rn_count) = tokio::try_join!(b, f, m, rn)?;
+        let rn2 = async {
+            let txn = self.logs.repository_names.transaction().await?;
+            txn.close().await?;
+            Ok::<_, DBError>(())
+        };
+
+        let (b_count, f_count, m_count) = tokio::try_join!(b, f, m)?;
         ob.observe_termination_ext(
             log::Level::Debug,
             "reduced",
@@ -86,18 +88,15 @@ impl Database {
             "reduced",
             [("count".into(), m_count? as u64)],
         );
-        orn.observe_termination_ext(
-            log::Level::Debug,
-            "reduced",
-            [("count".into(), rn_count? as u64)],
-        );
+
+        tokio::try_join!(rn2)?;
 
         tracer.measure();
         Ok(())
     }
 
     pub async fn close(&self) -> Result<(), DBError> {
-        self.kv.close().await?;
+        try_join!(self.kv.close(), self.logs.close())?;
         Ok(())
     }
 
@@ -129,10 +128,10 @@ impl Database {
         &self,
         repo_id: RepoID,
     ) -> Result<Option<String>, DBError> {
-        let s = self.kv.left_join_current_repository_names(
-            stream::iter(vec![Ok::<_, DBError>(repo_id)]).boxed(),
-            |r| r,
-        );
+        let s = self
+            .logs
+            .repository_names
+            .left_join_current(stream::iter(vec![Ok::<_, DBError>(repo_id)]).boxed(), |r| r);
         let r: Vec<_> = s.collect().await;
 
         assert_eq!(r.len(), 1, "expected precisely 1 repository lookup result");
@@ -382,59 +381,22 @@ impl Database {
         &self,
         s: BoxStream<'_, InsertRepositoryName>,
     ) -> Result<u64, DBError> {
-        let tracer = Tracer::new_on("Database::add_repository_names");
+        use tokio_stream::StreamExt as TokioStreamExt;
 
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.repository_names_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn
-            .tail(TailFrom::Head)
-            .track("add_repository_names::log_stream");
-        let bg = self.repository_name_log_stream(tail.boxed());
-
-        let mut tracer_push = Tracer::new_off("Database::add_repository_names::push");
-        let mut tracer_flush = Tracer::new_off("Database::add_repository_names::flush");
         let ts = Utc::now().timestamp_nanos_opt().unwrap() as u64;
-        let mut s = s.enumerate();
-        while let Some((i, blob)) = s.next().await {
-            total_attempted += 1;
-            let uid = (ts + (i as u64)).into();
-            tracer_push.on();
-            task::block_in_place(|| {
-                txn.put(&RepositoryName {
-                    uid,
-                    repo_id: blob.repo_id.clone(),
-                    name: blob.name.clone(),
-                    valid_from: blob.valid_from,
-                })
-            })
-            .inspect_err(|e| {
-                log::error!("Database::add_repository_names failed to add log: {e}")
-            })?;
-            tracer_push.off();
-            total_inserted += 1;
+        let s = TokioStreamExt::map(s.enumerate(), |(i, rn)| {
+            Ok((
+                Uid(ts + (i as u64)),
+                rn.repo_id,
+                RawRepositoryName { name: rn.name },
+                Always(),
+                ValidFrom {
+                    valid_from: rn.valid_from,
+                },
+            ))
+        });
 
-            if i % self.logs.flush_size == 0 {
-                tracer_flush.on();
-                task::block_in_place(|| txn.flush())?;
-                tracer_flush.off();
-            }
-        }
-        tracer_push.measure();
-        tracer_flush.measure();
-
-        let tracer_commit = Tracer::new_on("Database::add_repository_names::commit");
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-        tracer_commit.measure();
-
-        debug!(
-            "repository_names added: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
-        tracer.measure();
-        Ok(total_inserted)
+        self.logs.add_repository_names(s.boxed()).await
     }
 
     pub async fn select_repositories(&self) -> BoxStream<'static, Result<Repository, DBError>> {
@@ -507,23 +469,19 @@ impl Database {
         &self,
         last_index: Option<u64>,
     ) -> BoxStream<'static, Result<RepositoryName, DBError>> {
-        let reader = self.logs.repository_names_writer.reader();
-        let watermark = match reader.watermark() {
-            Ok(w) => w,
-            Err(e) => return stream::iter([Err(e.into())]).boxed(),
-        };
         let from = Self::next_offset(last_index);
-        reader
-            .from(from)
-            .take_while(move |r| {
-                future::ready(match r {
-                    Ok((idx, _)) => watermark.as_ref().is_some_and(|w| idx <= w),
-                    Err(_) => true,
-                })
-            })
+        self.logs
+            .repository_names
+            .select(from)
+            .await
             .map(|r| match r {
-                Ok((_, name)) => Ok(name),
-                Err(e) => Err(e.into()),
+                Ok((_, (uid, repo_id, name, _, valid_from))) => Ok(RepositoryName {
+                    uid,
+                    repo_id,
+                    name: name.name,
+                    valid_from: valid_from.valid_from,
+                }),
+                Err(e) => Err(e),
             })
             .boxed()
             .track("db::select_repository_names")
@@ -611,41 +569,29 @@ impl Database {
         &self,
         s: BoxStream<'static, RepositoryName>,
     ) -> Result<(), DBError> {
-        let mut total_attempted: u64 = 0;
-        let mut total_inserted: u64 = 0;
-        let writer = self.logs.repository_names_writer.clone();
-        let mut txn = task::spawn_blocking(move || writer.transaction()).await??;
-        let tail = txn
-            .tail(TailFrom::Head)
-            .track("merge_repository_names::log_stream");
-        let bg = self.repository_name_log_stream(tail.boxed());
+        use tokio_stream::StreamExt as TokioStreamExt;
 
+        let s = TokioStreamExt::map(s, Ok);
         let s = self
-            .kv
-            .left_join_known_repository_name_uids(s.map(Ok).boxed(), |rn: RepositoryName| rn.uid)
+            .logs
+            .repository_names
+            .left_join_known_uids(s.boxed(), |rn: RepositoryName| rn.uid)
             .boxed();
-        let mut s = s.enumerate();
-        while let Some((i, repository_name)) = s.next().await {
-            let (repository_name, is_known) = repository_name?;
-            total_attempted += 1;
-            if is_known.is_none() {
-                task::block_in_place(|| txn.put(&repository_name)).inspect_err(|e| {
-                    log::error!("Database::merge_repository_names failed to add log: {e}")
-                })?;
-                total_inserted += 1;
-            }
-            if i % self.logs.flush_size == 0 {
-                task::block_in_place(|| txn.flush())?;
-            }
-        }
+        let s = TokioStreamExt::filter_map(s, |e| match e {
+            Ok((_, UidState::Known)) => None,
+            Ok((rn, UidState::Unknown)) => Some(Ok((
+                rn.uid,
+                rn.repo_id,
+                RawRepositoryName { name: rn.name },
+                Always(),
+                ValidFrom {
+                    valid_from: rn.valid_from,
+                },
+            ))),
+            Err(e) => Some(Err(e)),
+        });
 
-        task::block_in_place(|| txn.close())?;
-        bg.await??;
-
-        debug!(
-            "repository_names merged: attempted={} inserted={}",
-            total_attempted, total_inserted
-        );
+        self.logs.add_repository_names(s.boxed()).await?;
         Ok(())
     }
 
@@ -676,7 +622,7 @@ impl Database {
         let tracer = Tracer::new_on("Database::update_last_indices");
         let last_file_index = self.logs.files_writer.watermark()?;
         let last_blob_index = self.logs.blobs_writer.watermark()?;
-        let last_name_index = self.logs.repository_names_writer.watermark()?;
+        let last_name_index = self.logs.repository_names.watermark()?;
         self.kv
             .apply_repositories(
                 stream::iter([Ok(Repository {
@@ -725,8 +671,9 @@ impl Database {
         repo_id: RepoID,
     ) -> BoxStream<'static, Result<BlobAssociatedToFiles, DBError>> {
         let repo_names: HashMap<_, _> = match self
-            .kv
-            .stream_current_repository_names()
+            .logs
+            .repository_names
+            .current()
             .map(|e| e.map(|(k, v)| (k, v.name)))
             .try_collect()
             .await
@@ -1241,61 +1188,6 @@ impl Database {
                     .kv
                     .apply_current_reductions(
                         stream::iter([(MAT_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
-                    )
-                    .await?;
-            }
-
-            Ok(counter)
-        })
-    }
-
-    fn repository_name_log_stream(
-        &self,
-        s: BoxStream<'static, Result<(Offset, RepositoryName), logstore::Error>>,
-    ) -> JoinHandle<Result<usize, DBError>> {
-        use tokio_stream::StreamExt as TokioStreamExt;
-
-        let inner = self.clone();
-        tokio::spawn(async move {
-            let (uid_tx, uid_rx) = mpsc_channel("repository_name_log_stream::uid", UID_BUFFER);
-            let counter = Arc::new(AtomicUsize::new(0));
-            let max_offset = Arc::new(AtomicU64::new(0));
-
-            let counter_clone = counter.clone();
-            let max_offset_clone = max_offset.clone();
-            let s = TokioStreamExt::then(
-                s,
-                move |e: Result<(Offset, RepositoryName), logstore::Error>| {
-                    let uid_tx = uid_tx.clone();
-                    let counter_clone = counter_clone.clone();
-                    let max_offset_clone = max_offset_clone.clone();
-                    async move {
-                        match e {
-                            Ok((o, rn)) => {
-                                counter_clone.fetch_add(1, Ordering::Relaxed);
-                                max_offset_clone.store(o.into(), Ordering::SeqCst);
-                                uid_tx.send(Ok(rn.uid)).await?;
-                                Ok(rn)
-                            }
-                            Err(e) => Err::<_, DBError>(e.into()),
-                        }
-                    }
-                },
-            )
-            .boxed();
-
-            tokio::try_join!(
-                inner.kv.apply_repository_names(s),
-                inner.kv.apply_known_repository_name_uids(uid_rx.boxed()),
-            )?;
-
-            let counter = counter.load(Ordering::Relaxed);
-            if counter > 0 {
-                let max_offset = max_offset.load(Ordering::SeqCst);
-                inner
-                    .kv
-                    .apply_current_reductions(
-                        stream::iter([(NAME_TABLE_NAME.into(), LogOffset(max_offset))]).boxed(),
                     )
                     .await?;
             }

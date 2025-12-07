@@ -370,6 +370,11 @@ pub struct InsertRepositoryName {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RawRepositoryName {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InsertMaterialisation {
     pub path: Path,
     pub blob_id: Option<BlobID>,
