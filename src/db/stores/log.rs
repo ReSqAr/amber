@@ -622,6 +622,8 @@ mod tests {
         assert_eq!(items[1].1, "two");
         assert_eq!(items[2].0, Offset(2));
         assert_eq!(items[2].1, "three");
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -648,6 +650,8 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0], (Offset(0), 10));
         assert_eq!(items[1], (Offset(1), 20));
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -670,6 +674,8 @@ mod tests {
 
             let wm = writer.watermark();
             assert_eq!(wm, Some(Offset(2)));
+
+            writer.close().await.expect("close writer");
         }
 
         // Second instance: reopen and verify recovery.
@@ -700,6 +706,8 @@ mod tests {
 
             let wm2 = writer.watermark();
             assert_eq!(wm2, Some(Offset(3)));
+
+            writer.close().await.expect("close writer");
         }
     }
 
@@ -739,7 +747,10 @@ mod tests {
                 (Offset(4), 5),
             ]
         );
+
+        writer.close().await.expect("close writer");
     }
+
     #[tokio::test]
     async fn tail_from_head_sees_only_new() {
         let writer: Writer<String> = make_writer();
@@ -770,6 +781,8 @@ mod tests {
         assert_eq!(items[0].1, "new1");
         assert_eq!(items[1].0, Offset(3));
         assert_eq!(items[1].1, "new2");
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -784,6 +797,8 @@ mod tests {
             Err(Error::ActiveTransactionInProgress) => {}
             Err(e) => panic!("expected ActiveTransactionInProgress, got {e:?}"),
         };
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -809,6 +824,8 @@ mod tests {
             .await
             .expect("collect stream");
         assert!(items.is_empty(), "expected no items after empty flush");
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -848,6 +865,8 @@ mod tests {
             items,
             vec![(Offset(0), 10), (Offset(1), 20), (Offset(2), 30),]
         );
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -873,6 +892,8 @@ mod tests {
             items.is_empty(),
             "expected empty stream when starting beyond watermark"
         );
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -916,6 +937,8 @@ mod tests {
                 (Offset(6), 101),
             ]
         );
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -942,6 +965,8 @@ mod tests {
             .await
             .expect("collect stream");
         assert_eq!(items, vec![(Offset(0), 1), (Offset(1), 2),]);
+
+        writer.close().await.expect("close writer");
     }
 
     #[tokio::test]
@@ -969,5 +994,7 @@ mod tests {
             items,
             vec![(Offset(0), 10), (Offset(1), 20), (Offset(2), 30),]
         );
+
+        writer.close().await.expect("close writer");
     }
 }
