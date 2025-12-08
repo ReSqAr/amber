@@ -424,6 +424,7 @@ mod tests {
         let offset = store.last_reduced_offset().await?;
         assert!(offset.is_some());
 
+        store.close().await?;
         Ok(())
     }
 
@@ -457,6 +458,7 @@ mod tests {
         assert_eq!(k, "k");
         assert_eq!(*v, 100);
 
+        store.close().await?;
         Ok(())
     }
 
@@ -516,6 +518,7 @@ mod tests {
         let rows: Vec<_> = store.current().try_collect().await?;
         assert_eq!(rows.len(), 0, "Row should have been deleted");
 
+        store.close().await?;
         Ok(())
     }
 
@@ -564,6 +567,7 @@ mod tests {
         assert_eq!(seen_known, 2);
         assert_eq!(seen_unknown, 1);
 
+        store.close().await?;
         Ok(())
     }
 }
