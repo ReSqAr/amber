@@ -64,18 +64,18 @@ pub(crate) async fn add<V>(
     name: String,
     flush_size: usize,
 ) -> Result<u64, DBError> {
-    let tracer = Tracer::new_on(format!("Database::{}", name));
+    let tracer = Tracer::new_on(format!("reduced::add::{}", name));
     let mut txn = txn;
 
     let mut total_inserted: u64 = 0;
-    let mut tracer_put = Tracer::new_off(format!("Database::{}::put", name));
-    let mut tracer_flush = Tracer::new_off(format!("Database::{}::flush", name));
+    let mut tracer_put = Tracer::new_off(format!("reduced::add::{}::put", name));
+    let mut tracer_flush = Tracer::new_off(format!("reduced::add::{}::flush", name));
     let mut s = s.enumerate();
     while let Some((i, row)) = s.next().await {
         tracer_put.on();
         txn.put(&row?)
             .await
-            .inspect_err(|e| log::error!("Database::{} failed to add log: {e}", name))?;
+            .inspect_err(|e| log::error!("reduced::add::{} failed to add log: {e}", name))?;
         tracer_put.off();
         total_inserted += 1;
 
@@ -88,7 +88,7 @@ pub(crate) async fn add<V>(
     tracer_put.measure();
     tracer_flush.measure();
 
-    let tracer_commit = Tracer::new_on(format!("Database::{}::commit", name));
+    let tracer_commit = Tracer::new_on(format!("reduced::add::{}::commit", name));
     txn.close().await?;
     tracer_commit.measure();
 

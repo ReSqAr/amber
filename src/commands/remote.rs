@@ -6,7 +6,7 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
-use crate::repository::traits::{ConnectionManager, Metadata};
+use crate::repository::traits::{ConnectionManager, Local, Metadata};
 use crate::utils::errors::InternalError;
 use crate::utils::rclone;
 
@@ -22,8 +22,8 @@ pub async fn list(
     config: LocalRepositoryConfig,
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
-    let local_repository = LocalRepository::new(config).await?;
-    let mut connections = local_repository.list().await?;
+    let local = LocalRepository::new(config).await?;
+    let mut connections = local.list().await?;
 
     if connections.is_empty() {
         output.println("No connections found.".to_string());
@@ -44,7 +44,7 @@ pub async fn list(
         output.println(format!("{table}"));
     }
 
-    local_repository.close().await?;
+    local.close().await?;
     Ok(())
 }
 
@@ -56,6 +56,7 @@ pub async fn add(
     output: flightdeck::output::Output,
 ) -> Result<(), InternalError> {
     let local = LocalRepository::new(config).await?;
+    let log_path = local.log_path().abs().clone();
 
     let wrapped = async {
         let start_time = tokio::time::Instant::now();
@@ -89,7 +90,7 @@ pub async fn add(
         result
     };
 
-    flightdeck::flightdeck(wrapped, root_builders(), None, None, None, output).await
+    flightdeck::flightdeck(wrapped, root_builders(), log_path, None, None, output).await
 }
 
 fn root_builders() -> impl IntoIterator<Item = LayoutItemBuilderNode> {

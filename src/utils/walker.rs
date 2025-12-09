@@ -1,7 +1,9 @@
 use crate::flightdeck;
+use crate::flightdeck::tracer::Tracer;
 use crate::utils::errors::InternalError;
 use chrono::{DateTime, Utc};
-use futures::Stream;
+use futures::StreamExt;
+use futures_core::stream::BoxStream;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use serde::{Deserialize, Serialize};
@@ -84,14 +86,14 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     }))
 }
 
-pub async fn walk(
+pub async fn walk<'a>(
     root_path: PathBuf,
     config: WalkerConfig,
     buffer_size: usize,
 ) -> Result<
     (
         JoinHandle<()>,
-        impl Stream<Item = Result<FileObservation, Error>>,
+        BoxStream<'a, Result<FileObservation, Error>>,
     ),
     InternalError,
 > {
@@ -103,23 +105,27 @@ pub async fn walk(
             .add(pattern.as_str())
             .map_err(Into::<InternalError>::into)?;
     }
+    let overrides = override_builder
+        .build()
+        .map_err(Into::<InternalError>::into)?;
 
-    let mut walk_builder = WalkBuilder::new(&root);
-    let walk_builder = walk_builder
-        .standard_filters(true)
-        .hidden(true)
-        .follow_links(false)
-        .same_file_system(true)
-        .max_depth(None)
-        .overrides(
-            override_builder
-                .build()
-                .map_err(Into::<InternalError>::into)?,
-        );
-
-    let walker = walk_builder.build_parallel();
     let (tx, rx) = flightdeck::tracked::mpsc_channel("walk", buffer_size);
     let handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
+        let root = root;
+
+        let tracer = Tracer::new_on("walk::builder");
+        let mut walk_builder = WalkBuilder::new(&root);
+        let walk_builder = walk_builder
+            .standard_filters(true)
+            .hidden(true)
+            .follow_links(false)
+            .same_file_system(true)
+            .max_depth(None)
+            .overrides(overrides);
+        let walker = walk_builder.build_parallel();
+        tracer.measure();
+
+        let tracer = Tracer::new_on("walk::run::total");
         walker.run(|| {
             let root = root.clone();
             let tx = tx.clone();
@@ -135,9 +141,10 @@ pub async fn walk(
             })
         });
         drop(tx);
+        tracer.measure();
     });
 
-    Ok((handle, rx))
+    Ok((handle, rx.boxed()))
 }
 
 #[cfg(test)]
