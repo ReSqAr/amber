@@ -207,7 +207,6 @@ pub(crate) async fn rm(
                                 Ok(stream::iter([Ok::<_, InternalError>(InsertMaterialisation {
                                     path,
                                     blob_id: None,
-                                    valid_from: Utc::now(),
                                 })])
                                 .boxed())
                             } else {
@@ -468,12 +467,10 @@ pub(crate) async fn mv(
                                 Ok::<_, InternalError>(InsertMaterialisation {
                                     path: models::Path(src.rel().to_string_lossy().into()),
                                     blob_id: None,
-                                    valid_from: Utc::now(),
                                 }),
                                 Ok(InsertMaterialisation {
                                     path: models::Path(dst.rel().to_string_lossy().into()),
                                     blob_id: Some(blob_id),
-                                    valid_from: Utc::now(),
                                 }),
                             ])
                             .boxed())

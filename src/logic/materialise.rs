@@ -160,7 +160,6 @@ pub async fn materialise(
                     let mat = InsertMaterialisation {
                         path: path.clone(),
                         blob_id: target_blob_id,
-                        valid_from: chrono::Utc::now(),
                     };
                     mat_tx.send(mat).await?;
 
