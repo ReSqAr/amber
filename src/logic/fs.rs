@@ -118,7 +118,7 @@ pub(crate) async fn rm(
 
     for (_, normalised_path) in paths_with_hint {
         let s = local
-            .select_current_files(normalised_path.clone())
+            .select_current_files_with_prefix(normalised_path.clone())
             .await
             .map_err(InternalError::DBError)
             .boxed();
@@ -319,7 +319,7 @@ pub(crate) async fn mv(
     };
 
     let s = local
-        .select_current_files(source_prefix)
+        .select_current_files_with_prefix(source_prefix)
         .await
         .map_err(InternalError::DBError);
 

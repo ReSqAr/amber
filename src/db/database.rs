@@ -411,6 +411,161 @@ impl Database {
         Ok(())
     }
 
+    pub async fn add_connection(&self, connection: Connection) -> Result<(), DBError> {
+        self.kv.store_connection(connection).await?;
+        Ok(())
+    }
+
+    pub async fn connection_by_name(
+        &self,
+        name: ConnectionName,
+    ) -> Result<Option<Connection>, DBError> {
+        let s = stream::iter([Ok::<_, DBError>(name.clone())]).boxed();
+        let c: Vec<_> = self
+            .kv
+            .left_join_connections(s, |n| n)
+            .try_collect()
+            .await?;
+        let (_, cm) = c.into_iter().next().expect("left join");
+        Ok(cm.map(|m| Connection {
+            name,
+            connection_type: m.connection_type,
+            parameter: m.parameter,
+        }))
+    }
+
+    pub async fn list_all_connections(&self) -> Result<Vec<Connection>, DBError> {
+        self.kv
+            .stream_connections()
+            .map_ok(|(name, m)| Connection {
+                name,
+                connection_type: m.connection_type,
+                parameter: m.parameter,
+            })
+            .try_collect()
+            .await
+    }
+
+    pub async fn add_materialisations(
+        &self,
+        s: BoxStream<'_, InsertMaterialisation>,
+    ) -> Result<u64, DBError> {
+        self.kv.apply_materialisations(s.map(Ok).boxed()).await
+    }
+
+    pub async fn add_virtual_filesystem_file_checked_events(
+        &self,
+        s: BoxStream<'static, FileCheck>,
+    ) -> Result<u64, DBError> {
+        let s = s.map(Ok).boxed();
+        self.kv.apply_file_checks(s).await
+    }
+
+    pub async fn add_virtual_filesystem_file_seen_events(
+        &self,
+        s: BoxStream<'static, FileSeen>,
+    ) -> Result<u64, DBError> {
+        let s = s.map(Ok).boxed();
+        self.kv.apply_file_seen(s).await
+    }
+
+    pub async fn select_missing_files_on_virtual_filesystem(
+        &self,
+        last_seen_id: i64,
+    ) -> BoxStream<'static, Result<MissingFile, DBError>> {
+        use tokio_stream::StreamExt as TokioStreamExt;
+
+        let repo_id = match self.get_or_create_current_repository().await {
+            Ok(r) => r.repo_id,
+            Err(e) => return stream::iter(vec![Err(e)]).boxed(),
+        };
+
+        let s = self.logs.files.current();
+        let s = self.kv.left_join_observations(s, |(p, _, _)| p.clone());
+        let s = TokioStreamExt::filter_map(s, move |e| match e {
+            Ok(((p, _, blob_id), co)) => {
+                let was_file_observed = co.is_some_and(|o| o.fs_last_seen_id == last_seen_id);
+                if !was_file_observed {
+                    Some(Ok((p, blob_id)))
+                } else {
+                    None
+                }
+            }
+            Err(e) => Some(Err(e)),
+        })
+        .boxed();
+        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
+            blob_id: b.clone(),
+            repo_id: repo_id.clone(),
+        });
+        TokioStreamExt::map(s, |e| {
+            e.map(|((p, b), local_cb)| MissingFile {
+                path: p,
+                target_blob_id: b,
+                local_has_target_blob: local_cb.is_some(),
+            })
+        })
+        .boxed()
+    }
+
+    pub fn select_virtual_filesystem(
+        &self,
+        s: BoxStream<'static, FileSeen>,
+        repo_id: RepoID,
+    ) -> BoxStream<'static, Result<VirtualFile, DBError>> {
+        let s = s.map(Ok).boxed();
+        let s = self.logs.files.left_join_current(s, move |f| f.path);
+        let s = self
+            .logs
+            .blobs
+            .left_join_current(s, move |(_, cf)| BlobRef {
+                blob_id: cf.map(|(_, b)| b).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
+                repo_id: repo_id.clone(),
+            })
+            .map_ok(|((f, cf), cb)| (f, cf, cb))
+            .boxed();
+        let s = self
+            .kv
+            .left_join_materialisations(s, move |(f, _, _)| f.path)
+            .map_ok(|((f, cf, cb), cm)| (f, cf, cb, cm))
+            .boxed();
+        let s = self
+            .kv
+            .left_join_check(s, move |(f, _, _, _)| f.path)
+            .map_ok(|((f, cf, cb, cm), cc)| VirtualFile {
+                file_seen: f,
+                current_file: cf.map(|(_, b)| CurrentFile { blob_id: b }),
+                current_blob: cb.map(|(b, _)| BlobMeta {
+                    size: b.size,
+                    path: b.path,
+                }),
+                current_materialisation: cm,
+                current_check: cc,
+            })
+            .boxed();
+
+        s.track("Database::select_virtual_filesystem").boxed()
+    }
+
+    pub fn left_join_current_files<
+        'a,
+        K: Clone + Send + Sync + 'static,
+        E: From<DBError> + Debug + Send + Sync + 'static,
+    >(
+        &self,
+        s: BoxStream<'static, Result<K, E>>,
+        key_func: impl Fn(K) -> Path + Sync + Send + 'static,
+    ) -> BoxStream<'a, Result<(K, Option<CurrentFile>), E>> {
+        self.logs
+            .files
+            .left_join_current(s, key_func)
+            .map_ok(|(k, f)| {
+                let v = f.map(|(_, blob_id)| CurrentFile { blob_id });
+                (k, v)
+            })
+            .boxed()
+    }
+
     pub(crate) fn available_blobs(
         &self,
         repo_id: RepoID,
@@ -520,142 +675,6 @@ impl Database {
             Err(()) => Err(group.into_iter().next().unwrap().unwrap_err()),
         })
         .boxed()
-    }
-
-    pub async fn add_materialisations(
-        &self,
-        s: BoxStream<'_, InsertMaterialisation>,
-    ) -> Result<u64, DBError> {
-        self.kv.apply_materialisations(s.map(Ok).boxed()).await
-    }
-
-    pub async fn select_missing_files_on_virtual_filesystem(
-        &self,
-        last_seen_id: i64,
-    ) -> BoxStream<'static, Result<MissingFile, DBError>> {
-        use tokio_stream::StreamExt as TokioStreamExt;
-
-        let repo_id = match self.get_or_create_current_repository().await {
-            Ok(r) => r.repo_id,
-            Err(e) => return stream::iter(vec![Err(e)]).boxed(),
-        };
-
-        let s = self.logs.files.current();
-        let s = self.kv.left_join_observations(s, |(p, _, _)| p.clone());
-        let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((p, _, blob_id), co)) => {
-                let was_file_observed = co.is_some_and(|o| o.fs_last_seen_id == last_seen_id);
-                if !was_file_observed {
-                    Some(Ok((p, blob_id)))
-                } else {
-                    None
-                }
-            }
-            Err(e) => Some(Err(e)),
-        })
-        .boxed();
-        let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
-            repo_id: repo_id.clone(),
-        });
-        TokioStreamExt::map(s, |e| {
-            e.map(|((p, b), local_cb)| MissingFile {
-                path: p,
-                target_blob_id: b,
-                local_has_target_blob: local_cb.is_some(),
-            })
-        })
-        .boxed()
-    }
-
-    pub async fn add_virtual_filesystem_file_checked_events(
-        &self,
-        s: BoxStream<'static, FileCheck>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(Ok).boxed();
-        self.kv.apply_file_checks(s).await
-    }
-
-    pub async fn add_virtual_filesystem_file_seen_events(
-        &self,
-        s: BoxStream<'static, FileSeen>,
-    ) -> Result<u64, DBError> {
-        let s = s.map(Ok).boxed();
-        self.kv.apply_file_seen(s).await
-    }
-
-    pub fn select_virtual_filesystem(
-        &self,
-        s: BoxStream<'static, FileSeen>,
-        repo_id: RepoID,
-    ) -> BoxStream<'static, Result<VirtualFile, DBError>> {
-        let s = s.map(Ok).boxed();
-        let s = self.logs.files.left_join_current(s, move |f| f.path);
-        let s = self
-            .logs
-            .blobs
-            .left_join_current(s, move |(_, cf)| BlobRef {
-                blob_id: cf.map(|(_, b)| b).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
-                repo_id: repo_id.clone(),
-            })
-            .map_ok(|((f, cf), cb)| (f, cf, cb))
-            .boxed();
-        let s = self
-            .kv
-            .left_join_materialisations(s, move |(f, _, _)| f.path)
-            .map_ok(|((f, cf, cb), cm)| (f, cf, cb, cm))
-            .boxed();
-        let s = self
-            .kv
-            .left_join_check(s, move |(f, _, _, _)| f.path)
-            .map_ok(|((f, cf, cb, cm), cc)| VirtualFile {
-                file_seen: f,
-                current_file: cf.map(|(_, b)| CurrentFile { blob_id: b }),
-                current_blob: cb.map(|(b, _)| BlobMeta {
-                    size: b.size,
-                    path: b.path,
-                }),
-                current_materialisation: cm,
-                current_check: cc,
-            })
-            .boxed();
-
-        s.track("Database::select_virtual_filesystem").boxed()
-    }
-
-    pub async fn add_connection(&self, connection: Connection) -> Result<(), DBError> {
-        self.kv.store_connection(connection).await?;
-        Ok(())
-    }
-
-    pub async fn connection_by_name(
-        &self,
-        name: ConnectionName,
-    ) -> Result<Option<Connection>, DBError> {
-        let s = stream::iter([Ok::<_, DBError>(name.clone())]).boxed();
-        let c: Vec<_> = self
-            .kv
-            .left_join_connections(s, |n| n)
-            .try_collect()
-            .await?;
-        let (_, cm) = c.into_iter().next().expect("left join");
-        Ok(cm.map(|m| Connection {
-            name,
-            connection_type: m.connection_type,
-            parameter: m.parameter,
-        }))
-    }
-
-    pub async fn list_all_connections(&self) -> Result<Vec<Connection>, DBError> {
-        self.kv
-            .stream_connections()
-            .map_ok(|(name, m)| Connection {
-                name,
-                connection_type: m.connection_type,
-                parameter: m.parameter,
-            })
-            .try_collect()
-            .await
     }
 
     pub(crate) async fn select_missing_blobs_for_transfer(
@@ -768,7 +787,7 @@ impl Database {
         .boxed()
     }
 
-    pub async fn select_current_files<'a>(
+    pub async fn select_current_files_with_prefix<'a>(
         &self,
         file_or_dir: String,
     ) -> BoxStream<'a, Result<(Path, BlobID), DBError>> {
@@ -777,9 +796,15 @@ impl Database {
         let s = stream::iter([Ok(Path(file_or_dir.clone()))]).boxed();
         let s = self.logs.files.left_join_current(s, |p| p);
         let s: Vec<_> = TokioStreamExt::collect(s).await;
-        let (p, cf) = match s.into_iter().next().unwrap() {
-            Ok(e) => e,
-            Err(e) => return stream::iter([Err(e)]).boxed(),
+        let (p, cf) = match s.into_iter().next() {
+            Some(Ok(e)) => e,
+            Some(Err(e)) => return stream::iter([Err(e)]).boxed(),
+            None => {
+                return stream::iter([Err(DBError::InconsistencyError(
+                    "left join with fewer elements".to_string(),
+                ))])
+                .boxed();
+            }
         };
 
         match cf {
@@ -796,25 +821,6 @@ impl Database {
                 s.boxed()
             }
         }
-    }
-
-    pub fn left_join_current_files<
-        'a,
-        K: Clone + Send + Sync + 'static,
-        E: From<DBError> + Debug + Send + Sync + 'static,
-    >(
-        &self,
-        s: BoxStream<'static, Result<K, E>>,
-        key_func: impl Fn(K) -> Path + Sync + Send + 'static,
-    ) -> BoxStream<'a, Result<(K, Option<CurrentFile>), E>> {
-        self.logs
-            .files
-            .left_join_current(s, key_func)
-            .map_ok(|(k, f)| {
-                let v = f.map(|(_, blob_id)| CurrentFile { blob_id });
-                (k, v)
-            })
-            .boxed()
     }
 }
 

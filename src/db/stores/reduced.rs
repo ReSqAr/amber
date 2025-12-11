@@ -71,10 +71,10 @@ where
     S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 {
     pub(crate) async fn open(name: String, base_path: PathBuf) -> Result<Self, DBError> {
-        let log_path = base_path.join(format!("{name}.log"));
-        let reduced_path = base_path.join("reduced.kv");
-        let uids_path = base_path.join("known_uids.kv");
-        let offset_path = base_path.join("offset.kv");
+        let log_path = base_path.join("log");
+        let reduced_path = base_path.join("reduced");
+        let uids_path = base_path.join("known_uids");
+        let offset_path = base_path.join("offset");
 
         let name_cl = name.clone();
         let log =

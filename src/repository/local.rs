@@ -552,12 +552,12 @@ impl VirtualFilesystem for LocalRepository {
         .boxed()
     }
 
-    fn select_current_files(
+    fn select_current_files_with_prefix(
         &self,
         file_or_dir: String,
     ) -> BoxFuture<'_, BoxStream<'static, Result<(models::Path, BlobID), DBError>>> {
         let db = self.db.clone();
-        async move { db.select_current_files(file_or_dir).await }.boxed()
+        async move { db.select_current_files_with_prefix(file_or_dir).await }.boxed()
     }
 
     fn left_join_current_files<
