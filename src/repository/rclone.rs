@@ -1,6 +1,6 @@
 use crate::db::models::{
-    AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem, InsertBlob,
-    InsertRepositoryName, RepoID,
+    AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem,
+    FilesWithAvailability, InsertBlob, InsertRepositoryName, RepoID,
 };
 use crate::repository::local::LocalRepository;
 use crate::repository::traits::{
@@ -146,5 +146,19 @@ impl Availability for RCloneStore {
         let db = self.local.db().clone();
         let repo_id = self.repo_id.clone();
         async move { db.missing_blobs(repo_id).await.err_into().boxed() }.boxed()
+    }
+
+    fn current_files_with_availability(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<FilesWithAvailability, InternalError>>> {
+        let db = self.local.db().clone();
+        let repo_id = self.repo_id.clone();
+        async move {
+            db.current_files_with_availability(repo_id)
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
     }
 }

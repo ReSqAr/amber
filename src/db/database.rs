@@ -1,11 +1,11 @@
 use crate::db::error::DBError;
 use crate::db::kv::KVStores;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobMeta, BlobRef, BlobTransferItem,
-    Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck, FileSeen,
-    FileTransferItem, HasBlob, InsertBlob, InsertFile, InsertFileBundle, InsertMaterialisation,
-    InsertRepositoryName, LocalRepository, MissingFile, Path, RepoID, Repository,
-    RepositoryMetadata, RepositoryName, Uid, VirtualFile,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobMeta, BlobRef, BlobState,
+    BlobTransferItem, Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck,
+    FileSeen, FileTransferItem, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
+    InsertFileBundle, InsertMaterialisation, InsertRepositoryName, LocalRepository, MissingFile,
+    Path, RepoID, Repository, RepositoryMetadata, RepositoryName, Uid, VirtualFile,
 };
 use crate::db::reduced;
 use crate::db::reduced::Reduced;
@@ -675,6 +675,28 @@ impl Database {
             Err(()) => Err(group.into_iter().next().unwrap().unwrap_err()),
         })
         .boxed()
+    }
+
+    pub(crate) async fn current_files_with_availability(
+        &self,
+        repo_id: RepoID,
+    ) -> BoxStream<'static, Result<FilesWithAvailability, DBError>> {
+        let s = self.logs.files.current();
+        self.logs
+            .blobs
+            .left_join_current(s, move |(_, _, blob_id)| BlobRef {
+                blob_id,
+                repo_id: repo_id.clone(),
+            })
+            .map_ok(|((p, (), b), om)| FilesWithAvailability {
+                path: p,
+                blob_id: b,
+                blob_state: match om {
+                    Some((_, ())) => BlobState::Present,
+                    None => BlobState::Missing,
+                },
+            })
+            .boxed()
     }
 
     pub(crate) async fn select_missing_blobs_for_transfer(

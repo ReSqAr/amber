@@ -19,6 +19,12 @@ impl From<Uid> for u64 {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct Path(pub String);
 
+impl AsRef<str> for Path {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct BlobID(pub String);
 
@@ -513,6 +519,20 @@ pub struct BlobAssociatedToFiles {
     pub blob_id: BlobID,
     pub path: Path,
     pub repositories_with_blob: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BlobState {
+    Present,
+    Missing,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilesWithAvailability {
+    pub path: Path,
+    #[allow(dead_code)]
+    pub blob_id: BlobID,
+    pub blob_state: BlobState,
 }
 
 #[derive(Debug, Clone)]
