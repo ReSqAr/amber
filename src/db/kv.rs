@@ -1,7 +1,7 @@
 use crate::db::error::DBError;
 use crate::db::models::{
-    Connection, ConnectionMetadata, ConnectionName, CurrentCheck, CurrentObservation, FileCheck,
-    FileSeen, InsertMaterialisation, LocalRepository, Materialisation, Path, RepoID, Repository,
+    Check, Connection, ConnectionMetadata, ConnectionName, FileCheck, FileSeen,
+    InsertMaterialisation, LocalRepository, Materialisation, Observation, Path, RepoID, Repository,
     RepositoryMetadata,
 };
 use crate::db::stores::kv::{Store, Upsert, UpsertAction};
@@ -11,32 +11,6 @@ use futures_core::stream::BoxStream;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use tokio::fs::create_dir_all;
-
-struct UpsertMaterialisation(InsertMaterialisation);
-impl Upsert for UpsertMaterialisation {
-    type K = Path;
-    type V = Materialisation;
-
-    fn key(&self) -> Path {
-        self.0.path.clone()
-    }
-
-    fn upsert(self, v: Option<Materialisation>) -> UpsertAction<Materialisation> {
-        if let Some(v) = v
-            && v.valid_from > self.0.valid_from
-        {
-            return UpsertAction::NoChange;
-        }
-
-        match self.0.blob_id {
-            Some(blob_id) => UpsertAction::Change(Materialisation {
-                blob_id,
-                valid_from: self.0.valid_from,
-            }),
-            None => UpsertAction::Delete,
-        }
-    }
-}
 
 struct UpsertRepositoryMetadata(Repository);
 impl Upsert for UpsertRepositoryMetadata {
@@ -72,8 +46,8 @@ impl Upsert for UpsertRepositoryMetadata {
 #[derive(Clone)]
 pub(crate) struct KVStores {
     materialisations: Store<Path, Materialisation>,
-    observations: Store<Path, CurrentObservation>,
-    checks: Store<Path, CurrentCheck>,
+    observations: Store<Path, Observation>,
+    checks: Store<Path, Check>,
     local_repository: Store<(), LocalRepository>,
     repositories: Store<RepoID, RepositoryMetadata>,
     connections: Store<ConnectionName, ConnectionMetadata>,
@@ -152,8 +126,11 @@ impl KVStores {
         &self,
         s: BoxStream<'_, Result<InsertMaterialisation, DBError>>,
     ) -> Result<u64, DBError> {
-        let s = s.map(move |r| r.map(UpsertMaterialisation)).boxed();
-        self.materialisations.upsert(s).await
+        let map = |m: InsertMaterialisation| {
+            (m.path, m.blob_id.map(|blob_id| Materialisation { blob_id }))
+        };
+        let s = s.map(move |r| r.map(map)).boxed();
+        self.materialisations.apply(s).await
     }
 
     pub(crate) async fn apply_file_seen(
@@ -163,7 +140,7 @@ impl KVStores {
         let map = |e: FileSeen| {
             (
                 e.path,
-                Some(CurrentObservation {
+                Some(Observation {
                     fs_last_seen_id: e.seen_id,
                     fs_last_seen_dttm: e.seen_dttm,
                     fs_last_modified_dttm: e.last_modified_dttm,
@@ -182,7 +159,7 @@ impl KVStores {
         let map = |e: FileCheck| {
             (
                 e.path,
-                Some(CurrentCheck {
+                Some(Check {
                     check_last_dttm: e.check_dttm,
                     check_last_hash: e.hash,
                 }),
@@ -268,7 +245,7 @@ impl KVStores {
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<CurrentObservation>), E>>
+    ) -> BoxStream<'static, Result<(IK, Option<Observation>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
@@ -280,7 +257,7 @@ impl KVStores {
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<CurrentCheck>), E>>
+    ) -> BoxStream<'static, Result<(IK, Option<Check>), E>>
     where
         KF: Fn(IK) -> Path + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,

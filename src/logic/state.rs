@@ -1,7 +1,6 @@
 use crate::db::models;
 use crate::db::models::{
-    BlobID, CurrentCheck, CurrentFile, FileCheck, FileSeen, MissingFile,
-    VirtualFile as DBVirtualFile,
+    BlobID, Check, CurrentFile, FileCheck, FileSeen, MissingFile, VirtualFile as DBVirtualFile,
 };
 use crate::flightdeck;
 use crate::flightdeck::base::BaseObserver;
@@ -362,7 +361,7 @@ pub async fn state_with_checks(
                             current_file: vf.current_file,
                             current_blob: vf.current_blob,
                             current_materialisation: vf.current_materialisation,
-                            current_check: Some(CurrentCheck {
+                            current_check: Some(Check {
                                 check_last_dttm: check.check_dttm,
                                 check_last_hash: check.hash,
                             }),

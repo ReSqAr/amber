@@ -122,7 +122,6 @@ pub(crate) async fn add_files(
                         let mat = InsertMaterialisation {
                             path: p.clone(),
                             blob_id: Some(blob_id.clone()),
-                            valid_from: now,
                         };
 
                         let bundle = InsertFileBundle {

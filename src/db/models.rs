@@ -215,11 +215,10 @@ impl From<(Uid, Path, (), FileBlobID, ValidFrom)> for File {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Materialisation {
     pub blob_id: BlobID,
-    pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CurrentObservation {
+pub struct Observation {
     pub fs_last_seen_id: i64,
     pub fs_last_seen_dttm: DateTime<Utc>,
     pub fs_last_modified_dttm: DateTime<Utc>,
@@ -227,7 +226,7 @@ pub struct CurrentObservation {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CurrentCheck {
+pub struct Check {
     pub check_last_dttm: DateTime<Utc>,
     pub check_last_hash: BlobID,
 }
@@ -249,17 +248,17 @@ pub struct RepositoryMetadata {
 )]
 pub struct ConnectionName(pub String);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ConnectionMetadata {
-    pub connection_type: ConnectionType,
-    pub parameter: String,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ConnectionType {
     Local,
     Ssh,
     RClone,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConnectionMetadata {
+    pub connection_type: ConnectionType,
+    pub parameter: String,
 }
 #[derive(Debug, Clone)]
 pub struct Connection {
@@ -349,7 +348,7 @@ pub struct VirtualFile {
     pub current_file: Option<CurrentFile>,
     pub current_blob: Option<BlobMeta>,
     pub current_materialisation: Option<Materialisation>,
-    pub current_check: Option<CurrentCheck>,
+    pub current_check: Option<Check>,
 }
 
 impl VirtualFile {
@@ -492,7 +491,6 @@ impl From<(Uid, RepoID, LogRepositoryName, Always, ValidFrom)> for RepositoryNam
 pub struct InsertMaterialisation {
     pub path: Path,
     pub blob_id: Option<BlobID>,
-    pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
