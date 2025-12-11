@@ -101,6 +101,8 @@ pub enum InternalError {
     SerialisationError { object: String, e: String },
     #[error("unable to get exclusive lock on repository")]
     SharedAccess,
+    #[error("invariant error: {0}")]
+    InvariantError(String),
 }
 
 impl<T> From<SendError<T>> for InternalError {

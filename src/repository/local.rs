@@ -6,7 +6,8 @@ use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    MissingFile, RepoID, Repository, RepositoryName, SizedBlobID, VirtualFile,
+    FilesWithAvailability, MissingFile, RepoID, Repository, RepositoryName, SizedBlobID,
+    VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
@@ -343,6 +344,19 @@ impl Availability for LocalRepository {
         let db = self.db.clone();
         async move {
             db.missing_blobs(self.repo_id.clone())
+                .await
+                .err_into()
+                .boxed()
+        }
+        .boxed()
+    }
+
+    fn current_files_with_availability(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<FilesWithAvailability, InternalError>>> {
+        let db = self.db.clone();
+        async move {
+            db.current_files_with_availability(self.repo_id.clone())
                 .await
                 .err_into()
                 .boxed()

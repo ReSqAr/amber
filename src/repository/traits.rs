@@ -2,7 +2,8 @@ use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, BlobID, Connection, ConnectionName, CopiedTransferItem,
-    CurrentFile, FileCheck, FileSeen, InsertFileBundle, MissingFile, RepoID, VirtualFile,
+    CurrentFile, FileCheck, FileSeen, FilesWithAvailability, InsertFileBundle, MissingFile, RepoID,
+    VirtualFile,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::fs::Capability;
@@ -60,6 +61,9 @@ pub trait Availability {
     fn missing(
         &self,
     ) -> BoxFuture<'_, BoxStream<'static, Result<BlobAssociatedToFiles, InternalError>>>;
+    fn current_files_with_availability(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<FilesWithAvailability, InternalError>>>;
 }
 
 pub trait Adder {

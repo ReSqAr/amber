@@ -93,6 +93,14 @@ pub enum Commands {
     Missing {
         #[arg(help = "Show missing files for a remote (default: local)")]
         connection_name: Option<String>,
+        #[arg(
+            long,
+            short = 's',
+            help = "summarise",
+            num_args = 0..=1,
+            default_missing_value = "0"
+        )]
+        summary: Option<usize>,
     },
     /// Remove files from the repository
     #[command(alias = "rm")]
@@ -210,9 +218,10 @@ pub async fn run_cli(
             destination,
         } => commands::fs::mv(config, source, destination, output).await,
         Commands::Status { verbose } => commands::status::status(config, verbose, output).await,
-        Commands::Missing { connection_name } => {
-            commands::missing::missing(config, connection_name, output).await
-        }
+        Commands::Missing {
+            connection_name,
+            summary,
+        } => commands::missing::missing(config, connection_name, summary, output).await,
         Commands::Serve {} => commands::serve::serve(config, output).await,
         Commands::Sync { connection_name } => {
             commands::sync::sync(config, connection_name, output).await
