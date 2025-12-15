@@ -139,6 +139,9 @@ pub trait VirtualFilesystem {
         &'_ self,
         s: BoxStream<'static, FileSeen>,
     ) -> BoxFuture<'_, BoxStream<'static, Result<VirtualFile, DBError>>>;
+    fn select_current_files(
+        &self,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<(models::Path, BlobID), DBError>>>;
     fn select_current_files_with_prefix(
         &self,
         file_or_dir: String,

@@ -4,6 +4,7 @@ pub(crate) mod fs;
 pub(crate) mod fsck;
 pub(crate) mod init;
 pub(crate) mod missing;
+pub(crate) mod orphaned;
 pub(crate) mod pull;
 pub(crate) mod push;
 pub(crate) mod remote;

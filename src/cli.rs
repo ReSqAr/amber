@@ -102,6 +102,8 @@ pub enum Commands {
         )]
         summary: Option<usize>,
     },
+    /// List blobs in the repository that are not referenced by current files
+    Orphaned {},
     /// Remove files from the repository
     #[command(alias = "rm")]
     Remove {
@@ -222,6 +224,7 @@ pub async fn run_cli(
             connection_name,
             summary,
         } => commands::missing::missing(config, connection_name, summary, output).await,
+        Commands::Orphaned {} => commands::orphaned::orphaned(config, output).await,
         Commands::Serve {} => commands::serve::serve(config, output).await,
         Commands::Sync { connection_name } => {
             commands::sync::sync(config, connection_name, output).await

@@ -16,7 +16,9 @@ impl From<Uid> for u64 {
         v.0
     }
 }
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
 pub struct Path(pub String);
 
 impl AsRef<str> for Path {
