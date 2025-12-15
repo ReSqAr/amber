@@ -275,15 +275,16 @@ where
         Ok(count)
     }
 
-    pub(crate) async fn upsert<U: Upsert<K = K, V = V>>(
-        &self,
-        s: BoxStream<'_, Result<U, DBError>>,
-    ) -> Result<u64, DBError> {
-        let (tx, mut rx) = mpsc::channel::<Result<_, DBError>>(DEFAULT_BUFFER_SIZE);
+    pub(crate) async fn upsert<U, E>(&self, s: BoxStream<'_, Result<U, E>>) -> Result<u64, E>
+    where
+        E: From<DBError> + Debug + Send + Sync + 'static,
+        U: Upsert<K = K, V = V>,
+    {
+        let (tx, mut rx) = mpsc::channel::<Result<_, E>>(DEFAULT_BUFFER_SIZE);
         let db = self.db.clone();
         let name = self.name.clone();
 
-        let bg = task::spawn_blocking(move || -> Result<u64, DBError> {
+        let bg = task::spawn_blocking(move || -> Result<u64, E> {
             let tracer = Tracer::new_on(format!("KVStore({})::upsert::acq", name));
             let guard = db.read();
             tracer.measure();
@@ -300,20 +301,20 @@ where
                 let key = item.key();
                 tracer.on();
 
-                let key_bytes = bincode::serialize(&key)?;
-                let existing = db_ref.get(&key_bytes)?;
+                let key_bytes = bincode::serialize(&key).map_err(Into::into)?;
+                let existing = db_ref.get(&key_bytes).map_err(Into::into)?;
 
                 match existing {
                     Some(bytes) => {
-                        let current: V = bincode::deserialize(&bytes)?;
+                        let current: V = bincode::deserialize(&bytes).map_err(Into::into)?;
                         match item.upsert(Some(current)) {
                             UpsertAction::Change(v) => {
-                                let v_bytes = bincode::serialize(&v)?;
-                                db_ref.put(&key_bytes, &v_bytes)?;
+                                let v_bytes = bincode::serialize(&v).map_err(Into::into)?;
+                                db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
                                 count += 1;
                             }
                             UpsertAction::Delete => {
-                                db_ref.delete(&key_bytes)?;
+                                db_ref.delete(&key_bytes).map_err(Into::into)?;
                                 count += 1;
                             }
                             UpsertAction::NoChange => {}
@@ -321,8 +322,8 @@ where
                     }
                     None => {
                         if let UpsertAction::Change(v) = item.upsert(None) {
-                            let v_bytes = bincode::serialize(&v)?;
-                            db_ref.put(&key_bytes, &v_bytes)?;
+                            let v_bytes = bincode::serialize(&v).map_err(Into::into)?;
+                            db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
                             count += 1;
                         }
                     }
@@ -334,7 +335,7 @@ where
 
             let tracer = Tracer::new_on(format!("KVStore({})::upsert::commit", name));
             if count > 0 {
-                db_ref.flush_wal(true)?;
+                db_ref.flush_wal(true).map_err(Into::into)?;
             }
             tracer.measure();
 
@@ -349,16 +350,17 @@ where
         }
         drop(tx);
 
-        let count = bg.await??;
+        let count = bg.await.map_err(Into::into)??;
         Ok(count)
     }
 
-    pub(crate) fn left_join<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
+    pub(crate) fn left_join<IK, KF, E>(
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
     ) -> BoxStream<'static, Result<(IK, Option<V>), E>>
     where
+        E: From<DBError> + Debug + Send + Sync + 'static,
         KF: Fn(IK) -> K + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
@@ -699,7 +701,7 @@ mod tests {
         ];
 
         let updated = store
-            .upsert(stream::iter(upserts).boxed())
+            .upsert::<_, DBError>(stream::iter(upserts).boxed())
             .await
             .expect("run upserts");
 
@@ -755,7 +757,7 @@ mod tests {
         ];
 
         let updated = store
-            .upsert(stream::iter(upserts).boxed())
+            .upsert::<_, DBError>(stream::iter(upserts).boxed())
             .await
             .expect("run upserts");
 

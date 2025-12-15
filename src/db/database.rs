@@ -809,6 +809,14 @@ impl Database {
         .boxed()
     }
 
+    pub async fn select_current_files<'a>(&self) -> BoxStream<'a, Result<(Path, BlobID), DBError>> {
+        use tokio_stream::StreamExt as TokioStreamExt;
+
+        let s = self.logs.files.current();
+        let s = TokioStreamExt::map(s, |e| e.map(|(t, (), b)| (t, b)));
+        s.boxed()
+    }
+
     pub async fn select_current_files_with_prefix<'a>(
         &self,
         file_or_dir: String,

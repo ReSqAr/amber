@@ -6,6 +6,7 @@ pub(crate) mod fs;
 pub(crate) mod fsck_local;
 pub(crate) mod fsck_remote;
 pub(crate) mod materialise;
+pub(crate) mod orphaned;
 pub(crate) mod state;
 pub(crate) mod sync;
 pub(crate) mod transfer;
