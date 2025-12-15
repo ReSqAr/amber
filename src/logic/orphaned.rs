@@ -8,14 +8,13 @@ use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use rand::Rng;
-use std::collections::BTreeSet;
 
 #[derive(Clone)]
 struct InsertBlob(models::BlobID);
 
 impl kv::Upsert for InsertBlob {
     type K = models::BlobID;
-    type V = BTreeSet<models::Path>;
+    type V = Vec<models::Path>;
 
     fn key(&self) -> Self::K {
         self.0.clone()
@@ -24,7 +23,7 @@ impl kv::Upsert for InsertBlob {
     fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V> {
         match existing {
             Some(_v) => UpsertAction::NoChange,
-            None => UpsertAction::Change(BTreeSet::new()),
+            None => UpsertAction::Change(Vec::new()),
         }
     }
 }
@@ -34,7 +33,7 @@ struct RemoveBlob(models::BlobID);
 
 impl kv::Upsert for RemoveBlob {
     type K = models::BlobID;
-    type V = BTreeSet<models::Path>;
+    type V = Vec<models::Path>;
 
     fn key(&self) -> Self::K {
         self.0.clone()
@@ -50,7 +49,7 @@ struct RecordBlobPath(models::BlobID, models::Path);
 
 impl kv::Upsert for RecordBlobPath {
     type K = models::BlobID;
-    type V = BTreeSet<models::Path>;
+    type V = Vec<models::Path>;
 
     fn key(&self) -> Self::K {
         self.0.clone()
@@ -58,8 +57,13 @@ impl kv::Upsert for RecordBlobPath {
 
     fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V> {
         if let Some(mut paths) = existing {
-            paths.insert(self.1.clone());
-            UpsertAction::Change(paths)
+            match paths.binary_search(&self.1) {
+                Ok(_) => UpsertAction::NoChange,
+                Err(insert_idx) => {
+                    paths.insert(insert_idx, self.1.clone());
+                    UpsertAction::Change(paths)
+                }
+            }
         } else {
             UpsertAction::NoChange
         }
@@ -77,7 +81,7 @@ pub async fn orphaned<'a>(
 ) -> Result<
     (
         Box<dyn FnOnce() -> BoxFuture<'static, Result<(), InternalError>>>,
-        BoxStream<'a, Result<(models::BlobID, BTreeSet<models::Path>), InternalError>>,
+        BoxStream<'a, Result<(models::BlobID, Vec<models::Path>), InternalError>>,
     ),
     InternalError,
 > {
@@ -85,7 +89,7 @@ pub async fn orphaned<'a>(
     let staging_id: u32 = rand::rng().random();
     let scratch_path = repository.staging_id_path(staging_id);
     tokio::fs::create_dir_all(&scratch_path).await?;
-    let scratch = kv::Store::<models::BlobID, BTreeSet<models::Path>>::new(
+    let scratch = kv::Store::<models::BlobID, Vec<models::Path>>::new(
         scratch_path.join("scratch.rocksdb").abs().to_owned(),
         "orphaned".to_string(),
     )
@@ -127,4 +131,76 @@ pub async fn orphaned<'a>(
         .boxed()
     };
     Ok((Box::new(close), s.boxed()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::models::{BlobID, Path};
+    use crate::db::stores::kv::Upsert;
+
+    #[test]
+    fn upsert_keeps_paths_sorted_when_inserting_or_nochange() {
+        let blob = BlobID("blob".to_string());
+
+        // Start with a sorted vec
+        let existing = vec![
+            Path("a".to_string()),
+            Path("c".to_string()),
+            Path("e".to_string()),
+        ];
+        assert!(existing.is_sorted());
+
+        // Case 1: inserting a missing element ("b") should keep it sorted
+        let action = RecordBlobPath(blob.clone(), Path("b".to_string())).upsert(Some(existing));
+        match action {
+            UpsertAction::Change(paths) => {
+                assert!(paths.is_sorted(), "paths must remain sorted after insert")
+            }
+            UpsertAction::NoChange | UpsertAction::Delete => {
+                panic!("expected Change for missing path")
+            }
+        }
+
+        // Case 2: inserting an existing element ("c") should be NoChange (and implicitly preserves sort)
+        let existing2 = vec![
+            Path("a".to_string()),
+            Path("c".to_string()),
+            Path("e".to_string()),
+        ];
+        let action2 = RecordBlobPath(blob, Path("c".to_string())).upsert(Some(existing2));
+        match action2 {
+            UpsertAction::NoChange => {}
+            UpsertAction::Delete | UpsertAction::Change(_) => panic!("expected NoChange"),
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_at_ends_and_keeps_sorted() {
+        let blob = BlobID("blob".to_string());
+        let existing = vec![
+            Path("b".to_string()),
+            Path("c".to_string()),
+            Path("d".to_string()),
+        ];
+
+        // Insert before first
+        let action =
+            RecordBlobPath(blob.clone(), Path("a".to_string())).upsert(Some(existing.clone()));
+        if let UpsertAction::Change(paths) = action {
+            assert!(paths.is_sorted());
+            assert_eq!(paths.first(), Some(&Path("a".to_string())));
+        } else {
+            panic!("expected Change for missing path");
+        }
+
+        // Insert after last
+        let action = RecordBlobPath(blob, Path("z".to_string())).upsert(Some(existing));
+        if let UpsertAction::Change(paths) = action {
+            assert!(paths.is_sorted());
+            assert_eq!(paths.last(), Some(&Path("z".to_string())));
+        } else {
+            panic!("expected Change for missing path");
+        }
+    }
 }
