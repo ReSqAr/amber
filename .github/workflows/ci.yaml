@@ -33,7 +33,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: amber-ci
-          cache-targets: false
+          cache-targets: true
 
       - name: Install rclone
         run: |
@@ -76,7 +76,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: amber-coverage
-          cache-targets: false
+          cache-targets: true
 
       - name: Install rclone
         run: |
