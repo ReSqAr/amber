@@ -4,6 +4,7 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::flightdeck::tracer::Tracer;
 use crate::logic::orphaned;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{Availability, Local, Syncer, VirtualFilesystem};
@@ -63,8 +64,11 @@ pub(crate) async fn list_orphaned_blobs(
     let start_time = tokio::time::Instant::now();
     let mut orphaned_obs = BaseObserver::without_id("orphaned::blobs");
 
-    let (close, s) = orphaned::orhpaned(repository).await?;
+    let tracer = Tracer::new_on("list_orphaned_blobs::orphaned");
+    let (close, s) = orphaned::orphaned(repository).await?;
+    tracer.measure();
 
+    let tracer = Tracer::new_on("list_orphaned_blobs::stream");
     let mut count: usize = 0;
     let mut s = s;
     while let Some((blob_id, paths)) = s.try_next().await? {
@@ -80,6 +84,7 @@ pub(crate) async fn list_orphaned_blobs(
         orphaned_obs.observe_state(log::Level::Info, format!("{} -> {path_list}", blob_id.0));
         count += 1;
     }
+    tracer.measure();
 
     let duration = start_time.elapsed();
     let msg = format!("{count} orphaned blob(s) in {duration:.2?}");

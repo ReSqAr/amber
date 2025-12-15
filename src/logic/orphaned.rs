@@ -1,6 +1,7 @@
 use crate::db::models;
 use crate::db::stores::kv;
 use crate::db::stores::kv::UpsertAction;
+use crate::flightdeck::tracer::Tracer;
 use crate::repository::traits::{Availability, Local, Syncer, VirtualFilesystem};
 use crate::utils::errors::InternalError;
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
@@ -65,7 +66,7 @@ impl kv::Upsert for RecordBlobPath {
     }
 }
 
-pub async fn orhpaned<'a>(
+pub async fn orphaned<'a>(
     repository: impl Availability
     + Local
     + Syncer<models::File>
@@ -80,6 +81,7 @@ pub async fn orhpaned<'a>(
     ),
     InternalError,
 > {
+    let tracer = Tracer::new_on("orphaned::scratch");
     let staging_id: u32 = rand::rng().random();
     let scratch_path = repository.staging_id_path(staging_id);
     tokio::fs::create_dir_all(&scratch_path).await?;
@@ -88,15 +90,21 @@ pub async fn orhpaned<'a>(
         "orphaned".to_string(),
     )
     .await?;
+    tracer.measure();
 
+    let tracer = Tracer::new_on("orphaned::available");
     let blob_available = repository.available();
     let blob_stream = blob_available.map(|r| r.map(|blob| InsertBlob(blob.blob_id)));
     scratch.upsert(blob_stream.boxed()).await?;
+    tracer.measure();
 
+    let tracer = Tracer::new_on("orphaned::current_files");
     let current_files = repository.select_current_files().await;
     let current_stream = current_files.map(|e| e.map(|(_p, b)| RemoveBlob(b)));
     scratch.upsert(current_stream.boxed()).await?;
+    tracer.measure();
 
+    let tracer = Tracer::new_on("orphaned::files");
     let history_stream = repository.select(None).await;
     let history_stream = tokio_stream::StreamExt::filter_map(history_stream, |e| match e {
         Ok(models::File {
@@ -108,6 +116,7 @@ pub async fn orhpaned<'a>(
         Err(e) => Some(Err(e)),
     });
     scratch.upsert(history_stream.boxed()).await?;
+    tracer.measure();
 
     let s = scratch.stream().map_err(Into::into);
     let close = move || {
