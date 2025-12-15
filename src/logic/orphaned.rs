@@ -60,7 +60,7 @@ impl kv::Upsert for RecordBlobPath {
             match paths.binary_search(&self.1) {
                 Ok(_) => UpsertAction::NoChange,
                 Err(insert_idx) => {
-                    paths.insert(insert_idx, self.1.clone());
+                    paths.insert(insert_idx, self.1);
                     UpsertAction::Change(paths)
                 }
             }

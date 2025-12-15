@@ -5,6 +5,7 @@ use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
+use parking_lot::lock_api::MappedRwLockReadGuard;
 use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
@@ -50,7 +51,7 @@ where
     }
 
     fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V> {
-        UpsertAction::Change(self.1.clone())
+        UpsertAction::Change(self.1)
     }
 }
 
@@ -183,19 +184,34 @@ where
         Ok(())
     }
 
+    fn open_db<'a>(
+        db: &'a Arc<RwLock<DatabaseGuard>>,
+        name: &str,
+        label: &str,
+    ) -> Result<MappedRwLockReadGuard<'a, parking_lot::RawRwLock, DB>, DBError> {
+        let tracer = Tracer::new_on(format!("KVStore({})::{}::acq", name, label));
+        let guard = db.read();
+        tracer.measure();
+
+        let tracer = Tracer::new_on(format!("KVStore({})::{}::open", name, label));
+        let mapped = parking_lot::RwLockReadGuard::try_map(guard, |g| g.as_ref())
+            .map_err(|_guard| DBError::AccessAfterDrop)?;
+        tracer.measure();
+
+        Ok(mapped)
+    }
+
     pub(crate) fn stream(&self) -> BoxStream<'static, Result<(K, V), DBError>> {
         let db = self.db.clone();
-        let name = format!("KVStore({})::stream", self.name);
-        let (tx, rx) = flightdeck::tracked::mpsc_channel(name.clone(), DEFAULT_BUFFER_SIZE);
+        let name = self.name.clone();
+        let mpsc_name = format!("KVStore({})::stream::mpsc", name);
+        let (tx, rx) = flightdeck::tracked::mpsc_channel(mpsc_name.clone(), DEFAULT_BUFFER_SIZE);
 
         task::spawn_blocking(move || {
             let work: Result<(), DBError> = (|| {
-                let tracer = Tracer::new_on(format!("{}::acq", name));
-                let guard = db.read();
-                tracer.measure();
+                let db_ref = Self::open_db(&db, &name, "stream")?;
 
-                let tracer = Tracer::new_on(format!("{}::iter", name));
-                let db_ref = guard.as_ref().ok_or(DBError::AccessAfterDrop)?;
+                let tracer = Tracer::new_on(format!("KVStore({})::stream::iter", name));
                 for row in db_ref.iterator(IteratorMode::Start) {
                     let (key_bytes, value_bytes) = row?;
                     let key: K = bincode::deserialize(&key_bytes)?;
@@ -208,7 +224,11 @@ where
             })();
 
             if let Err(e) = work {
-                log::error!("failed to stream {} from rocksdb: {}", name, e);
+                log::error!(
+                    "failed to stream KVStore({})::stream from rocksdb: {}",
+                    name,
+                    e
+                );
                 let _ = tx.blocking_send(Err(e));
             }
         });
@@ -225,13 +245,7 @@ where
         let name = self.name.clone();
 
         let bg = task::spawn_blocking(move || -> Result<u64, E> {
-            let tracer = Tracer::new_on(format!("KVStore({})::apply::acq", name));
-            let guard = db.read();
-            tracer.measure();
-
-            let tracer = Tracer::new_on(format!("KVStore({})::apply::open", name));
-            let db_ref = guard.as_ref().ok_or(DBError::AccessAfterDrop)?;
-            tracer.measure();
+            let db_ref = Self::open_db(&db, &name, "apply")?;
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::apply", name));
             let mut count = 0u64;
@@ -263,13 +277,7 @@ where
             Ok(count)
         });
 
-        let mut s = s.boxed();
-        while let Some(item) = s.next().await {
-            if tx.send(item).await.is_err() {
-                break;
-            }
-        }
-        drop(tx);
+        forward_stream_to_mpsc(s, tx).await;
 
         let count = bg.await.map_err(Into::into)??;
         Ok(count)
@@ -285,13 +293,7 @@ where
         let name = self.name.clone();
 
         let bg = task::spawn_blocking(move || -> Result<u64, E> {
-            let tracer = Tracer::new_on(format!("KVStore({})::upsert::acq", name));
-            let guard = db.read();
-            tracer.measure();
-
-            let tracer = Tracer::new_on(format!("KVStore({})::upsert::open", name));
-            let db_ref = guard.as_ref().ok_or(DBError::AccessAfterDrop)?;
-            tracer.measure();
+            let db_ref = Self::open_db(&db, &name, "upsert")?;
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::upsert", name));
             let mut count = 0u64;
@@ -342,13 +344,7 @@ where
             Ok(count)
         });
 
-        let mut s = s.boxed();
-        while let Some(item) = s.next().await {
-            if tx.send(item).await.is_err() {
-                break;
-            }
-        }
-        drop(tx);
+        forward_stream_to_mpsc(s, tx).await;
 
         let count = bg.await.map_err(Into::into)??;
         Ok(count)
@@ -374,16 +370,9 @@ where
         let name = self.name.clone();
         task::spawn_blocking(move || {
             let work: Result<(), E> = (|| {
-                let tracer = Tracer::new_on(format!("KVStore({})::left_join::acq", name));
-                let guard = db.read();
-                tracer.measure();
-
-                let tracer = Tracer::new_on(format!("KVStore({})::left_join::open", name));
-                let db_ref = guard.as_ref().ok_or(DBError::AccessAfterDrop)?;
-                tracer.measure();
+                let db_ref = Self::open_db(&db, &name, "left_join")?;
 
                 let mut tracer = Tracer::new_off(format!("KVStore({})::left_join", name));
-
                 while let Some(key_like) = rx_in.blocking_recv() {
                     let key_like: IK = key_like?;
                     let key: K = key_func(key_like.clone());
@@ -411,20 +400,7 @@ where
             }
         });
 
-        let name = self.name.clone();
-        tokio::spawn(async move {
-            let mut s = s.boxed();
-            let mut count = 0u64;
-            while let Some(item) = s.next().await {
-                if let Err(e) = tx_in.send(item).await {
-                    log::error!("failed to lookup({}) in rocksdb: {}", name, e);
-                    return Err::<_, DBError>(e.into());
-                }
-                count += 1;
-            }
-            drop(tx_in);
-            Ok::<u64, DBError>(count)
-        });
+        tokio::spawn(forward_stream_to_mpsc(s, tx_in));
 
         rx.boxed()
     }
@@ -450,13 +426,7 @@ where
         );
 
         let bg = task::spawn_blocking(move || -> Result<u64, DBError> {
-            let tracer = Tracer::new_on(format!("KVStore({})::streaming_upsert::acq", name));
-            let guard = db.read();
-            tracer.measure();
-
-            let tracer = Tracer::new_on(format!("KVStore({})::streaming_upsert::open", name));
-            let db_ref = guard.as_ref().ok_or(DBError::AccessAfterDrop)?;
-            tracer.measure();
+            let db_ref = Self::open_db(&db, &name, "streaming_upsert")?;
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::streaming_upsert", name));
             let mut count = 0u64;
@@ -494,7 +464,7 @@ where
                         };
                         UpsertedValue::<U, V> {
                             upsert: u,
-                            previous_value: Some(current.clone()),
+                            previous_value: Some(current),
                         }
                     }
                     None => {
@@ -525,24 +495,31 @@ where
             Ok(count)
         });
 
-        let name = self.name.clone();
         let bg = tokio::spawn(async move {
-            let mut s = s.boxed();
-            let mut count = 0u64;
-            while let Some(item) = s.next().await {
-                if let Err(e) = tx_in.send(item).await {
-                    log::error!("failed to streaming_upsert({}) in rocksdb: {}", name, e);
-                    return Err(Into::<DBError>::into(e).into());
-                }
-                count += 1;
-            }
-            drop(tx_in);
+            let count = forward_stream_to_mpsc(s, tx_in).await;
             bg.await.map_err(Into::into)??;
             Ok(count)
         });
 
         (rx.boxed(), bg)
     }
+}
+
+async fn forward_stream_to_mpsc<T, E>(
+    mut s: BoxStream<'_, Result<T, E>>,
+    tx: mpsc::Sender<Result<T, E>>,
+) -> u64 {
+    let mut count = 0u64;
+    while let Some(item) = s.next().await {
+        count += 1;
+        if tx.send(item).await.is_err() {
+            break;
+        }
+    }
+
+    drop(tx);
+
+    count
 }
 
 #[cfg(test)]
