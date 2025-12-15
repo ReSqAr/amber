@@ -62,7 +62,6 @@ pub(crate) async fn list_orphaned_blobs(
     + Clone,
 ) -> Result<(), InternalError> {
     let start_time = tokio::time::Instant::now();
-    let mut orphaned_obs = BaseObserver::without_id("orphaned::blobs");
 
     let tracer = Tracer::new_on("list_orphaned_blobs::orphaned");
     let (close, s) = orphaned::orphaned(repository).await?;
@@ -72,22 +71,22 @@ pub(crate) async fn list_orphaned_blobs(
     let mut count: usize = 0;
     let mut s = s;
     while let Some((blob_id, paths)) = s.try_next().await? {
-        let path_list = if paths.is_empty() {
-            "(unknown path)".to_string()
-        } else {
-            paths
-                .into_iter()
-                .map(|p| p.0)
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        orphaned_obs.observe_state(log::Level::Info, format!("{} -> {path_list}", blob_id.0));
         count += 1;
+        if paths.is_empty() {
+            let mut orphaned_obs = BaseObserver::with_id("orphaned::blobs", "(no known file)");
+            orphaned_obs.observe_termination(log::Level::Info, blob_id.0);
+        } else {
+            for path in paths {
+                let mut orphaned_obs = BaseObserver::with_id("orphaned::blobs", path.0);
+                orphaned_obs.observe_termination(log::Level::Info, blob_id.0.clone());
+            }
+        }
     }
     tracer.measure();
 
     let duration = start_time.elapsed();
-    let msg = format!("{count} orphaned blob(s) in {duration:.2?}");
+    let msg = format!("{count} orphaned blobs in {duration:.2?}");
+    let mut orphaned_obs = BaseObserver::without_id("orphaned::blobs");
     orphaned_obs.observe_termination(log::Level::Info, msg);
 
     close().await?;
