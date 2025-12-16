@@ -1,9 +1,14 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
+use crate::db::stores::kv;
 use crate::flightdeck::tracer::Tracer;
+use bincode::Options as BincodeOptions;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode, Options};
+use rocksdb::{
+    BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode,
+    Options as RocksDBOptions,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
@@ -142,8 +147,8 @@ where
     _marker: PhantomData<V>,
 }
 
-fn make_options() -> Options {
-    let mut opts = Options::default();
+fn make_options() -> RocksDBOptions {
+    let mut opts = RocksDBOptions::default();
 
     // General
     opts.create_if_missing(true);
@@ -319,7 +324,7 @@ where
         let offset = Offset(offset_u64);
 
         let key = offset_to_key(offset_u64);
-        let bytes = bincode::serialize(v)?;
+        let bytes = kv::bincode_opts().serialize(v)?;
 
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
@@ -539,7 +544,7 @@ fn pump_range_blocking<V>(
             break;
         }
 
-        let value = match bincode::deserialize::<V>(&v) {
+        let value = match kv::bincode_opts().deserialize::<V>(&v) {
             Ok(v) => v,
             Err(e) => {
                 let _ = tx.blocking_send(Err(Error::Serde(e)));
@@ -569,7 +574,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_path_buf();
 
-        let mut opts = Options::default();
+        let mut opts = RocksDBOptions::default();
         opts.create_if_missing(true);
 
         let (watermark_tx, _watermark_rx) = watch::channel(None);

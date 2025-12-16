@@ -2,11 +2,14 @@ use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
+use bincode::Options as BincodeOptions;
 use futures::StreamExt;
 use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
 use parking_lot::lock_api::MappedRwLockReadGuard;
-use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, IteratorMode, Options};
+use rocksdb::{
+    BlockBasedOptions, Cache, DB, DBCompressionType, IteratorMode, Options as RocksDBOptions,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -17,6 +20,12 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 const DEFAULT_BUFFER_SIZE: usize = 100;
+
+pub fn bincode_opts() -> impl BincodeOptions {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_big_endian()
+}
 
 pub enum UpsertAction<T> {
     NoChange,
@@ -84,8 +93,8 @@ where
     }
 }
 
-fn make_options() -> Options {
-    let mut opts = Options::default();
+fn make_options() -> RocksDBOptions {
+    let mut opts = RocksDBOptions::default();
 
     // General
     opts.create_if_missing(true);
@@ -214,8 +223,8 @@ where
                 let tracer = Tracer::new_on(format!("KVStore({})::stream::iter", name));
                 for row in db_ref.iterator(IteratorMode::Start) {
                     let (key_bytes, value_bytes) = row?;
-                    let key: K = bincode::deserialize(&key_bytes)?;
-                    let value: V = bincode::deserialize(&value_bytes)?;
+                    let key: K = bincode_opts().deserialize(&key_bytes)?;
+                    let value: V = bincode_opts().deserialize(&value_bytes)?;
                     tx.blocking_send(Ok((key, value)))?;
                 }
                 tracer.measure();
@@ -253,13 +262,13 @@ where
                 let (key, value) = item?;
                 tracer.on();
 
-                let key_bytes = bincode::serialize(&key).map_err(Into::into)?;
+                let key_bytes = bincode_opts().serialize(&key).map_err(Into::into)?;
                 match value {
                     None => {
                         db_ref.delete(&key_bytes).map_err(Into::into)?;
                     }
                     Some(v) => {
-                        let val_bytes = bincode::serialize(&v).map_err(Into::into)?;
+                        let val_bytes = bincode_opts().serialize(&v).map_err(Into::into)?;
                         db_ref.put(&key_bytes, &val_bytes).map_err(Into::into)?;
                     }
                 }
@@ -303,15 +312,15 @@ where
                 let key = item.key();
                 tracer.on();
 
-                let key_bytes = bincode::serialize(&key).map_err(Into::into)?;
+                let key_bytes = bincode_opts().serialize(&key).map_err(Into::into)?;
                 let existing = db_ref.get(&key_bytes).map_err(Into::into)?;
 
                 match existing {
                     Some(bytes) => {
-                        let current: V = bincode::deserialize(&bytes).map_err(Into::into)?;
+                        let current: V = bincode_opts().deserialize(&bytes).map_err(Into::into)?;
                         match item.upsert(Some(current)) {
                             UpsertAction::Change(v) => {
-                                let v_bytes = bincode::serialize(&v).map_err(Into::into)?;
+                                let v_bytes = bincode_opts().serialize(&v).map_err(Into::into)?;
                                 db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
                                 count += 1;
                             }
@@ -324,7 +333,7 @@ where
                     }
                     None => {
                         if let UpsertAction::Change(v) = item.upsert(None) {
-                            let v_bytes = bincode::serialize(&v).map_err(Into::into)?;
+                            let v_bytes = bincode_opts().serialize(&v).map_err(Into::into)?;
                             db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
                             count += 1;
                         }
@@ -378,10 +387,12 @@ where
                     let key: K = key_func(key_like.clone());
                     tracer.on();
 
-                    let key_bytes = bincode::serialize(&key).map_err(Into::into)?;
+                    let key_bytes = bincode_opts().serialize(&key).map_err(Into::into)?;
                     let blob = db_ref.get(&key_bytes).map_err(Into::<DBError>::into)?;
                     let value: Option<V> = match blob {
-                        Some(bytes) => Some(bincode::deserialize(&bytes).map_err(Into::into)?),
+                        Some(bytes) => {
+                            Some(bincode_opts().deserialize(&bytes).map_err(Into::into)?)
+                        }
                         None => None,
                     };
 
@@ -443,16 +454,16 @@ where
                 let key = upsert.key();
                 tracer.on();
 
-                let key_bytes = bincode::serialize(&key)?;
+                let key_bytes = bincode_opts().serialize(&key)?;
                 let existing_bytes = db_ref.get(&key_bytes)?;
 
                 let uv = match existing_bytes {
                     Some(bytes) => {
                         let u = upsert.clone();
-                        let current: V = bincode::deserialize(&bytes)?;
+                        let current: V = bincode_opts().deserialize(&bytes)?;
                         match upsert.upsert(Some(current.clone())) {
                             UpsertAction::Change(v_new) => {
-                                let v_bytes = bincode::serialize(&v_new)?;
+                                let v_bytes = bincode_opts().serialize(&v_new)?;
                                 db_ref.put(&key_bytes, &v_bytes)?;
                                 count += 1;
                             }
@@ -470,7 +481,7 @@ where
                     None => {
                         let u = upsert.clone();
                         if let UpsertAction::Change(v_new) = upsert.upsert(None) {
-                            let v_bytes = bincode::serialize(&v_new)?;
+                            let v_bytes = bincode_opts().serialize(&v_new)?;
                             db_ref.put(&key_bytes, &v_bytes)?;
                             count += 1;
                         };
@@ -525,7 +536,10 @@ async fn forward_stream_to_mpsc<T, E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::Uid;
     use futures::{TryStreamExt, stream};
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
     use tempfile::TempDir;
 
     #[derive(Clone)]
@@ -969,6 +983,33 @@ mod tests {
         let entries: Vec<_> = store.stream().try_collect().await.expect("collect store");
         assert_eq!(entries, vec![("existing".to_string(), 42)]);
 
+        store.close().await.expect("close store");
+    }
+
+    #[tokio::test]
+    async fn uid_keys_stream_in_u64_order() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: Store<Uid, Uid> = Store::new(path, "uid-order".to_string())
+            .await
+            .expect("create store");
+
+        let seed = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let nums: [u64; 1000] = rng.random();
+        let iter = stream::iter(nums.into_iter().map(|n| Ok((Uid(n), Some(Uid(n))))));
+        let written = store
+            .apply::<DBError>(iter.boxed())
+            .await
+            .expect("apply items");
+
+        assert_eq!(written, 1000);
+
+        let out: Vec<(Uid, Uid)> = store.stream().try_collect().await.expect("collect");
+        assert_eq!(out.len(), 1000);
+
+        assert!(out.is_sorted(), "stream of Uids should be sorted");
         store.close().await.expect("close store");
     }
 }

@@ -4,7 +4,9 @@ use crate::db::stores::reduced::{RowStatus, Status, ValidFrom};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(
+    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash,
+)]
 pub struct Uid(pub u64);
 impl From<u64> for Uid {
     fn from(v: u64) -> Self {
