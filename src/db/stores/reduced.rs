@@ -9,8 +9,6 @@ use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryFutureExt};
 use futures::{TryStreamExt, stream};
 use futures_core::stream::BoxStream;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,11 +29,11 @@ pub(crate) enum RowStatus<V> {
 }
 
 pub(crate) trait Status {
-    type V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
+    type V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static;
     fn status(&self) -> RowStatus<Self::V>;
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub(crate) struct Always();
 
 impl Status for Always {
@@ -45,17 +43,18 @@ impl Status for Always {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) struct ValidFrom {
+    #[bincode(with_serde)]
     pub(crate) valid_from: DateTime<Utc>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Store<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     name: String,
     log: Writer<(Uid, K, V, S, ValidFrom)>,
@@ -66,9 +65,9 @@ where
 
 impl<K, V, S> Store<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     pub(crate) async fn open(name: String, base_path: PathBuf) -> Result<Self, DBError> {
         let log_path = base_path.join("log");
@@ -204,9 +203,9 @@ pub(crate) trait TransactionLike<V> {
 
 pub(crate) struct Transaction<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     txn: log::Transaction<(Uid, K, V, S, ValidFrom)>,
     reducer: JoinHandle<Result<(), DBError>>,
@@ -214,9 +213,9 @@ where
 
 impl<K, V, S> Transaction<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     async fn new(
         txn: log::Transaction<(Uid, K, V, S, ValidFrom)>,
@@ -300,9 +299,9 @@ where
 }
 impl<K, V, S> TransactionLike<(Uid, K, V, S, ValidFrom)> for Transaction<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     async fn put(&mut self, v: &(Uid, K, V, S, ValidFrom)) -> Result<(), DBError> {
         task::block_in_place(|| self.txn.put_blocking(v))?;
@@ -324,9 +323,9 @@ where
 
 pub(crate) struct UpsertValidFrom<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     key: K,
     value: V,
@@ -336,9 +335,9 @@ where
 
 impl<K, V, S> Upsert for UpsertValidFrom<K, V, S>
 where
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-    S: Status + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    K: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
+    S: Status + bincode::Encode + bincode::Decode<()> + Clone + Send + Sync + 'static,
 {
     type K = K;
     type V = (V, S::V, ValidFrom);
@@ -462,8 +461,7 @@ mod tests {
         Ok(())
     }
 
-    /// Custom status type to exercise the Delete branch of RowStatus.
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
     struct DeletingStatus {
         delete: bool,
     }

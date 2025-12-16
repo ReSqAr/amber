@@ -1,11 +1,10 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
+use crate::db::stores::kv;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode, Options};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::{
@@ -72,8 +71,10 @@ pub enum Error {
     #[error("rocksdb error: {0}")]
     Rocksdb(#[from] rocksdb::Error),
 
-    #[error("serialization error: {0}")]
-    Serde(#[from] bincode::Error),
+    #[error("decode error: {0}")]
+    Decode(#[from] bincode::error::DecodeError),
+    #[error("encode error: {0}")]
+    Encode(#[from] bincode::error::EncodeError),
 
     #[error("failed to convert key")]
     KeyConversion,
@@ -115,7 +116,7 @@ impl Inner {
 #[derive(Clone)]
 pub struct Writer<V>
 where
-    V: Serialize + DeserializeOwned + Send + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Send + 'static,
 {
     inner: Arc<Inner>,
     _marker: PhantomData<V>,
@@ -124,7 +125,7 @@ where
 #[derive(Clone)]
 pub struct Reader<V>
 where
-    V: DeserializeOwned + Send + 'static,
+    V: bincode::Decode<()> + Send + 'static,
 {
     inner: Arc<Inner>,
     _marker: PhantomData<V>,
@@ -132,7 +133,7 @@ where
 
 pub struct Transaction<V>
 where
-    V: Serialize + DeserializeOwned + Send + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Send + 'static,
 {
     inner: Arc<Inner>,
     /// Last offset written by this transaction (if any).
@@ -210,7 +211,7 @@ fn max_offset_from_db(db: &DB) -> Result<Option<Offset>> {
 
 impl<V> Writer<V>
 where
-    V: Serialize + DeserializeOwned + Send + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Send + 'static,
 {
     pub fn open(path: PathBuf, name: String) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -308,7 +309,7 @@ where
 
 impl<V> Transaction<V>
 where
-    V: Serialize + DeserializeOwned + Send + 'static,
+    V: bincode::Encode + bincode::Decode<()> + Clone + Send + 'static,
 {
     pub fn put_blocking(&mut self, v: &V) -> Result<()> {
         if self.closed {
@@ -319,7 +320,7 @@ where
         let offset = Offset(offset_u64);
 
         let key = offset_to_key(offset_u64);
-        let bytes = bincode::serialize(v)?;
+        let bytes = bincode::encode_to_vec::<V, _>(v.clone(), kv::CFG)?;
 
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
@@ -471,7 +472,7 @@ where
 
 impl<V> Reader<V>
 where
-    V: DeserializeOwned + Send + 'static,
+    V: bincode::Decode<()> + Send + 'static,
 {
     #[allow(dead_code)]
     pub fn watermark(&self) -> Option<Offset> {
@@ -501,7 +502,7 @@ fn pump_range_blocking<V>(
     to: Offset,
     tx: mpsc::Sender<Result<(Offset, V)>>,
 ) where
-    V: DeserializeOwned + Send + 'static,
+    V: bincode::Decode<()> + Send + 'static,
 {
     let guard = db.read();
     let db = match guard.as_ref().ok_or(Error::AccessAfterDrop) {
@@ -539,10 +540,10 @@ fn pump_range_blocking<V>(
             break;
         }
 
-        let value = match bincode::deserialize::<V>(&v) {
-            Ok(v) => v,
+        let value = match bincode::decode_from_slice::<V, _>(&v, kv::CFG) {
+            Ok((v, _)) => v,
             Err(e) => {
-                let _ = tx.blocking_send(Err(Error::Serde(e)));
+                let _ = tx.blocking_send(Err(Error::Decode(e)));
                 break;
             }
         };
@@ -564,7 +565,7 @@ mod tests {
 
     fn make_writer<V>() -> Writer<V>
     where
-        V: Serialize + DeserializeOwned + Send + 'static,
+        V: bincode::Encode + bincode::Decode<()> + Send + 'static,
     {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_path_buf();

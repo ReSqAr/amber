@@ -4,7 +4,9 @@ use crate::db::stores::reduced::{RowStatus, Status, ValidFrom};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(
+    Debug, Clone, Copy, bincode::Encode, bincode::Decode, Eq, PartialEq, Ord, PartialOrd, Hash,
+)]
 pub struct Uid(pub u64);
 impl From<u64> for Uid {
     fn from(v: u64) -> Self {
@@ -16,9 +18,7 @@ impl From<Uid> for u64 {
         v.0
     }
 }
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
-)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Path(pub String);
 
 impl AsRef<str> for Path {
@@ -27,7 +27,7 @@ impl AsRef<str> for Path {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode, Eq, PartialEq, Hash)]
 pub struct BlobID(pub String);
 
 impl BlobID {
@@ -43,22 +43,22 @@ impl BlobID {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode, Eq, PartialEq, Hash)]
 pub struct RepoID(pub String);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct BlobRef {
     pub blob_id: BlobID,
     pub repo_id: RepoID,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct SizedBlobID {
     pub blob_id: BlobID,
     pub blob_size: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct Blob {
     pub uid: Uid,
     pub repo_id: RepoID,
@@ -66,16 +66,17 @@ pub struct Blob {
     pub blob_size: u64,
     pub has_blob: bool,
     pub path: Option<Path>,
+    #[bincode(with_serde)]
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct BlobMeta {
     pub size: u64,
     pub path: Option<Path>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct HasBlob(pub bool);
 
 impl Status for HasBlob {
@@ -151,19 +152,20 @@ impl From<(Uid, BlobRef, BlobMeta, HasBlob, ValidFrom)> for Blob {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct CurrentFile {
     pub blob_id: BlobID,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct File {
     pub uid: Uid,
     pub path: Path,
     pub blob_id: Option<BlobID>,
+    #[bincode(with_serde)]
     pub valid_from: DateTime<Utc>,
 }
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct FileBlobID(pub Option<BlobID>);
 
 impl Status for FileBlobID {
@@ -220,50 +222,51 @@ impl From<(Uid, Path, (), FileBlobID, ValidFrom)> for File {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct Materialisation {
     pub blob_id: BlobID,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct Observation {
     pub fs_last_seen_id: i64,
+    #[bincode(with_serde)]
     pub fs_last_seen_dttm: DateTime<Utc>,
+    #[bincode(with_serde)]
     pub fs_last_modified_dttm: DateTime<Utc>,
     pub fs_last_size: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct Check {
+    #[bincode(with_serde)]
     pub check_last_dttm: DateTime<Utc>,
     pub check_last_hash: BlobID,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct LocalRepository {
     pub repo_id: RepoID,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct RepositoryMetadata {
     pub last_file_index: Option<u64>,
     pub last_blob_index: Option<u64>,
     pub last_name_index: Option<u64>,
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
-)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionName(pub String);
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, bincode::Encode, bincode::Decode)]
 pub enum ConnectionType {
     Local,
     Ssh,
     RClone,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct ConnectionMetadata {
     pub connection_type: ConnectionType,
     pub parameter: String,
@@ -275,9 +278,7 @@ pub struct Connection {
     pub parameter: String,
 }
 
-#[derive(
-    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, Eq, PartialEq, Ord, PartialOrd,
-)]
+#[derive(Debug, Clone, Copy, bincode::Encode, bincode::Decode, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LogOffset(pub u64);
 
 impl From<LogOffset> for log::Offset {
@@ -436,11 +437,12 @@ pub struct Repository {
     pub last_name_index: Option<u64>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct RepositoryName {
     pub uid: Uid,
     pub repo_id: RepoID,
     pub name: String,
+    #[bincode(with_serde)]
     pub valid_from: DateTime<Utc>,
 }
 
@@ -451,7 +453,7 @@ pub struct InsertRepositoryName {
     pub valid_from: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct LogRepositoryName {
     pub name: String,
 }
@@ -495,7 +497,7 @@ impl From<(Uid, RepoID, LogRepositoryName, Always, ValidFrom)> for RepositoryNam
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct InsertMaterialisation {
     pub path: Path,
     pub blob_id: Option<BlobID>,

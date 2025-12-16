@@ -10,8 +10,10 @@ pub enum DBError {
     RocksDB(#[from] rocksdb::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    #[error("decode error: {0}")]
+    Decode(#[from] bincode::error::DecodeError),
+    #[error("encode error: {0}")]
+    Encode(#[from] bincode::error::EncodeError),
     #[error("send error: {0}")]
     SendError(String),
     #[error("database accessed after close")]

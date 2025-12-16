@@ -14,7 +14,7 @@ async-stream = "0"
 async-trait = "0"
 backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
-bincode = "2"
+bincode = { version = "2", features = ["serde"] }
 blake3 = "1"
 chrono = { version = "0", features = ["serde"] }
 cipher = { version = "0.4", features = ["rand_core"] }
