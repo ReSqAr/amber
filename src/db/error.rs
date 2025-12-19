@@ -11,7 +11,7 @@ pub enum DBError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    Serialization(#[from] postcard::Error),
     #[error("send error: {0}")]
     SendError(String),
     #[error("database accessed after close")]
