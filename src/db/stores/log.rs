@@ -1,14 +1,9 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
-use crate::db::stores::kv;
 use crate::flightdeck::tracer::Tracer;
-use bincode::Options as BincodeOptions;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use rocksdb::{
-    BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode,
-    Options as RocksDBOptions,
-};
+use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode, Options};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
@@ -78,7 +73,7 @@ pub enum Error {
     Rocksdb(#[from] rocksdb::Error),
 
     #[error("serialization error: {0}")]
-    Serde(#[from] bincode::Error),
+    Serde(#[from] postcard::Error),
 
     #[error("failed to convert key")]
     KeyConversion,
@@ -147,8 +142,8 @@ where
     _marker: PhantomData<V>,
 }
 
-fn make_options() -> RocksDBOptions {
-    let mut opts = RocksDBOptions::default();
+fn make_options() -> Options {
+    let mut opts = Options::default();
 
     // General
     opts.create_if_missing(true);
@@ -311,6 +306,14 @@ where
     }
 }
 
+fn ser<T: Serialize + ?Sized>(v: &T) -> std::result::Result<Vec<u8>, Error> {
+    Ok(postcard::to_stdvec(v)?)
+}
+
+fn de<T: DeserializeOwned>(bytes: &[u8]) -> std::result::Result<T, Error> {
+    Ok(postcard::from_bytes(bytes)?)
+}
+
 impl<V> Transaction<V>
 where
     V: Serialize + DeserializeOwned + Send + 'static,
@@ -324,7 +327,7 @@ where
         let offset = Offset(offset_u64);
 
         let key = offset_to_key(offset_u64);
-        let bytes = kv::bincode_opts().serialize(v)?;
+        let bytes = ser(v)?;
 
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
@@ -544,10 +547,10 @@ fn pump_range_blocking<V>(
             break;
         }
 
-        let value = match kv::bincode_opts().deserialize::<V>(&v) {
+        let value = match de::<V>(&v) {
             Ok(v) => v,
             Err(e) => {
-                let _ = tx.blocking_send(Err(Error::Serde(e)));
+                let _ = tx.blocking_send(Err(e));
                 break;
             }
         };
@@ -574,7 +577,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_path_buf();
 
-        let mut opts = RocksDBOptions::default();
+        let mut opts = Options::default();
         opts.create_if_missing(true);
 
         let (watermark_tx, _watermark_rx) = watch::channel(None);
@@ -1001,5 +1004,62 @@ mod tests {
         );
 
         writer.close().await.expect("close writer");
+    }
+
+    #[tokio::test]
+    async fn log_in_order_read() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+        const N: u64 = 10000;
+
+        // First instance: write a lot of data and close
+        {
+            let writer: Writer<u64> =
+                Writer::open(path.clone(), "test".to_string()).expect("create writer");
+
+            let mut tx = writer.transaction().expect("start tx");
+            for i in 0u64..N {
+                tx.put_blocking(&i).expect("put");
+            }
+
+            let last = tx.close_blocking().expect("close tx");
+            assert_eq!(last, Some(Offset(N - 1)));
+
+            let wm = writer.watermark();
+            assert_eq!(wm, Some(Offset(N - 1)));
+
+            writer.close().await.expect("close writer");
+        }
+
+        // Second instance: reopen and verify recovery.
+        {
+            let writer: Writer<u64> =
+                Writer::open(path.clone(), "test".to_string()).expect("reopen writer");
+
+            // Watermark should be recovered.
+            let wm = writer.watermark();
+            assert_eq!(wm, Some(Offset(N - 1)));
+
+            // Reading from the start should give us the same data.
+            let reader = writer.reader();
+            let stream = reader.from(Offset::start());
+            let items: Vec<(Offset, u64)> =
+                stream.try_collect().await.expect("collect after reopen");
+            assert_eq!(items.len() as u64, N);
+            for i in 0u64..N {
+                assert_eq!(items[i as usize], (Offset(i), i));
+            }
+
+            // Next transaction should continue from offset N.
+            let mut tx = writer.transaction().expect("start tx 2");
+            tx.put_blocking(&N).expect("put N");
+            let last = tx.close_blocking().expect("close tx 2");
+            assert_eq!(last, Some(Offset(N)));
+
+            let wm2 = writer.watermark();
+            assert_eq!(wm2, Some(Offset(N)));
+
+            writer.close().await.expect("close writer");
+        }
     }
 }

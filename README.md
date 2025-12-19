@@ -28,7 +28,7 @@
 ## Pitch
 
 Amber is a streamlined tool for managing large file collections by tracking content-addressable blobs.
-It works like a "Git for blobs"—similar in spirit to Git Annex but without branching—by preserving files in their original form.
+It works like a "Git for blobs" - similar in spirit to Git Annex but without branching - by preserving files in their original form.
 Instead of versioning changes, amber treats every file as an immutable blob (think of how you rarely edit photos) and leverages hard links to deduplicate them.
 File tracking information is stored in a database, while file transfers between locations are handled via rclone.
 Built in Rust for speed and robustness, amber provides a clear and efficient way to manage vast amounts of data.
@@ -110,7 +110,7 @@ In this case just run `amber sync` to materialise all available files.
 So make sure that you `ssh-add` your keys before running amber
 - you can explicitly specify a password for the connection using this syntax:
 `holden:hunter2@tycho.com:22/` - where `hunter2` is the example password.
-Password auth is not recommended though
+Password auth is not recommended though.
 
 
 ## rclone Supported Storage: S3/Backblaze/...
