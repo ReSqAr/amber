@@ -264,12 +264,6 @@ pub async fn state_with_checks(
                             .await
                             .expect("failed to send error to output stream");
                     }
-                    if let Err(e) = seen_sink_tx.send(fs).await {
-                        tx_clone
-                            .send(Err(e.into()))
-                            .await
-                            .expect("failed to send error to output stream");
-                    }
                 }
                 Err(e) => tx_clone
                     .send(Err(e.into()))
@@ -290,6 +284,7 @@ pub async fn state_with_checks(
         while let Some(vf) = vfs_stream.next().await {
             match vf {
                 Ok(vf) => {
+                    let file_seen = vf.file_seen.clone();
                     let vf: Result<VirtualFile, _> = vf.try_into();
                     match vf {
                         Ok(vf) => {
@@ -321,6 +316,13 @@ pub async fn state_with_checks(
                                     .expect("failed to send error to output stream")
                             }
                         },
+                    }
+
+                    if let Err(e) = seen_sink_tx.send(file_seen).await {
+                        tx_clone
+                            .send(Err(e.into()))
+                            .await
+                            .expect("failed to send error to output stream");
                     }
                 }
                 Err(e) => tx_clone
