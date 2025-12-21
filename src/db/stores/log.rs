@@ -1,7 +1,6 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
 use crate::db::stores::options;
-use crate::db::stores::options::make_options;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
@@ -175,7 +174,7 @@ where
             std::fs::create_dir_all(parent)?;
         }
 
-        let opts = make_options();
+        let opts = options::make_options();
         let tracer = Tracer::new_on(format!("log::Writer({})::open", name));
         let db = DB::open(&opts, &path)?;
         let max_offset = max_offset_from_db(&db)?;
@@ -536,11 +535,9 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_path_buf();
 
-        let mut opts = make_options();
-        opts.create_if_missing(true);
-
         let (watermark_tx, _watermark_rx) = watch::channel(None);
 
+        let opts = options::make_options();
         let db = DB::open(&opts, path).expect("open db");
         let db = Arc::new(parking_lot::RwLock::new(DatabaseGuard {
             db: Some(db),
