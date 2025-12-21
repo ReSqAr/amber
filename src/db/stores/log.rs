@@ -327,7 +327,7 @@ where
         ));
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
-        db_ref.flush_wal(true)?;
+        db_ref.flush()?;
         tracer.measure();
 
         self.inner.watermark.store(offset.0, Ordering::SeqCst);
