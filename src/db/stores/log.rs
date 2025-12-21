@@ -1,9 +1,11 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
+use crate::db::stores::options;
+use crate::db::stores::options::make_options;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use rocksdb::{BlockBasedOptions, Cache, DB, DBCompressionType, Direction, IteratorMode, Options};
+use rocksdb::{DB, Direction, IteratorMode, WriteOptions};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
@@ -135,56 +137,12 @@ where
     V: Serialize + DeserializeOwned + Send + 'static,
 {
     inner: Arc<Inner>,
+    write_opt: WriteOptions,
     /// Last offset written by this transaction (if any).
     last_offset: Option<Offset>,
     tail_cancels: Mutex<Vec<tokio::sync::oneshot::Sender<()>>>,
     closed: bool,
     _marker: PhantomData<V>,
-}
-
-fn make_options() -> Options {
-    let mut opts = Options::default();
-
-    // General
-    opts.create_if_missing(true);
-    opts.increase_parallelism(num_cpus::get().try_into().unwrap_or(4));
-    opts.optimize_level_style_compaction(64 * 1024 * 1024);
-
-    // Block-based table
-    let mut block_opts = BlockBasedOptions::default();
-
-    // Bloom filter for point lookups
-    block_opts.set_bloom_filter(10.0, false);
-
-    // Cache data/index/filter blocks in memory.
-    let cache = Cache::new_lru_cache(128 * 1024 * 1024);
-    block_opts.set_block_cache(&cache);
-    block_opts.set_cache_index_and_filter_blocks(true);
-
-    // Reasonable block size
-    block_opts.set_block_size(16 * 1024);
-
-    opts.set_block_based_table_factory(&block_opts);
-
-    // Compression: LZ4 is fast and usually good tradeoff.
-    opts.set_compression_type(DBCompressionType::Lz4);
-
-    // Dynamic level bytes works well for most workloads
-    opts.set_level_compaction_dynamic_level_bytes(true);
-
-    // Memtable / write buffers
-    opts.set_write_buffer_size(64 * 1024 * 1024);
-    opts.set_max_write_buffer_number(3);
-    opts.set_min_write_buffer_number_to_merge(1);
-
-    // Background threads for compaction/flush
-    opts.set_max_background_jobs(4);
-
-    // Smooth out I/O
-    opts.set_bytes_per_sync(10 * 1024 * 1024); // fsync WAL every ~10MB
-    opts.set_wal_bytes_per_sync(512 * 1024);
-
-    opts
 }
 
 fn offset_to_key(offset: u64) -> [u8; 8] {
@@ -298,6 +256,7 @@ where
 
         Ok(Transaction {
             inner: Arc::clone(&self.inner),
+            write_opt: options::write_options(),
             last_offset: None,
             tail_cancels: Mutex::new(Vec::new()),
             closed: false,
@@ -331,7 +290,7 @@ where
 
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
-        db_ref.put(key, &bytes)?;
+        db_ref.put_opt(key, &bytes, &self.write_opt)?;
         self.last_offset = Some(offset);
 
         Ok(())
@@ -577,7 +536,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_path_buf();
 
-        let mut opts = Options::default();
+        let mut opts = make_options();
         opts.create_if_missing(true);
 
         let (watermark_tx, _watermark_rx) = watch::channel(None);
