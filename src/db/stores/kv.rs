@@ -1,14 +1,13 @@
 use crate::db::error::DBError;
 use crate::db::stores::guard::DatabaseGuard;
+use crate::db::stores::options;
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
 use parking_lot::lock_api::MappedRwLockReadGuard;
-use rocksdb::{
-    BlockBasedOptions, Cache, DB, DBCompressionType, IteratorMode, Options as RocksDBOptions,
-};
+use rocksdb::{DB, IteratorMode};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -94,51 +93,6 @@ where
     }
 }
 
-fn make_options() -> RocksDBOptions {
-    let mut opts = RocksDBOptions::default();
-
-    // General
-    opts.create_if_missing(true);
-    opts.increase_parallelism(num_cpus::get().try_into().unwrap_or(4));
-    opts.optimize_level_style_compaction(64 * 1024 * 1024);
-
-    // Block-based table
-    let mut block_opts = BlockBasedOptions::default();
-
-    // Bloom filter for point lookups
-    block_opts.set_bloom_filter(10.0, false);
-
-    // Cache data/index/filter blocks in memory.
-    let cache = Cache::new_lru_cache(128 * 1024 * 1024);
-    block_opts.set_block_cache(&cache);
-    block_opts.set_cache_index_and_filter_blocks(true);
-
-    // Reasonable block size
-    block_opts.set_block_size(16 * 1024);
-
-    opts.set_block_based_table_factory(&block_opts);
-
-    // Compression: LZ4 is fast and usually good tradeoff.
-    opts.set_compression_type(DBCompressionType::Lz4);
-
-    // Dynamic level bytes works well for most workloads
-    opts.set_level_compaction_dynamic_level_bytes(true);
-
-    // Memtable / write buffers (see next section)
-    opts.set_write_buffer_size(64 * 1024 * 1024);
-    opts.set_max_write_buffer_number(3);
-    opts.set_min_write_buffer_number_to_merge(1);
-
-    // Background threads for compaction/flush
-    opts.set_max_background_jobs(4);
-
-    // Smooth out I/O
-    opts.set_bytes_per_sync(10 * 1024 * 1024); // fsync WAL every ~10MB
-    opts.set_wal_bytes_per_sync(512 * 1024);
-
-    opts
-}
-
 impl<K, V> Store<K, V>
 where
     K: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
@@ -151,7 +105,7 @@ where
             }
 
             let tracer = Tracer::new_on(format!("kv::Store({})::open", name));
-            let opts = make_options();
+            let opts = options::make_options();
             let db = DB::open(&opts, &path)?;
             tracer.measure();
 
@@ -256,6 +210,7 @@ where
 
         let bg = task::spawn_blocking(move || -> Result<u64, E> {
             let db_ref = Self::open_db(&db, &name, "apply")?;
+            let wo = options::write_options();
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::apply", name));
             let mut count = 0u64;
@@ -266,11 +221,13 @@ where
                 let key_bytes = ser(&key)?;
                 match value {
                     None => {
-                        db_ref.delete(&key_bytes).map_err(Into::into)?;
+                        db_ref.delete_opt(&key_bytes, &wo).map_err(Into::into)?;
                     }
                     Some(v) => {
                         let val_bytes = ser(&v)?;
-                        db_ref.put(&key_bytes, &val_bytes).map_err(Into::into)?;
+                        db_ref
+                            .put_opt(&key_bytes, &val_bytes, &wo)
+                            .map_err(Into::into)?;
                     }
                 }
                 count += 1;
@@ -304,6 +261,7 @@ where
 
         let bg = task::spawn_blocking(move || -> Result<u64, E> {
             let db_ref = Self::open_db(&db, &name, "upsert")?;
+            let wo = options::write_options();
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::upsert", name));
             let mut count = 0u64;
@@ -322,11 +280,13 @@ where
                         match item.upsert(Some(current)) {
                             UpsertAction::Change(v) => {
                                 let v_bytes = ser(&v)?;
-                                db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
+                                db_ref
+                                    .put_opt(&key_bytes, &v_bytes, &wo)
+                                    .map_err(Into::into)?;
                                 count += 1;
                             }
                             UpsertAction::Delete => {
-                                db_ref.delete(&key_bytes).map_err(Into::into)?;
+                                db_ref.delete_opt(&key_bytes, &wo).map_err(Into::into)?;
                                 count += 1;
                             }
                             UpsertAction::NoChange => {}
@@ -335,7 +295,9 @@ where
                     None => {
                         if let UpsertAction::Change(v) = item.upsert(None) {
                             let v_bytes = ser(&v)?;
-                            db_ref.put(&key_bytes, &v_bytes).map_err(Into::into)?;
+                            db_ref
+                                .put_opt(&key_bytes, &v_bytes, &wo)
+                                .map_err(Into::into)?;
                             count += 1;
                         }
                     }
@@ -437,6 +399,7 @@ where
 
         let bg = task::spawn_blocking(move || -> Result<u64, DBError> {
             let db_ref = Self::open_db(&db, &name, "streaming_upsert")?;
+            let wo = options::write_options();
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::streaming_upsert", name));
             let mut count = 0u64;
@@ -463,11 +426,11 @@ where
                         match upsert.upsert(Some(current.clone())) {
                             UpsertAction::Change(v_new) => {
                                 let v_bytes = ser(&v_new)?;
-                                db_ref.put(&key_bytes, &v_bytes)?;
+                                db_ref.put_opt(&key_bytes, &v_bytes, &wo)?;
                                 count += 1;
                             }
                             UpsertAction::Delete => {
-                                db_ref.delete(&key_bytes)?;
+                                db_ref.delete_opt(&key_bytes, &wo)?;
                                 count += 1;
                             }
                             UpsertAction::NoChange => {}
@@ -481,7 +444,7 @@ where
                         let u = upsert.clone();
                         if let UpsertAction::Change(v_new) = upsert.upsert(None) {
                             let v_bytes = ser(&v_new)?;
-                            db_ref.put(&key_bytes, &v_bytes)?;
+                            db_ref.put_opt(&key_bytes, &v_bytes, &wo)?;
                             count += 1;
                         };
                         UpsertedValue {
