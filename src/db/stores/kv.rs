@@ -237,7 +237,7 @@ where
 
             let tracer = Tracer::new_on(format!("KVStore({})::upsert::commit", name));
             if count > 0 {
-                db_ref.flush_wal(true).map_err(Into::into)?;
+                db_ref.flush().map_err(Into::into)?;
             }
             tracer.measure();
 
@@ -309,7 +309,7 @@ where
 
             let tracer = Tracer::new_on(format!("KVStore({})::upsert::commit", name));
             if count > 0 {
-                db_ref.flush_wal(true).map_err(Into::into)?;
+                db_ref.flush().map_err(Into::into)?;
             }
             tracer.measure();
 
@@ -461,7 +461,7 @@ where
 
             let tracer = Tracer::new_on(format!("KVStore({})::upsert::commit", name));
             if count > 0 {
-                db_ref.flush_wal(true)?;
+                db_ref.flush()?;
             }
             tracer.measure();
 
