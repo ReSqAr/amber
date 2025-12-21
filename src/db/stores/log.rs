@@ -528,7 +528,7 @@ mod tests {
     use futures::TryStreamExt;
     use tempfile::TempDir;
 
-    fn make_writer<V>() -> Writer<V>
+    fn make_writer<V>() -> (TempDir, Writer<V>)
     where
         V: Serialize + DeserializeOwned + Send + 'static,
     {
@@ -553,15 +553,16 @@ mod tests {
             active_tx: RwLock::new(false),
         });
 
-        Writer {
+        let writer = Writer {
             inner,
             _marker: PhantomData,
-        }
+        };
+        (dir, writer)
     }
 
     #[tokio::test]
     async fn write_and_read_back_strings() {
-        let writer: Writer<String> = make_writer();
+        let (_tmp, writer): (_, Writer<String>) = make_writer();
 
         // Write a few items.
         let mut tx = writer.transaction().expect("start transaction");
@@ -592,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn from_respects_watermark() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         // Write some items, but only commit part of them.
         let mut tx = writer.transaction().expect("start transaction");
@@ -677,7 +678,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_from_start_sees_existing_and_new() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         // Initial data, committed.
         let mut tx = writer.transaction().expect("start tx");
@@ -717,7 +718,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_from_head_sees_only_new() {
-        let writer: Writer<String> = make_writer();
+        let (_tmp, writer): (_, Writer<String>) = make_writer();
 
         // Initial committed data.
         let mut tx = writer.transaction().expect("start tx");
@@ -751,7 +752,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_one_active_transaction() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         let _tx1 = writer.transaction().expect("start first tx");
 
@@ -767,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn flush_without_writes_is_noop() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         // Initially empty.
         assert_eq!(writer.watermark(), None);
@@ -794,7 +795,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_flushes_advance_watermark() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         let mut tx = writer.transaction().expect("start tx");
 
@@ -835,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn from_past_end_is_empty() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         // Write and commit two items at offsets 0 and 1.
         let mut tx = writer.transaction().expect("start tx");
@@ -862,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_from_offset_replays_subset_and_new() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         // Initial committed data: offsets 0..=4 with values 0..=4.
         {
@@ -907,7 +908,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_transaction_after_close_is_allowed() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         {
             let mut tx1 = writer.transaction().expect("start first tx");
@@ -935,7 +936,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_from_start_on_empty_log_sees_only_new() {
-        let writer: Writer<u64> = make_writer();
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
 
         assert_eq!(writer.watermark(), None);
 
