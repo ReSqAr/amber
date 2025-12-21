@@ -161,7 +161,6 @@ async fn close(
     }
 
     tracer.measure();
-
     Ok(())
 }
 
