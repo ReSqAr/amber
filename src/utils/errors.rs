@@ -103,6 +103,8 @@ pub enum InternalError {
     SharedAccess,
     #[error("invariant error: {0}")]
     InvariantError(String),
+    #[error("parquet error: {context} {error}")]
+    Parquet { context: String, error: String },
 }
 
 impl<T> From<SendError<T>> for InternalError {
