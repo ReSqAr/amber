@@ -9,6 +9,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio_stream::wrappers::LinesStream;
 
+pub const ERROR_CODE_DIRECTORY_NOT_FOUND: i32 = 3;
+
 pub enum ConfigSection {
     None,
     Config(String),

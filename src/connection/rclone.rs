@@ -36,7 +36,8 @@ impl RCloneRemoteConfig {
         local: &LocalRepository,
         name: &str,
     ) -> Result<WrappedRepository, InternalError> {
-        let repository = RCloneStore::new(local, name, &self.remote_path).await?;
+        let repository =
+            RCloneStore::connect(local, name, &self.remote_name, &self.remote_path).await?;
         Ok(WrappedRepository::RClone(repository))
     }
 }
