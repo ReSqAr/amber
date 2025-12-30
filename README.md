@@ -116,9 +116,7 @@ Password auth is not recommended though.
 ## rclone Supported Storage: S3/Backblaze/...
 
 amber can also move files to any service supported by rclone.
-These remotes are treated as file blob storage and not as tracked filesystems,
-that means they do not have an intrinsic notion of which files are available.
-The tracking information resides in your local repository and will be synced along with all the other metadata.
+The tracking information gets synced to into an `.amb` folder on the rclone remote.
 
 You'll first need to set up your remote in rclone via `rclone config`.
 Assume the target is called `b2-ganymede` in `rclone`, then run this:
@@ -131,10 +129,6 @@ amber push ganymede
 **Note:**
 
 - The connection is only locally set up. Other repositories do not automatically see this repository.
-- The remote is globally identified via the connection's name.
-That means, when you set up the connection on another remote,
-make sure that you name the connection precisely the same.
-
 
 ## Syncing Metadata
 
