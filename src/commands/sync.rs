@@ -6,6 +6,7 @@ use crate::flightdeck::base::{
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::{materialise, sync};
+use crate::logic::sync::Mode;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
@@ -132,13 +133,14 @@ async fn connect_sync_materialise(
 
         match remote {
             WrappedRepository::Local(remote) => {
-                sync::sync_repositories(&local, &remote).await?;
+                sync::sync_repositories(&local, &remote, Mode::Bidirectional).await?;
             }
             WrappedRepository::Grpc(remote) => {
-                sync::sync_repositories(&local, &remote).await?;
+                sync::sync_repositories(&local, &remote, Mode::Bidirectional).await?;
             }
             WrappedRepository::RClone(remote) => {
-                sync::sync_repositories(&local, &remote).await?;
+                sync::sync_repositories(&local, &remote, Mode::DownloadOnly).await?;
+                sync::sync_repositories(&local, &remote, Mode::UploadOnly).await?;
             }
         };
 
