@@ -56,12 +56,31 @@ pub async fn pull(
             }
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
-                transfer::<BlobTransferItem>(&local, &remote, &local, &connection, paths, config)
-                    .await?
+                let res = transfer::<BlobTransferItem>(
+                    &local,
+                    &remote,
+                    &local,
+                    &connection,
+                    paths,
+                    config,
+                )
+                .await?;
+                sync::sync_repositories(&local, &remote).await?;
+                res
             }
             WrappedRepository::RClone(remote) => {
-                transfer::<FileTransferItem>(&local, &remote, &local, &connection, paths, config)
-                    .await?
+                sync::sync_repositories(&local, &remote).await?;
+                let res = transfer::<FileTransferItem>(
+                    &local,
+                    &remote,
+                    &local,
+                    &connection,
+                    paths,
+                    config,
+                )
+                .await?;
+                sync::sync_repositories(&local, &remote).await?;
+                res
             }
         };
 

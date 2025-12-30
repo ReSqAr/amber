@@ -9,7 +9,7 @@ use crate::logic::{materialise, sync};
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
-use crate::utils::errors::{AppError, InternalError};
+use crate::utils::errors::InternalError;
 
 pub async fn sync(
     config: LocalRepositoryConfig,
@@ -137,11 +137,8 @@ async fn connect_sync_materialise(
             WrappedRepository::Grpc(remote) => {
                 sync::sync_repositories(&local, &remote).await?;
             }
-            WrappedRepository::RClone(_) => {
-                return Err(InternalError::App(AppError::UnsupportedOperation {
-                    connection_name: connection_name.to_string(),
-                    operation: "sync".to_string(),
-                }));
+            WrappedRepository::RClone(remote) => {
+                sync::sync_repositories(&local, &remote).await?;
             }
         };
 

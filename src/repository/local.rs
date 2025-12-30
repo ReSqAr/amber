@@ -495,6 +495,7 @@ impl Syncer<Blob> for LocalRepository {
         self.db.merge_blobs(s).err_into().boxed()
     }
 }
+
 impl SyncerParams for RepositoryName {
     type Params = Option<u64>;
 }
