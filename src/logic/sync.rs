@@ -10,11 +10,19 @@ use futures::{StreamExt, try_join};
 use log::debug;
 use tokio::time::Instant;
 
+#[derive(Copy, Clone)]
+pub enum Mode {
+    DownloadOnly,
+    UploadOnly,
+    Bidirectional,
+}
+
 pub async fn sync_table<I, L, R>(
     local: &L,
     local_param: I::Params,
     remote: &R,
     remote_param: I::Params,
+    mode: Mode,
 ) -> Result<(), InternalError>
 where
     I: Send + Sync + 'static + SyncerParams,
@@ -26,6 +34,10 @@ where
 
     try_join!(
         async {
+            if !matches!(mode, Mode::UploadOnly | Mode::Bidirectional) {
+                return Ok(());
+            }
+
             local_stream
                 .try_forward_into::<_, _, _, _, InternalError>(|s| remote.merge(s.boxed()))
                 .await?;
@@ -33,6 +45,10 @@ where
             Ok::<_, InternalError>(())
         },
         async {
+            if !matches!(mode, Mode::DownloadOnly | Mode::Bidirectional) {
+                return Ok(());
+            }
+
             remote_stream
                 .try_forward_into::<_, _, _, _, InternalError>(|s| local.merge(s.boxed()))
                 .await?;
@@ -44,7 +60,7 @@ where
     Ok(())
 }
 
-pub async fn sync_repositories<S, T>(local: &S, remote: &T) -> Result<(), InternalError>
+pub async fn sync_repositories<S, T>(local: &S, remote: &T, mode: Mode) -> Result<(), InternalError>
 where
     S: Metadata
         + LastIndicesSyncer
@@ -95,6 +111,7 @@ where
                 local_last_indices.blob,
                 remote,
                 remote_last_indices.blob,
+                mode,
             )
             .await?;
 
@@ -126,6 +143,7 @@ where
                 local_last_indices.file,
                 remote,
                 remote_last_indices.file,
+                mode,
             )
             .await?;
 
@@ -160,6 +178,7 @@ where
             local_last_indices.name,
             remote,
             remote_last_indices.name,
+            mode,
         )
         .await?;
 
@@ -191,7 +210,7 @@ where
         try_join!(remote.refresh(), local.refresh())?;
         o.observe_state(log::Level::Info, "prepared");
 
-        sync_table::<Repository, _, _>(local, (), remote, ()).await?;
+        sync_table::<Repository, _, _>(local, (), remote, (), mode).await?;
 
         let elapsed = start.elapsed();
         o.observe_termination_ext(
