@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio_stream::wrappers::LinesStream;
 
 pub const ERROR_CODE_DIRECTORY_NOT_FOUND: i32 = 3;
+pub const ERROR_CODE_FILE_NOT_FOUND: i32 = 4;
 
 pub enum ConfigSection {
     None,

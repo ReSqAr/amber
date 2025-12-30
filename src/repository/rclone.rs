@@ -10,8 +10,8 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::rclone::{
-    ConfigSection, ERROR_CODE_DIRECTORY_NOT_FOUND, Operation, RCloneConfig, RCloneTarget,
-    run_rclone,
+    ConfigSection, ERROR_CODE_DIRECTORY_NOT_FOUND, ERROR_CODE_FILE_NOT_FOUND, Operation,
+    RCloneConfig, RCloneTarget, run_rclone,
 };
 use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
 use futures_core::future::BoxFuture;
@@ -23,6 +23,11 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 const EXTERNAL_PATH: &str = ".amb";
+const FILE_ID: &str = "id";
+const FILE_BLOB_STORE: &str = "blobs.parquet";
+const FILE_FILE_STORE: &str = "files.parquet";
+const FILE_REPOSITORY_NAME_STORE: &str = "repository_names.parquet";
+const FILE_REPOSITORY_STORE: &str = "repositories.parquet";
 
 #[derive(Clone)]
 pub struct RCloneStore {
@@ -50,11 +55,12 @@ impl RCloneStore {
             remote_name,
             remote_path,
             Direction::Download,
+            FileList::All,
         )
         .await?;
 
         let external_path = files.join(EXTERNAL_PATH);
-        let id_path = external_path.join("id");
+        let id_path = external_path.join(FILE_ID);
         let repo_id = if !tokio::fs::try_exists(&id_path).await.inspect_err(|e| {
             log::error!("RCloneStore::connect: existence check of ID file failed: {e}")
         })? {
@@ -80,6 +86,7 @@ impl RCloneStore {
                 remote_name,
                 remote_path,
                 Direction::Upload,
+                FileList::ID,
             )
             .await?;
 
@@ -96,11 +103,14 @@ impl RCloneStore {
                 )
                 .await?;
 
+            println!("RCloneStore::connect: created repository ID: {repo_id:?}");
+
             repo_id
         } else {
             let repo_id = tokio::fs::read_to_string(&id_path)
                 .await
                 .inspect_err(|e| log::error!("RCloneStore::connect: read ID file failed: {e}"))?;
+            println!("RCloneStore::connect: read repository ID: {repo_id:?}");
             RepoID(repo_id)
         };
 
@@ -120,27 +130,28 @@ impl RCloneStore {
     }
 }
 
-enum Direction {
-    Download,
-    Upload,
-}
-
 async fn sync(
     staging: &RepoPath,
     files: &RepoPath,
     remote_name: &str,
     remote_path: &str,
     direction: Direction,
+    file_list: FileList,
 ) -> Result<(), InternalError> {
     fs::create_dir_all(&staging)
         .await
         .inspect_err(|e| log::error!("RCloneStore::sync: create_dir_all failed: {e}"))?;
     let rclone_files_path = staging.join("rclone.files");
     {
+        let content = as_file_list(file_list)
+            .into_iter()
+            .map(|f| format!("{EXTERNAL_PATH}/{f}"))
+            .collect::<Vec<String>>()
+            .join("\n");
         let mut writer = File::create(&rclone_files_path)
             .await
             .inspect_err(|e| log::error!("RCloneStore::sync: open rclone.files failed: {e}"))?;
-        writer.write_all(EXTERNAL_PATH.as_bytes()).await?;
+        writer.write_all(content.as_bytes()).await?;
         writer.flush().await?;
     }
 
@@ -164,7 +175,7 @@ async fn sync(
     };
 
     let tracer_copy = Tracer::new_on("RCloneStore::sync::copy");
-    let e = run_rclone(
+    let res = run_rclone(
         Operation::Copy,
         staging.abs(),
         rclone_files_path.abs(),
@@ -172,20 +183,61 @@ async fn sync(
         destination,
         config,
         |x| {
-            log::debug!("RCloneStore::sync: rclone event: {x:?}");
+            println!("RCloneStore::sync: rclone event: {x:?}");
         },
     )
     .await;
     tracer_copy.measure();
 
-    if let Err(e) = e
-        && matches!(e, InternalError::RClone(code) if code != ERROR_CODE_DIRECTORY_NOT_FOUND)
-    {
-        log::error!("RCloneStore::sync: rclone failed: {e}");
-        return Err(e);
+    if let Err(e) = res {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match e {
+            InternalError::RClone(code)
+                if code == ERROR_CODE_DIRECTORY_NOT_FOUND || code == ERROR_CODE_FILE_NOT_FOUND =>
+            {
+                log::debug!(
+                    "RCloneStore::sync: ignoring not yet initialised rclone repository: {e}"
+                );
+            }
+            _ => {
+                log::error!("RCloneStore::sync: rclone failed: {e}");
+                return Err(e);
+            }
+        }
     }
 
     Ok(())
+}
+
+enum FileList {
+    All,
+    ID,
+    BlobStore,
+    FileStore,
+    RepositoryNameStore,
+    RepositoryStore,
+}
+
+fn as_file_list(f: FileList) -> Vec<&'static str> {
+    match f {
+        FileList::All => vec![
+            FILE_ID,
+            FILE_BLOB_STORE,
+            FILE_FILE_STORE,
+            FILE_REPOSITORY_STORE,
+            FILE_REPOSITORY_STORE,
+        ],
+        FileList::ID => vec![FILE_ID],
+        FileList::BlobStore => vec![FILE_BLOB_STORE],
+        FileList::FileStore => vec![FILE_FILE_STORE],
+        FileList::RepositoryNameStore => vec![FILE_REPOSITORY_NAME_STORE],
+        FileList::RepositoryStore => vec![FILE_REPOSITORY_STORE],
+    }
+}
+
+enum Direction {
+    Download,
+    Upload,
 }
 
 #[derive(Debug, Clone)]
