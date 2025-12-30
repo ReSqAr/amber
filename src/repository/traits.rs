@@ -107,7 +107,7 @@ pub trait LastIndicesSyncer {
 }
 
 pub trait SyncerParams {
-    type Params;
+    type Params: Send + Sync;
 }
 
 pub trait Syncer<T: SyncerParams> {
