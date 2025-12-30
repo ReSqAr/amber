@@ -5,10 +5,10 @@ use crate::db::models::{
 };
 use crate::flightdeck::tracer::Tracer;
 use crate::repository::local::LocalRepository;
-use crate::repository::rclone::parquet::Parquet;
+use crate::repository::rclone::parquet::{Parquet, ParquetRecord};
 use crate::repository::traits::{
     Adder, Availability, LastIndices, LastIndicesSyncer, Local, Metadata, RcloneTargetPath,
-    Receiver, RepositoryMetadata, Sender, Syncer,
+    Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
@@ -28,6 +28,7 @@ use uuid::Uuid;
 pub(crate) mod parquet;
 
 const EXTERNAL_PATH: &str = ".amb";
+const FILES: &str = "files";
 const FILE_ID: &str = "id";
 const FILE_BLOB_STORE: &str = "blobs.parquet";
 const FILE_FILE_STORE: &str = "files.parquet";
@@ -44,23 +45,6 @@ pub struct RCloneStore {
     remote_files: RepoPath,
 }
 
-impl LastIndicesSyncer for RCloneStore {
-    fn lookup(&self, _repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
-        async move {
-            Ok(LastIndices {
-                file: None,
-                blob: None,
-                name: None,
-            })
-        }
-        .boxed()
-    }
-
-    fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>> {
-        async move { Ok(()) }.boxed()
-    }
-}
-
 impl RCloneStore {
     pub async fn connect(
         local: &LocalRepository,
@@ -70,7 +54,7 @@ impl RCloneStore {
     ) -> Result<Self, InternalError> {
         let transfer_id: u32 = rand::rng().random();
         let staging = local.staging_id_path(transfer_id);
-        let files = staging.join("files");
+        let files = staging.join(FILES);
 
         sync(
             &staging,
@@ -391,216 +375,149 @@ impl Availability for RCloneStore {
     }
 }
 
-impl Syncer<models::Blob> for RCloneStore {
-    fn select(
+impl RCloneStore {
+    fn select_impl<T>(
         &self,
-        last_index: Option<u64>,
-    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Blob, InternalError>>> {
-        let path = self.remote_files.join(EXTERNAL_PATH).join(FILE_BLOB_STORE);
+        last_index: T::Params,
+        parquet_file: &'static str,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<T, InternalError>>>
+    where
+        T: SyncerParams + ParquetRecord,
+    {
+        let path = self.remote_files.join(EXTERNAL_PATH).join(parquet_file);
+
         async move {
             let parquet = Parquet::new(path);
             parquet.select(last_index).await
         }
         .boxed()
+    }
+
+    fn merge_impl<T>(
+        &self,
+        s: BoxStream<'static, T>,
+        parquet_file: &'static str,
+        file_list: FileList,
+    ) -> BoxFuture<'_, Result<(), InternalError>>
+    where
+        T: SyncerParams + ParquetRecord,
+    {
+        let transfer_id: u32 = rand::rng().random();
+        let staging = self.local.staging_id_path(transfer_id);
+        let remote_name = self.remote_name.clone();
+        let remote_path = self.remote_path.clone();
+
+        async move {
+            let remote_files = staging.join(FILES);
+            let external = remote_files.join(EXTERNAL_PATH);
+            let path = external.join(parquet_file);
+
+            fs::create_dir_all(&external)
+                .await
+                .inspect_err(|e| log::error!("RCloneStore::merge: create_dir_all failed: {e}"))?;
+
+            {
+                let parquet = Parquet::new(path);
+                parquet.merge(s).await?;
+            }
+
+            sync(
+                &staging,
+                &remote_files,
+                &remote_name,
+                &remote_path,
+                Direction::Upload,
+                file_list,
+            )
+            .await?;
+
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+impl Syncer<models::Blob> for RCloneStore {
+    fn select(
+        &self,
+        last_index: <models::Blob as SyncerParams>::Params,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Blob, InternalError>>> {
+        self.select_impl::<models::Blob>(last_index, FILE_BLOB_STORE)
     }
 
     fn merge(
         &self,
         s: BoxStream<'static, models::Blob>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        let transfer_id: u32 = rand::rng().random();
-        let staging = self.local.staging_id_path(transfer_id);
-        let remote_name = self.remote_name.clone();
-        let remote_path = self.remote_path.clone();
-
-        async move {
-            let remote_files = staging.join("files");
-            let external = remote_files.join(EXTERNAL_PATH);
-            let path = external.join(FILE_BLOB_STORE);
-
-            fs::create_dir_all(&external)
-                .await
-                .inspect_err(|e| log::error!("RCloneStore::merge: create_dir_all failed: {e}"))?;
-
-            {
-                let parquet = Parquet::new(path);
-                parquet.merge(s).await?;
-            }
-
-            sync(
-                &staging,
-                &remote_files,
-                &remote_name,
-                &remote_path,
-                Direction::Upload,
-                FileList::BlobStore,
-            )
-            .await?;
-
-            Ok(())
-        }
-        .boxed()
+        self.merge_impl::<models::Blob>(s, FILE_BLOB_STORE, FileList::BlobStore)
     }
 }
 
 impl Syncer<models::File> for RCloneStore {
     fn select(
         &self,
-        last_index: Option<u64>,
+        last_index: <models::File as SyncerParams>::Params,
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::File, InternalError>>> {
-        let path = self.remote_files.join(EXTERNAL_PATH).join(FILE_FILE_STORE);
-        async move {
-            let parquet = Parquet::new(path);
-            parquet.select(last_index).await
-        }
-        .boxed()
+        self.select_impl::<models::File>(last_index, FILE_FILE_STORE)
     }
 
     fn merge(
         &self,
         s: BoxStream<'static, models::File>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        let transfer_id: u32 = rand::rng().random();
-        let staging = self.local.staging_id_path(transfer_id);
-        let remote_name = self.remote_name.clone();
-        let remote_path = self.remote_path.clone();
-
-        async move {
-            let remote_files = staging.join("files");
-            let external = remote_files.join(EXTERNAL_PATH);
-            let path = external.join(FILE_FILE_STORE);
-
-            fs::create_dir_all(&external)
-                .await
-                .inspect_err(|e| log::error!("RCloneStore::merge: create_dir_all failed: {e}"))?;
-
-            {
-                let parquet = Parquet::new(path);
-                parquet.merge(s).await?;
-            }
-
-            sync(
-                &staging,
-                &remote_files,
-                &remote_name,
-                &remote_path,
-                Direction::Upload,
-                FileList::FileStore,
-            )
-            .await?;
-
-            Ok(())
-        }
-        .boxed()
+        self.merge_impl::<models::File>(s, FILE_FILE_STORE, FileList::FileStore)
     }
 }
 
 impl Syncer<models::RepositoryName> for RCloneStore {
     fn select(
         &self,
-        last_index: Option<u64>,
+        last_index: <models::RepositoryName as SyncerParams>::Params,
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryName, InternalError>>> {
-        let path = self
-            .remote_files
-            .join(EXTERNAL_PATH)
-            .join(FILE_REPOSITORY_NAME_STORE);
-        async move {
-            let parquet = Parquet::new(path);
-            parquet.select(last_index).await
-        }
-        .boxed()
+        self.select_impl::<models::RepositoryName>(last_index, FILE_REPOSITORY_NAME_STORE)
     }
 
     fn merge(
         &self,
         s: BoxStream<'static, models::RepositoryName>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        let transfer_id: u32 = rand::rng().random();
-        let staging = self.local.staging_id_path(transfer_id);
-        let remote_name = self.remote_name.clone();
-        let remote_path = self.remote_path.clone();
-
-        async move {
-            let remote_files = staging.join("files");
-            let external = remote_files.join(EXTERNAL_PATH);
-            let path = external.join(FILE_REPOSITORY_NAME_STORE);
-
-            fs::create_dir_all(&external)
-                .await
-                .inspect_err(|e| log::error!("RCloneStore::merge: create_dir_all failed: {e}"))?;
-
-            {
-                let parquet = Parquet::new(path);
-                parquet.merge(s).await?;
-            }
-
-            sync(
-                &staging,
-                &remote_files,
-                &remote_name,
-                &remote_path,
-                Direction::Upload,
-                FileList::RepositoryNameStore,
-            )
-            .await?;
-
-            Ok(())
-        }
-        .boxed()
+        self.merge_impl::<models::RepositoryName>(
+            s,
+            FILE_REPOSITORY_NAME_STORE,
+            FileList::RepositoryNameStore,
+        )
     }
 }
 
 impl Syncer<models::Repository> for RCloneStore {
     fn select(
         &self,
-        last_index: (),
+        last_index: <models::Repository as SyncerParams>::Params,
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::Repository, InternalError>>> {
-        let path = self
-            .remote_files
-            .join(EXTERNAL_PATH)
-            .join(FILE_REPOSITORY_STORE);
-        async move {
-            let parquet = Parquet::new(path);
-            parquet.select(last_index).await
-        }
-        .boxed()
+        self.select_impl::<models::Repository>(last_index, FILE_REPOSITORY_STORE)
     }
 
     fn merge(
         &self,
         s: BoxStream<'static, models::Repository>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        let transfer_id: u32 = rand::rng().random();
-        let staging = self.local.staging_id_path(transfer_id);
-        let remote_name = self.remote_name.clone();
-        let remote_path = self.remote_path.clone();
+        self.merge_impl::<models::Repository>(s, FILE_REPOSITORY_STORE, FileList::RepositoryStore)
+    }
+}
 
+impl LastIndicesSyncer for RCloneStore {
+    fn lookup(&self, _repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
         async move {
-            let remote_files = staging.join("files");
-            let external = remote_files.join(EXTERNAL_PATH);
-            let path = external.join(FILE_REPOSITORY_STORE);
-
-            fs::create_dir_all(&external)
-                .await
-                .inspect_err(|e| log::error!("RCloneStore::merge: create_dir_all failed: {e}"))?;
-
-            {
-                let parquet = Parquet::new(path);
-                parquet.merge(s).await?;
-            }
-
-            sync(
-                &staging,
-                &remote_files,
-                &remote_name,
-                &remote_path,
-                Direction::Upload,
-                FileList::RepositoryStore,
-            )
-            .await?;
-
-            Ok(())
+            Ok(LastIndices {
+                file: None,
+                blob: None,
+                name: None,
+            })
         }
         .boxed()
+    }
+
+    fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>> {
+        async move { Ok(()) }.boxed()
     }
 }
