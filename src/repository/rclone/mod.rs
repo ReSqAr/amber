@@ -110,14 +110,14 @@ impl RCloneStore {
                 )
                 .await?;
 
-            println!("RCloneStore::connect: created repository ID: {repo_id:?}");
+            log::debug!("RCloneStore::connect: created repository ID: {repo_id:?}");
 
             repo_id
         } else {
             let repo_id = tokio::fs::read_to_string(&id_path)
                 .await
                 .inspect_err(|e| log::error!("RCloneStore::connect: read ID file failed: {e}"))?;
-            println!("RCloneStore::connect: read repository ID: {repo_id:?}");
+            log::debug!("RCloneStore::connect: read repository ID: {repo_id:?}");
             RepoID(repo_id)
         };
 
@@ -132,7 +132,6 @@ impl RCloneStore {
     }
 
     pub(crate) async fn close(&self) -> Result<(), InternalError> {
-        self.local.close().await?;
         Ok(())
     }
 }
@@ -190,7 +189,7 @@ async fn sync(
         destination,
         config,
         |x| {
-            println!("RCloneStore::sync: rclone event: {x:?}");
+            log::debug!("RCloneStore::sync: rclone event: {x:?}");
         },
     )
     .await;
@@ -231,7 +230,7 @@ fn as_file_list(f: FileList) -> Vec<&'static str> {
             FILE_ID,
             FILE_BLOB_STORE,
             FILE_FILE_STORE,
-            FILE_REPOSITORY_STORE,
+            FILE_REPOSITORY_NAME_STORE,
             FILE_REPOSITORY_STORE,
         ],
         FileList::ID => vec![FILE_ID],

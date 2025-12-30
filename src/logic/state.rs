@@ -225,7 +225,7 @@ pub async fn state_with_checks(
         flightdeck::tracked::mpsc_channel("state::needs_check", buffer_size);
     let (tx, rx) = flightdeck::tracked::mpsc_channel("state", buffer_size);
 
-    // sinks the observation channel with the DB
+    // sink which pipes the observation channel into the DB
     let vfs_clone = vfs.clone();
     let tx_clone = tx.clone();
     let bg_seen_persist: JoinHandle<()> = tokio::spawn(async move {
