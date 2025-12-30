@@ -64,7 +64,12 @@ where
 
             task::spawn_blocking(move || {
                 let work: Result<(), InternalError> = (|| {
-                    let file = std::fs::File::open(path.abs())?;
+                    let path = path.abs();
+                    if !path.try_exists()? {
+                        return Ok(());
+                    }
+
+                    let file = std::fs::File::open(path)?;
                     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
                         .map_err(|e| parquet_error("open parquet reader", e))?
                         .with_batch_size(DEFAULT_BUFFER_SIZE);
@@ -102,7 +107,7 @@ where
             let (tx, mut rx) = mpsc::channel::<Result<T, InternalError>>(DEFAULT_BUFFER_SIZE);
 
             let bg = task::spawn_blocking(move || -> Result<(), InternalError> {
-                let file = std::fs::File::create(path.abs())?;
+                let file = std::fs::File::create_new(path.abs())?;
 
                 let props = WriterProperties::builder().build();
                 let options = ArrowWriterOptions::new().with_properties(props);
