@@ -15,7 +15,7 @@
 * [Amber](#amber)
   * [Pitch](#pitch)
   * [Overview](#overview)
-  * [Is amber for You?](#is-amber-for-you)
+  * [Is amber for you?](#is-amber-for-you)
 * [Quick Start](#quick-start)
   * [External Hard Disk](#external-hard-disk)
   * [SSH](#ssh)
@@ -42,7 +42,7 @@ Built in Rust for speed and robustness, amber provides a clear and efficient way
 - **Fast & Robust:** Developed in Rust, amber delivers high performance and reliability.
 - **Material Preservation:** amber preserves your files exactly as they are.
 
-## Is amber for You?
+## Is amber for you?
 
 - Your documents look like `v5.final-3` and you don't expect the file to ever change again → _amber can lock down your files and ensure file integrity_
 - You have 200k photos, some duplicated and you want to move them to a hard disk/B2/... while keeping track of what's already there and what isn't → _amber can track your files and copy them_
@@ -52,7 +52,7 @@ Built in Rust for speed and robustness, amber provides a clear and efficient way
 Requirements are:
 - your filesystem supports hard links or ref links
 - you have `rclone` installed
-- you understand that amber sets your files read-only to protect the files' integrity. Do not interfere  
+- you understand that amber sets your files read-only to protect the files' integrity. Do not interfere
 
 # Quick Start
 
@@ -70,7 +70,7 @@ amber add
 ## External Hard Disk
 
 When moving files from/to an external hard drive,
-use these commands to setup the external drive:
+use these commands to set up the external drive:
 ```bash
 amber init drive
 ```
@@ -100,7 +100,7 @@ amber remote add medina ssh holden@tycho.com:22/home/holden
 amber push medina
 ```
 
-You'll find that after thyou run the push command,
+You'll find that after you run the push command,
 the SSH remote doesn't show any files in the directory.
 In this case just run `amber sync` to materialise all available files.
 
@@ -116,7 +116,7 @@ Password auth is not recommended though.
 ## rclone Supported Storage: S3/Backblaze/...
 
 amber can also move files to any service supported by rclone.
-The tracking information gets synced to into an `.amb` folder on the rclone remote.
+The tracking information gets synced into an `.amb` folder on the rclone remote.
 
 You'll first need to set up your remote in rclone via `rclone config`.
 Assume the target is called `b2-ganymede` in `rclone`, then run this:
