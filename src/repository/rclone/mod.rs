@@ -103,7 +103,7 @@ impl RCloneStore {
                 .add_repository_metadata(
                     stream::iter([InsertRepositoryMetadata {
                         repo_id: repo_id.clone(),
-                        name: name.into(),
+                        name: Some(name.into()),
                         valid_from: chrono::Utc::now(),
                     }])
                     .boxed(),

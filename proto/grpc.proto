@@ -39,7 +39,7 @@ message Blob {
 message RepositoryMetadata {
     uint64 uid = 1;
     string repo_id = 2;
-    string name = 3;
+    optional string name = 3;
     google.protobuf.Timestamp valid_from = 4;
 }
 

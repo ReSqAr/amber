@@ -1,5 +1,4 @@
 use crate::db::stores::log;
-use crate::db::stores::reduced::Always;
 use crate::db::stores::reduced::{RowStatus, Status, ValidFrom};
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
@@ -441,14 +440,14 @@ pub struct RepositorySyncState {
 pub struct RepositoryMetadata {
     pub uid: Uid,
     pub repo_id: RepoID,
-    pub name: String,
+    pub name: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InsertRepositoryMetadata {
     pub repo_id: RepoID,
-    pub name: String,
+    pub name: Option<String>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -457,25 +456,39 @@ pub struct LogRepositoryMetadata {
     pub name: String,
 }
 
-impl From<InsertRepositoryMetadata> for (RepoID, LogRepositoryMetadata, Always, ValidFrom) {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogRepositoryMetadataStatus(pub Option<LogRepositoryMetadata>);
+
+impl Status for LogRepositoryMetadataStatus {
+    type V = LogRepositoryMetadata;
+
+    fn status(&self) -> RowStatus<Self::V> {
+        match self.0.clone() {
+            Some(value) => RowStatus::Keep(value),
+            None => RowStatus::Delete,
+        }
+    }
+}
+
+impl From<InsertRepositoryMetadata> for (RepoID, (), LogRepositoryMetadataStatus, ValidFrom) {
     fn from(rn: InsertRepositoryMetadata) -> Self {
         (
             rn.repo_id,
-            LogRepositoryMetadata { name: rn.name },
-            Always(),
+            (),
+            LogRepositoryMetadataStatus(rn.name.map(|name| LogRepositoryMetadata { name })),
             ValidFrom {
                 valid_from: rn.valid_from,
             },
         )
     }
 }
-impl From<RepositoryMetadata> for (Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom) {
+impl From<RepositoryMetadata> for (Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom) {
     fn from(rn: RepositoryMetadata) -> Self {
         (
             rn.uid,
             rn.repo_id,
-            LogRepositoryMetadata { name: rn.name },
-            Always(),
+            (),
+            LogRepositoryMetadataStatus(rn.name.map(|name| LogRepositoryMetadata { name })),
             ValidFrom {
                 valid_from: rn.valid_from,
             },
@@ -483,14 +496,14 @@ impl From<RepositoryMetadata> for (Uid, RepoID, LogRepositoryMetadata, Always, V
     }
 }
 
-impl From<(Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom)> for RepositoryMetadata {
+impl From<(Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom)> for RepositoryMetadata {
     fn from(
-        (uid, repo_id, name, _, vf): (Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom),
+        (uid, repo_id, _, status, vf): (Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom),
     ) -> Self {
         Self {
             uid,
             repo_id,
-            name: name.name,
+            name: status.0.map(|value| value.name),
             valid_from: vf.valid_from,
         }
     }

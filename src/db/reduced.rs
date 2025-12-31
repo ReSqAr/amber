@@ -1,9 +1,9 @@
 use crate::db::error::DBError;
 use crate::db::models::{
-    BlobMeta, BlobRef, FileBlobID, HasBlob, LogRepositoryMetadata, Path, RepoID,
+    BlobMeta, BlobRef, FileBlobID, HasBlob, LogRepositoryMetadataStatus, Path, RepoID,
 };
 use crate::db::stores::reduced;
-use crate::db::stores::reduced::{Always, TransactionLike};
+use crate::db::stores::reduced::TransactionLike;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::try_join;
@@ -14,7 +14,7 @@ use std::path::PathBuf;
 pub(crate) struct Reduced {
     pub(crate) blobs: reduced::Store<BlobRef, BlobMeta, HasBlob>,
     pub(crate) files: reduced::Store<Path, (), FileBlobID>,
-    pub(crate) repository_metadata: reduced::Store<RepoID, LogRepositoryMetadata, Always>,
+    pub(crate) repository_metadata: reduced::Store<RepoID, (), LogRepositoryMetadataStatus>,
     pub(crate) flush_size: usize,
 }
 

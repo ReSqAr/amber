@@ -422,7 +422,7 @@ impl ParquetRecord for RepositoryMetadata {
                 Arc::new(Schema::new(vec![
                     Field::new("uid", DataType::UInt64, false),
                     Field::new("repo_id", DataType::Utf8, false),
-                    Field::new("name", DataType::Utf8, false),
+                    Field::new("name", DataType::Utf8, true),
                     Field::new(
                         "valid_from",
                         DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
@@ -444,7 +444,10 @@ impl ParquetRecord for RepositoryMetadata {
         for it in items {
             uid_b.append_value(it.uid.0);
             repo_id_b.append_value(&it.repo_id.0);
-            name_b.append_value(&it.name);
+            match &it.name {
+                Some(name) => name_b.append_value(name),
+                None => name_b.append_null(),
+            }
             ts_b.append_value(it.valid_from.timestamp_nanos_opt().unwrap());
         }
 
@@ -492,9 +495,6 @@ impl ParquetRecord for RepositoryMetadata {
             if repo_id.is_null(row) {
                 return Err(InternalError::Stream("unexpected null: repo_id".into()));
             }
-            if name.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: name".into()));
-            }
             if valid_from.is_null(row) {
                 return Err(InternalError::Stream("unexpected null: valid_from".into()));
             }
@@ -505,7 +505,11 @@ impl ParquetRecord for RepositoryMetadata {
             out.push(RepositoryMetadata {
                 uid: Uid(uid.value(row)),
                 repo_id: RepoID(repo_id.value(row).to_string()),
-                name: name.value(row).to_string(),
+                name: if name.is_null(row) {
+                    None
+                } else {
+                    Some(name.value(row).to_string())
+                },
                 valid_from: dt,
             });
         }
@@ -714,7 +718,7 @@ mod tests {
         let item = RepositoryMetadata {
             uid: Uid(99),
             repo_id: RepoID("repo".to_string()),
-            name: "example".to_string(),
+            name: Some("example".to_string()),
             valid_from: chrono::Utc::now(),
         };
 
