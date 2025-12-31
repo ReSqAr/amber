@@ -12,6 +12,7 @@ use crate::db::reduced;
 use crate::db::reduced::Reduced;
 use crate::db::stores::log::Offset;
 use crate::db::stores::reduced::{Transaction, TransactionLike, UidState, ValidFrom};
+use crate::db::versioning::V1;
 use crate::flightdeck;
 use crate::flightdeck::tracer::Tracer;
 use crate::flightdeck::tracked::sender::{Adapter, TrackedSender};
@@ -103,7 +104,7 @@ impl Database {
 
         assert_eq!(r.len(), 1, "expected precisely 1 repository lookup result");
         let (_, result) = r.into_iter().next().unwrap()?;
-        Ok(result.map(|(_, status)| status))
+        Ok(result.map(|(_, status)| status.into_inner()))
     }
 
     pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
@@ -506,13 +507,13 @@ impl Database {
         })
         .boxed();
         let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
+            blob_id: b.clone().into_inner(),
             repo_id: repo_id.clone(),
         });
         TokioStreamExt::map(s, |e| {
             e.map(|((p, b), local_cb)| MissingFile {
                 path: p,
-                target_blob_id: b,
+                target_blob_id: b.into_inner(),
                 local_has_target_blob: local_cb.is_some(),
             })
         })
@@ -530,7 +531,7 @@ impl Database {
             .logs
             .blobs
             .left_join_current(s, move |(_, cf)| BlobRef {
-                blob_id: cf.map(|(_, b)| b).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
+                blob_id: cf.map(|(_, b)| b.into_inner()).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
                 repo_id: repo_id.clone(),
             })
             .map_ok(|((f, cf), cb)| (f, cf, cb))
@@ -545,10 +546,15 @@ impl Database {
             .left_join_check(s, move |(f, _, _, _)| f.path)
             .map_ok(|((f, cf, cb, cm), cc)| VirtualFile {
                 file_seen: f,
-                current_file: cf.map(|(_, b)| CurrentFile { blob_id: b }),
-                current_blob: cb.map(|(b, _)| BlobMeta {
-                    size: b.size,
-                    path: b.path,
+                current_file: cf.map(|(_, b)| CurrentFile {
+                    blob_id: b.into_inner(),
+                }),
+                current_blob: cb.map(|(b, _)| {
+                    let b = b.into_inner();
+                    BlobMeta {
+                        size: b.size,
+                        path: b.path,
+                    }
                 }),
                 current_materialisation: cm,
                 current_check: cc,
@@ -571,7 +577,9 @@ impl Database {
             .files
             .left_join_current(s, key_func)
             .map_ok(|(k, f)| {
-                let v = f.map(|(_, blob_id)| CurrentFile { blob_id });
+                let v = f.map(|(_, blob_id)| CurrentFile {
+                    blob_id: blob_id.into_inner(),
+                });
                 (k, v)
             })
             .boxed()
@@ -588,11 +596,11 @@ impl Database {
             move |r| match r {
                 Ok((
                     blob_ref,
-                    BlobMeta {
+                    V1::V1(BlobMeta {
                         path: blob_path,
                         size: blob_size,
-                    },
-                    (),
+                    }),
+                    V1::V1(()),
                 )) => {
                     if blob_ref.repo_id == repo_id {
                         Some(Ok(AvailableBlob {
@@ -619,7 +627,7 @@ impl Database {
             .logs
             .repository_metadata
             .current()
-            .map(|e| e.map(|(k, _, v)| (k, v.name)))
+            .map(|e| e.map(|(k, _, v)| (k, v.into_inner().name)))
             .try_collect()
             .await
         {
@@ -634,7 +642,7 @@ impl Database {
             .logs
             .blobs
             .left_join_current(s, move |(_, _, blob_id)| BlobRef {
-                blob_id,
+                blob_id: blob_id.into_inner(),
                 repo_id: repo_id.clone(),
             });
         let s = s.filter_map(async |x| match x {
@@ -645,7 +653,7 @@ impl Database {
 
         // get repo IDs with the blobs
         let repo_ids: Vec<_> = repo_names.keys().cloned().collect();
-        let s = s.map(move |e: Result<(Path, BlobID), DBError>| {
+        let s = s.map(move |e: Result<(Path, V1<BlobID>), DBError>| {
             stream::iter(match e {
                 Ok((p, b)) => repo_ids
                     .clone()
@@ -656,13 +664,13 @@ impl Database {
             })
         });
         let s = s.flatten().boxed();
-        let s = self
-            .logs
-            .blobs
-            .left_join_current(s, move |(_, b, r): (Path, BlobID, RepoID)| BlobRef {
-                blob_id: b,
-                repo_id: r,
-            });
+        let s =
+            self.logs
+                .blobs
+                .left_join_current(s, move |(_, b, r): (Path, V1<BlobID>, RepoID)| BlobRef {
+                    blob_id: b.into_inner(),
+                    repo_id: r,
+                });
 
         // collect repo IDs per blob IDs again
         let s = group_by_key(s.boxed(), |e| match e {
@@ -672,7 +680,7 @@ impl Database {
 
         s.map(move |(e, group)| match e {
             Ok((p, b)) => Ok(BlobAssociatedToFiles {
-                blob_id: b,
+                blob_id: b.into_inner(),
                 path: p,
                 repositories_with_blob: group
                     .into_iter()
@@ -696,14 +704,14 @@ impl Database {
         self.logs
             .blobs
             .left_join_current(s, move |(_, _, blob_id)| BlobRef {
-                blob_id,
+                blob_id: blob_id.into_inner(),
                 repo_id: repo_id.clone(),
             })
-            .map_ok(|((p, (), b), om)| FilesWithAvailability {
+            .map_ok(|((p, _, b), om)| FilesWithAvailability {
                 path: p,
-                blob_id: b,
+                blob_id: b.into_inner(),
                 blob_state: match om {
-                    Some((_, ())) => BlobState::Present,
+                    Some((_, _)) => BlobState::Present,
                     None => BlobState::Missing,
                 },
             })
@@ -725,7 +733,7 @@ impl Database {
 
         let s = self.logs.files.current();
         let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok((p, (), blob_id)) => {
+            Ok((p, _, blob_id)) => {
                 if prefixes.is_empty() || prefixes.iter().any(|prefix| p.0.starts_with(prefix)) {
                     Some(Ok((p, blob_id)))
                 } else {
@@ -740,7 +748,7 @@ impl Database {
             .logs
             .blobs
             .left_join_current(s, move |(_, b)| BlobRef {
-                blob_id: b.clone(),
+                blob_id: b.clone().into_inner(),
                 repo_id: repo_id.clone(),
             })
             .boxed();
@@ -751,7 +759,7 @@ impl Database {
         })
         .boxed();
         let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
+            blob_id: b.clone().into_inner(),
             repo_id: remote_repo_id.clone(),
         });
         TokioStreamExt::filter_map(s, move |e| match e {
@@ -759,7 +767,7 @@ impl Database {
                 let blob_path = Path(b.path().to_string_lossy().to_string());
                 Some(Ok(BlobTransferItem {
                     transfer_id,
-                    blob_id: b,
+                    blob_id: b.into_inner(),
                     path: blob_path,
                     blob_size: lb.size,
                 }))
@@ -781,7 +789,7 @@ impl Database {
 
         let s = self.logs.files.current();
         let s = TokioStreamExt::filter_map(s, move |e| match e {
-            Ok((p, (), blob_id)) => {
+            Ok((p, _, blob_id)) => {
                 if prefixes.is_empty() || prefixes.iter().any(|prefix| p.0.starts_with(prefix)) {
                     Some(Ok((p, blob_id)))
                 } else {
@@ -793,7 +801,7 @@ impl Database {
         .boxed();
 
         let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
+            blob_id: b.clone().into_inner(),
             repo_id: local_repo_id.clone(),
         });
         let s = TokioStreamExt::filter_map(s, |e| match e {
@@ -803,14 +811,14 @@ impl Database {
         })
         .boxed();
         let s = self.logs.blobs.left_join_current(s, move |(_, b)| BlobRef {
-            blob_id: b.clone(),
+            blob_id: b.clone().into_inner(),
             repo_id: remote_repo_id.clone(),
         });
 
         TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((p, b), Some((lb, ())))) => Some(Ok(FileTransferItem {
+            Ok(((p, b), Some((lb, _)))) => Some(Ok(FileTransferItem {
                 transfer_id,
-                blob_id: b,
+                blob_id: b.into_inner(),
                 blob_size: lb.size,
                 path: p,
             })),
@@ -824,7 +832,7 @@ impl Database {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = self.logs.files.current();
-        let s = TokioStreamExt::map(s, |e| e.map(|(t, (), b)| (t, b)));
+        let s = TokioStreamExt::map(s, |e| e.map(|(t, _, b)| (t, b.into_inner())));
         s.boxed()
     }
 
@@ -849,12 +857,12 @@ impl Database {
         };
 
         match cf {
-            Some(((), b)) => stream::iter([Ok((p, b))]).boxed(),
+            Some((_, b)) => stream::iter([Ok((p, b.into_inner()))]).boxed(),
             None => {
                 let s = self.logs.files.current();
                 let s = TokioStreamExt::filter_map(s, move |p| match p {
-                    Ok((p, (), b)) => match p.0.starts_with(&file_or_dir) {
-                        true => Some(Ok((p, b))),
+                    Ok((p, _, b)) => match p.0.starts_with(&file_or_dir) {
+                        true => Some(Ok((p, b.into_inner()))),
                         false => None,
                     },
                     Err(e) => Some(Err(e)),
@@ -866,23 +874,23 @@ impl Database {
 }
 
 struct FileBundleTransaction {
-    blob_txn: Transaction<BlobRef, BlobMeta, HasBlob>,
-    file_txn: Transaction<Path, (), FileBlobID>,
+    blob_txn: Transaction<BlobRef, V1<BlobMeta>, HasBlob>,
+    file_txn: Transaction<Path, V1<()>, FileBlobID>,
     mat_tx: TrackedSender<Result<InsertMaterialisation, DBError>, Adapter>,
 }
 
 impl
     TransactionLike<(
-        (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom),
-        (Uid, Path, (), FileBlobID, ValidFrom),
+        (Uid, BlobRef, V1<BlobMeta>, HasBlob, ValidFrom),
+        (Uid, Path, V1<()>, FileBlobID, ValidFrom),
         InsertMaterialisation,
     )> for FileBundleTransaction
 {
     async fn put(
         &mut self,
         (b, f, m): &(
-            (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom),
-            (Uid, Path, (), FileBlobID, ValidFrom),
+            (Uid, BlobRef, V1<BlobMeta>, HasBlob, ValidFrom),
+            (Uid, Path, V1<()>, FileBlobID, ValidFrom),
             InsertMaterialisation,
         ),
     ) -> Result<(), DBError> {
