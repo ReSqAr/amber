@@ -438,7 +438,7 @@ pub struct RepositorySyncState {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RepositoryName {
+pub struct RepositoryMetadata {
     pub uid: Uid,
     pub repo_id: RepoID,
     pub name: String,
@@ -446,22 +446,22 @@ pub struct RepositoryName {
 }
 
 #[derive(Debug, Clone)]
-pub struct InsertRepositoryName {
+pub struct InsertRepositoryMetadata {
     pub repo_id: RepoID,
     pub name: String,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LogRepositoryName {
+pub struct LogRepositoryMetadata {
     pub name: String,
 }
 
-impl From<InsertRepositoryName> for (RepoID, LogRepositoryName, Always, ValidFrom) {
-    fn from(rn: InsertRepositoryName) -> Self {
+impl From<InsertRepositoryMetadata> for (RepoID, LogRepositoryMetadata, Always, ValidFrom) {
+    fn from(rn: InsertRepositoryMetadata) -> Self {
         (
             rn.repo_id,
-            LogRepositoryName { name: rn.name },
+            LogRepositoryMetadata { name: rn.name },
             Always(),
             ValidFrom {
                 valid_from: rn.valid_from,
@@ -469,12 +469,12 @@ impl From<InsertRepositoryName> for (RepoID, LogRepositoryName, Always, ValidFro
         )
     }
 }
-impl From<RepositoryName> for (Uid, RepoID, LogRepositoryName, Always, ValidFrom) {
-    fn from(rn: RepositoryName) -> Self {
+impl From<RepositoryMetadata> for (Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom) {
+    fn from(rn: RepositoryMetadata) -> Self {
         (
             rn.uid,
             rn.repo_id,
-            LogRepositoryName { name: rn.name },
+            LogRepositoryMetadata { name: rn.name },
             Always(),
             ValidFrom {
                 valid_from: rn.valid_from,
@@ -483,9 +483,9 @@ impl From<RepositoryName> for (Uid, RepoID, LogRepositoryName, Always, ValidFrom
     }
 }
 
-impl From<(Uid, RepoID, LogRepositoryName, Always, ValidFrom)> for RepositoryName {
+impl From<(Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom)> for RepositoryMetadata {
     fn from(
-        (uid, repo_id, name, _, vf): (Uid, RepoID, LogRepositoryName, Always, ValidFrom),
+        (uid, repo_id, name, _, vf): (Uid, RepoID, LogRepositoryMetadata, Always, ValidFrom),
     ) -> Self {
         Self {
             uid,

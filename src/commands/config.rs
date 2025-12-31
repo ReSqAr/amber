@@ -14,8 +14,8 @@ pub async fn set_name(
     let meta = local.current().await?;
 
     local
-        .add_repository_names(
-            stream::iter([models::InsertRepositoryName {
+        .add_repository_metadata(
+            stream::iter([models::InsertRepositoryMetadata {
                 repo_id: meta.id,
                 name: name.clone(),
                 valid_from: chrono::Utc::now(),

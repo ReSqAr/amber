@@ -9,13 +9,13 @@ use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
     FinaliseTransferResponse, FlightdeckMessageRequest, LookupLastIndicesRequest,
     LookupLastIndicesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
-    RepositoryName, RepositorySyncState, SelectBlobsRequest, SelectFilesRequest,
-    SelectRepositoryNamesRequest, SelectRepositorySyncStatesRequest, TransferItem,
+    RepositoryMetadata, RepositorySyncState, SelectBlobsRequest, SelectFilesRequest,
+    SelectRepositoryMetadataRequest, SelectRepositorySyncStatesRequest, TransferItem,
     UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
-    LastSyncState, LastSyncStateSyncer, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata,
-    Sender, Syncer,
+    LastSyncState, LastSyncStateSyncer, Metadata, RcloneTargetPath, Receiver,
+    RepositoryCurrentMetadata, Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
 use backoff::future::retry;
@@ -154,7 +154,7 @@ impl GRPCClient {
 }
 
 impl Metadata for GRPCClient {
-    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryCurrentMetadata, InternalError>> {
         let client = self.client.clone();
         Box::pin(async move {
             let repo_id_request = tonic::Request::new(CurrentRepositoryMetadataRequest {});
@@ -164,7 +164,7 @@ impl Metadata for GRPCClient {
                 .current_repository_metadata(repo_id_request)
                 .await?
                 .into_inner();
-            Ok(RepositoryMetadata {
+            Ok(RepositoryCurrentMetadata {
                 id: RepoID(meta.id),
                 name: meta.name,
             })
@@ -317,20 +317,24 @@ impl Syncer<models::Blob> for GRPCClient {
     }
 }
 
-impl Syncer<models::RepositoryName> for GRPCClient {
+impl Syncer<models::RepositoryMetadata> for GRPCClient {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryName, InternalError>>> {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryMetadata, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .select_repository_names(SelectRepositoryNamesRequest { last_index })
+                .select_repository_metadata(SelectRepositoryMetadataRequest { last_index })
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::RepositoryName::from))
+                .map(|r| {
+                    r.unwrap()
+                        .err_into()
+                        .map_ok(models::RepositoryMetadata::from)
+                })
                 .await
-                .track("GRPCClient::Syncer<models::RepositoryName>::select")
+                .track("GRPCClient::Syncer<models::RepositoryMetadata>::select")
                 .boxed()
         }
         .boxed()
@@ -338,13 +342,13 @@ impl Syncer<models::RepositoryName> for GRPCClient {
 
     fn merge(
         &self,
-        s: BoxStream<'static, models::RepositoryName>,
+        s: BoxStream<'static, models::RepositoryMetadata>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_repository_names(s.map(RepositoryName::from).boxed())
+                .merge_repository_metadata(s.map(RepositoryMetadata::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
                 .boxed()

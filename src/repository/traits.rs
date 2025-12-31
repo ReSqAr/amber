@@ -24,13 +24,13 @@ pub trait Local {
     fn capability(&self) -> &Capability;
 }
 
-pub struct RepositoryMetadata {
+pub struct RepositoryCurrentMetadata {
     pub id: RepoID,
     pub name: String,
 }
 
 pub trait Metadata {
-    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>>;
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryCurrentMetadata, InternalError>>;
 }
 
 pub enum BufferType {
@@ -83,9 +83,9 @@ pub trait Adder {
         s: BoxStream<'a, InsertFileBundle>,
     ) -> BoxFuture<'a, Result<u64, DBError>>;
 
-    fn add_repository_names<'a>(
+    fn add_repository_metadata<'a>(
         &'a self,
-        s: BoxStream<'a, models::InsertRepositoryName>,
+        s: BoxStream<'a, models::InsertRepositoryMetadata>,
     ) -> BoxFuture<'a, Result<u64, DBError>>;
 
     fn add_materialisation<'a>(

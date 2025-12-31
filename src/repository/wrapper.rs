@@ -1,7 +1,7 @@
 use crate::repository::grpc::GRPCClient;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::RCloneStore;
-use crate::repository::traits::{Metadata, RepositoryMetadata};
+use crate::repository::traits::{Metadata, RepositoryCurrentMetadata};
 use crate::utils::errors::InternalError;
 use futures_core::future::BoxFuture;
 
@@ -23,7 +23,7 @@ impl WrappedRepository {
 }
 
 impl Metadata for WrappedRepository {
-    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryCurrentMetadata, InternalError>> {
         Box::pin(async move {
             match self {
                 WrappedRepository::Local(local) => local.current().await,

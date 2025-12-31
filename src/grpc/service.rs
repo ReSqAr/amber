@@ -6,15 +6,15 @@ use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
     CurrentRepositoryMetadataResponse, File, FinaliseTransferResponse, FlightdeckMessage,
     FlightdeckMessageRequest, LookupLastIndicesRequest, LookupLastIndicesResponse,
-    MergeBlobsResponse, MergeFilesResponse, MergeRepositoryNamesResponse,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoryMetadataResponse,
     MergeRepositorySyncStatesResponse, PrepareTransferResponse, RclonePathRequest,
-    RclonePathResponse, RepositoryName, RepositorySyncState, SelectBlobsRequest,
-    SelectFilesRequest, SelectRepositoryNamesRequest, SelectRepositorySyncStatesRequest,
+    RclonePathResponse, RepositoryMetadata, RepositorySyncState, SelectBlobsRequest,
+    SelectFilesRequest, SelectRepositoryMetadataRequest, SelectRepositorySyncStatesRequest,
     TransferItem, UpdateLastIndicesRequest, UpdateLastIndicesResponse, grpc_server,
 };
 use crate::repository::traits::{
-    LastSyncState, LastSyncStateSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender,
-    Syncer,
+    LastSyncState, LastSyncStateSyncer, Local, Metadata, Receiver, RepositoryCurrentMetadata,
+    Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -44,7 +44,7 @@ where
         + Syncer<models::RepositorySyncState>
         + Syncer<models::File>
         + Syncer<models::Blob>
-        + Syncer<models::RepositoryName>
+        + Syncer<models::RepositoryMetadata>
         + Sender<models::BlobTransferItem>
         + Receiver<models::BlobTransferItem>
         + Sync
@@ -55,7 +55,7 @@ where
         &self,
         _: Request<CurrentRepositoryMetadataRequest>,
     ) -> Result<Response<CurrentRepositoryMetadataResponse>, Status> {
-        let RepositoryMetadata { id, name } = self.repository.current().await?;
+        let RepositoryCurrentMetadata { id, name } = self.repository.current().await?;
         Ok(Response::new(CurrentRepositoryMetadataResponse {
             id: id.0,
             name,
@@ -98,16 +98,16 @@ where
         Ok(Response::new(MergeBlobsResponse {}))
     }
 
-    async fn merge_repository_names(
+    async fn merge_repository_metadata(
         &self,
-        request: Request<Streaming<RepositoryName>>,
-    ) -> Result<Response<MergeRepositoryNamesResponse>, Status> {
+        request: Request<Streaming<RepositoryMetadata>>,
+    ) -> Result<Response<MergeRepositoryMetadataResponse>, Status> {
         request
             .into_inner()
-            .map_ok::<models::RepositoryName, _>(RepositoryName::into)
+            .map_ok::<models::RepositoryMetadata, _>(RepositoryMetadata::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
-        Ok(Response::new(MergeRepositoryNamesResponse {}))
+        Ok(Response::new(MergeRepositoryMetadataResponse {}))
     }
 
     async fn update_last_indices(
@@ -175,18 +175,19 @@ where
         Ok(Response::new(Box::pin(stream)))
     }
 
-    type SelectRepositoryNamesStream =
-        Pin<Box<dyn Stream<Item = Result<RepositoryName, Status>> + Send + 'static>>;
+    type SelectRepositoryMetadataStream =
+        Pin<Box<dyn Stream<Item = Result<RepositoryMetadata, Status>> + Send + 'static>>;
 
-    async fn select_repository_names(
+    async fn select_repository_metadata(
         &self,
-        request: Request<SelectRepositoryNamesRequest>,
-    ) -> Result<Response<Self::SelectRepositoryNamesStream>, Status> {
+        request: Request<SelectRepositoryMetadataRequest>,
+    ) -> Result<Response<Self::SelectRepositoryMetadataStream>, Status> {
         let last_index = request.into_inner().last_index;
-        let stream = <T as Syncer<models::RepositoryName>>::select(&self.repository, last_index)
-            .await
-            .err_into()
-            .map_ok::<RepositoryName, _>(models::RepositoryName::into);
+        let stream =
+            <T as Syncer<models::RepositoryMetadata>>::select(&self.repository, last_index)
+                .await
+                .err_into()
+                .map_ok::<RepositoryMetadata, _>(models::RepositoryMetadata::into);
         Ok(Response::new(Box::pin(stream)))
     }
 

@@ -1,5 +1,5 @@
 use crate::db::models::{
-    Blob, BlobID, File, Path as ModelPath, RepoID, RepositoryName, RepositorySyncState, Uid,
+    Blob, BlobID, File, Path as ModelPath, RepoID, RepositoryMetadata, RepositorySyncState, Uid,
 };
 use crate::repository::traits::{Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
@@ -414,7 +414,7 @@ impl ParquetRecord for Blob {
     }
 }
 
-impl ParquetRecord for RepositoryName {
+impl ParquetRecord for RepositoryMetadata {
     fn schema() -> SchemaRef {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
@@ -502,7 +502,7 @@ impl ParquetRecord for RepositoryName {
             let nanos = valid_from.value(row);
             let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(nanos);
 
-            out.push(RepositoryName {
+            out.push(RepositoryMetadata {
                 uid: Uid(uid.value(row)),
                 repo_id: RepoID(repo_id.value(row).to_string()),
                 name: name.value(row).to_string(),
@@ -706,12 +706,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parquet_repository_name_round_trip() -> Result<(), InternalError> {
+    async fn parquet_repository_metadata_round_trip() -> Result<(), InternalError> {
         let temp = tempdir().map_err(InternalError::IO)?;
-        let path = RepoPath::from_root(temp.path()).join("repository_names.parquet");
-        let parquet = Parquet::<RepositoryName>::new(path);
+        let path = RepoPath::from_root(temp.path()).join("repository_metadata.parquet");
+        let parquet = Parquet::<RepositoryMetadata>::new(path);
 
-        let item = RepositoryName {
+        let item = RepositoryMetadata {
             uid: Uid(99),
             repo_id: RepoID("repo".to_string()),
             name: "example".to_string(),
