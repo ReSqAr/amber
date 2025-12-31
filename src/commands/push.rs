@@ -6,6 +6,7 @@ use crate::flightdeck::base::{
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
 use crate::logic::files;
 use crate::logic::sync;
+use crate::logic::sync::Mode;
 use crate::logic::transfer::transfer;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
@@ -14,7 +15,6 @@ use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
 use crate::utils::rclone::RCloneConfig;
 use std::path::PathBuf;
-use crate::logic::sync::Mode;
 
 pub async fn push(
     config: LocalRepositoryConfig,
@@ -52,8 +52,15 @@ pub async fn push(
         let count = match remote {
             WrappedRepository::Local(remote) => {
                 sync::sync_repositories(&local, &remote, Mode::Bidirectional).await?;
-                let res = transfer::<BlobTransferItem>(&local, &local, &remote, &connection, paths, config)
-                    .await?;
+                let res = transfer::<BlobTransferItem>(
+                    &local,
+                    &local,
+                    &remote,
+                    &connection,
+                    paths,
+                    config,
+                )
+                .await?;
                 sync::sync_repositories(&local, &remote, Mode::Bidirectional).await?;
                 res
             }

@@ -5,8 +5,8 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
-use crate::logic::{materialise, sync};
 use crate::logic::sync::Mode;
+use crate::logic::{materialise, sync};
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local};
 use crate::repository::wrapper::WrappedRepository;
