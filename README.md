@@ -116,7 +116,7 @@ Password auth is not recommended though.
 ## rclone Supported Storage: S3/Backblaze/...
 
 amber can also move files to any service supported by rclone.
-The tracking information gets synced into an `.amb` folder on the rclone remote.
+The tracking information gets synced into a folder on the rclone remote.
 
 You'll first need to set up your remote in rclone via `rclone config`.
 Assume the target is called `b2-ganymede` in `rclone`, then run this:
