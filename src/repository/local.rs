@@ -6,14 +6,14 @@ use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    FilesWithAvailability, MissingFile, RepoID, Repository, RepositoryName, SizedBlobID,
+    FilesWithAvailability, MissingFile, RepoID, RepositoryName, RepositorySyncState, SizedBlobID,
     VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
 use crate::repository::traits::{
-    Adder, Availability, BufferType, Config, ConnectionManager, LastIndices, LastIndicesSyncer,
+    Adder, Availability, BufferType, Config, ConnectionManager, LastSyncState, LastSyncStateSyncer,
     Local, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
     TransferItem, VirtualFilesystem,
 };
@@ -407,17 +407,17 @@ impl Adder for LocalRepository {
     }
 }
 
-impl LastIndicesSyncer for LocalRepository {
-    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
+impl LastSyncStateSyncer for LocalRepository {
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastSyncState, InternalError>> {
         let db = self.db.clone();
         async move {
-            let Repository {
+            let RepositorySyncState {
                 last_file_index,
                 last_blob_index,
                 last_name_index,
                 ..
-            } = db.lookup_repository(repo_id).await?;
-            Ok(LastIndices {
+            } = db.lookup_repository_sync_state(repo_id).await?;
+            Ok(LastSyncState {
                 file: last_file_index,
                 blob: last_blob_index,
                 name: last_name_index,
@@ -429,29 +429,32 @@ impl LastIndicesSyncer for LocalRepository {
     fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>> {
         let db = self.db.clone();
         async move {
-            db.update_last_indices().await?;
+            db.update_sync_state().await?;
             Ok(())
         }
         .boxed()
     }
 }
 
-impl SyncerParams for Repository {
+impl SyncerParams for RepositorySyncState {
     type Params = ();
 }
 
-impl Syncer<Repository> for LocalRepository {
+impl Syncer<RepositorySyncState> for LocalRepository {
     fn select(
         &self,
         _params: (),
-    ) -> BoxFuture<'_, BoxStream<'static, Result<Repository, InternalError>>> {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<RepositorySyncState, InternalError>>> {
         let db = self.db.clone();
-        async move { db.select_repositories().await.err_into().boxed() }.boxed()
+        async move { db.select_repository_sync_states().await.err_into().boxed() }.boxed()
     }
 
-    fn merge(&self, s: BoxStream<'static, Repository>) -> BoxFuture<'_, Result<(), InternalError>> {
+    fn merge(
+        &self,
+        s: BoxStream<'static, RepositorySyncState>,
+    ) -> BoxFuture<'_, Result<(), InternalError>> {
         let db = self.db.clone();
-        async move { db.merge_repositories(s).await.map_err(Into::into) }.boxed()
+        async move { db.merge_repository_sync_states(s).await.map_err(Into::into) }.boxed()
     }
 }
 

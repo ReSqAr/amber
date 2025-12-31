@@ -4,7 +4,7 @@ use crate::flightdeck;
 use crate::grpc::definitions::flightdeck_data::Value;
 use crate::grpc::definitions::{
     Blob, CopiedTransferItem, File, FlightdeckData, FlightdeckMessage, FlightdeckObservation,
-    Repository, RepositoryName, TransferItem,
+    RepositoryName, RepositorySyncState, TransferItem,
 };
 use chrono::{DateTime, TimeZone, Utc};
 use log::ParseLevelError;
@@ -23,9 +23,9 @@ fn timestamp_to_datetime(ts: &Option<Timestamp>) -> DateTime<Utc> {
         .unwrap_or_default()
 }
 
-impl From<models::Repository> for Repository {
-    fn from(repo: models::Repository) -> Self {
-        Repository {
+impl From<models::RepositorySyncState> for RepositorySyncState {
+    fn from(repo: models::RepositorySyncState) -> Self {
+        RepositorySyncState {
             repo_id: repo.repo_id.0,
             last_file_index: repo.last_file_index,
             last_blob_index: repo.last_blob_index,
@@ -70,9 +70,9 @@ impl From<models::RepositoryName> for RepositoryName {
     }
 }
 
-impl From<Repository> for models::Repository {
-    fn from(repo: Repository) -> Self {
-        models::Repository {
+impl From<RepositorySyncState> for models::RepositorySyncState {
+    fn from(repo: RepositorySyncState) -> Self {
+        models::RepositorySyncState {
             repo_id: RepoID(repo.repo_id),
             last_file_index: repo.last_file_index,
             last_blob_index: repo.last_blob_index,

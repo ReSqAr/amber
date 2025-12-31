@@ -1,8 +1,8 @@
 use crate::db::error::DBError;
 use crate::db::models::{
     Check, Connection, ConnectionMetadata, ConnectionName, FileCheck, FileSeen,
-    InsertMaterialisation, LocalRepository, Materialisation, Observation, Path, RepoID, Repository,
-    RepositoryMetadata,
+    InsertMaterialisation, LocalRepository, Materialisation, Observation, Path, RepoID,
+    RepositorySyncState, SyncState,
 };
 use crate::db::stores::kv::{Store, Upsert, UpsertAction};
 use crate::flightdeck::tracer::Tracer;
@@ -12,16 +12,16 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 use tokio::fs::create_dir_all;
 
-struct UpsertRepositoryMetadata(Repository);
+struct UpsertRepositoryMetadata(RepositorySyncState);
 impl Upsert for UpsertRepositoryMetadata {
     type K = RepoID;
-    type V = RepositoryMetadata;
+    type V = SyncState;
 
     fn key(&self) -> RepoID {
         self.0.repo_id.clone()
     }
 
-    fn upsert(self, v: Option<RepositoryMetadata>) -> UpsertAction<RepositoryMetadata> {
+    fn upsert(self, v: Option<SyncState>) -> UpsertAction<SyncState> {
         let merge = |l, r| match (l, r) {
             (Some(l), Some(r)) => Some(std::cmp::max(l, r)),
             (Some(l), None) => Some(l),
@@ -29,12 +29,12 @@ impl Upsert for UpsertRepositoryMetadata {
             (None, None) => None,
         };
         match v {
-            Some(v) => UpsertAction::Change(RepositoryMetadata {
+            Some(v) => UpsertAction::Change(SyncState {
                 last_file_index: merge(v.last_file_index, self.0.last_file_index),
                 last_blob_index: merge(v.last_blob_index, self.0.last_blob_index),
                 last_name_index: merge(v.last_name_index, self.0.last_name_index),
             }),
-            None => UpsertAction::Change(RepositoryMetadata {
+            None => UpsertAction::Change(SyncState {
                 last_file_index: self.0.last_file_index,
                 last_blob_index: self.0.last_blob_index,
                 last_name_index: self.0.last_name_index,
@@ -49,7 +49,7 @@ pub(crate) struct KVStores {
     observations: Store<Path, Observation>,
     checks: Store<Path, Check>,
     local_repository: Store<(), LocalRepository>,
-    repositories: Store<RepoID, RepositoryMetadata>,
+    sync_states: Store<RepoID, SyncState>,
     connections: Store<ConnectionName, ConnectionMetadata>,
 }
 
@@ -71,19 +71,16 @@ impl KVStores {
             base_path.join("local_repository.kv"),
             "local_repository".to_string(),
         );
-        let repositories = Store::new(
-            base_path.join("repositories.kv"),
-            "repositories".to_string(),
-        );
+        let sync_states = Store::new(base_path.join("sync_states.kv"), "sync_states".to_string());
         let connections = Store::new(base_path.join("connections.kv"), "connections".to_string());
 
-        let (materialisations, observations, checks, local_repository, repositories, connections) =
+        let (materialisations, observations, checks, local_repository, sync_states, connections) =
             tokio::try_join!(
                 materialisations,
                 observations,
                 checks,
                 local_repository,
-                repositories,
+                sync_states,
                 connections,
             )?;
         tracer.measure();
@@ -93,7 +90,7 @@ impl KVStores {
             observations,
             checks,
             local_repository,
-            repositories,
+            sync_states,
             connections,
         })
     }
@@ -104,7 +101,7 @@ impl KVStores {
             self.observations.close(),
             self.checks.close(),
             self.local_repository.close(),
-            self.repositories.close(),
+            self.sync_states.close(),
             self.connections.close(),
         )?;
         Ok(())
@@ -116,7 +113,7 @@ impl KVStores {
             self.observations.compact(),
             self.checks.compact(),
             self.local_repository.compact(),
-            self.repositories.compact(),
+            self.sync_states.compact(),
             self.connections.compact(),
         )?;
         Ok(())
@@ -200,12 +197,12 @@ impl KVStores {
             .await
     }
 
-    pub(crate) async fn apply_repositories(
+    pub(crate) async fn apply_repository_sync_states(
         &self,
-        s: BoxStream<'_, Result<Repository, DBError>>,
+        s: BoxStream<'_, Result<RepositorySyncState, DBError>>,
     ) -> Result<u64, DBError> {
         let s = s.map(move |r| r.map(UpsertRepositoryMetadata)).boxed();
-        self.repositories.upsert(s).await
+        self.sync_states.upsert(s).await
     }
 
     pub(crate) async fn load_local_repository(&self) -> Result<Option<LocalRepository>, DBError> {
@@ -213,10 +210,10 @@ impl KVStores {
         Ok(v.into_iter().next().map(|(_, cr)| cr))
     }
 
-    pub(crate) fn stream_repositories(
+    pub(crate) fn stream_repository_sync_states(
         &self,
-    ) -> BoxStream<'static, Result<(RepoID, RepositoryMetadata), DBError>> {
-        self.repositories.stream()
+    ) -> BoxStream<'static, Result<(RepoID, SyncState), DBError>> {
+        self.sync_states.stream()
     }
 
     pub(crate) fn stream_connections(
@@ -265,16 +262,20 @@ impl KVStores {
         self.checks.left_join(s, key_func)
     }
 
-    pub(crate) fn left_join_repositories<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(
+    pub(crate) fn left_join_repository_sync_states<
+        IK,
+        KF,
+        E: From<DBError> + Debug + Send + Sync + 'static,
+    >(
         &self,
         s: BoxStream<'static, Result<IK, E>>,
         key_func: KF,
-    ) -> BoxStream<'static, Result<(IK, Option<RepositoryMetadata>), E>>
+    ) -> BoxStream<'static, Result<(IK, Option<SyncState>), E>>
     where
         KF: Fn(IK) -> RepoID + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
-        self.repositories.left_join(s, key_func)
+        self.sync_states.left_join(s, key_func)
     }
 
     pub(crate) fn left_join_connections<IK, KF, E: From<DBError> + Debug + Send + Sync + 'static>(

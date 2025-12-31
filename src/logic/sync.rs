@@ -1,8 +1,8 @@
-use crate::db::models::{Blob, File, Repository, RepositoryName};
+use crate::db::models::{Blob, File, RepositoryName, RepositorySyncState};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::observation::Value;
 use crate::flightdeck::tracer::Tracer;
-use crate::repository::traits::{LastIndicesSyncer, Metadata, Syncer, SyncerParams};
+use crate::repository::traits::{LastSyncStateSyncer, Metadata, Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
 use chrono::SecondsFormat;
@@ -63,8 +63,8 @@ where
 pub async fn sync_repositories<S, T>(local: &S, remote: &T, mode: Mode) -> Result<(), InternalError>
 where
     S: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
+        + LastSyncStateSyncer
+        + Syncer<RepositorySyncState>
         + Syncer<File>
         + Syncer<Blob>
         + Syncer<RepositoryName>
@@ -72,8 +72,8 @@ where
         + Send
         + Sync,
     T: Metadata
-        + LastIndicesSyncer
-        + Syncer<Repository>
+        + LastSyncStateSyncer
+        + Syncer<RepositorySyncState>
         + Syncer<File>
         + Syncer<Blob>
         + Syncer<RepositoryName>
@@ -210,7 +210,7 @@ where
         try_join!(remote.refresh(), local.refresh())?;
         o.observe_state(log::Level::Info, "prepared");
 
-        sync_table::<Repository, _, _>(local, (), remote, (), mode).await?;
+        sync_table::<RepositorySyncState, _, _>(local, (), remote, (), mode).await?;
 
         let elapsed = start.elapsed();
         o.observe_termination_ext(

@@ -6,14 +6,15 @@ use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest,
     CurrentRepositoryMetadataResponse, File, FinaliseTransferResponse, FlightdeckMessage,
     FlightdeckMessageRequest, LookupLastIndicesRequest, LookupLastIndicesResponse,
-    MergeBlobsResponse, MergeFilesResponse, MergeRepositoriesResponse,
-    MergeRepositoryNamesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
-    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
-    UpdateLastIndicesResponse, grpc_server,
+    MergeBlobsResponse, MergeFilesResponse, MergeRepositoryNamesResponse,
+    MergeRepositorySyncStatesResponse, PrepareTransferResponse, RclonePathRequest,
+    RclonePathResponse, RepositoryName, RepositorySyncState, SelectBlobsRequest,
+    SelectFilesRequest, SelectRepositoryNamesRequest, SelectRepositorySyncStatesRequest,
+    TransferItem, UpdateLastIndicesRequest, UpdateLastIndicesResponse, grpc_server,
 };
 use crate::repository::traits::{
-    LastIndices, LastIndicesSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender, Syncer,
+    LastSyncState, LastSyncStateSyncer, Local, Metadata, Receiver, RepositoryMetadata, Sender,
+    Syncer,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::pipe::TryForwardIntoExt;
@@ -39,8 +40,8 @@ impl<T> grpc_server::Grpc for Service<T>
 where
     T: Metadata
         + Local
-        + LastIndicesSyncer
-        + Syncer<models::Repository>
+        + LastSyncStateSyncer
+        + Syncer<models::RepositorySyncState>
         + Syncer<models::File>
         + Syncer<models::Blob>
         + Syncer<models::RepositoryName>
@@ -61,16 +62,16 @@ where
         }))
     }
 
-    async fn merge_repositories(
+    async fn merge_repository_sync_states(
         &self,
-        request: Request<Streaming<Repository>>,
-    ) -> Result<Response<MergeRepositoriesResponse>, Status> {
+        request: Request<Streaming<RepositorySyncState>>,
+    ) -> Result<Response<MergeRepositorySyncStatesResponse>, Status> {
         request
             .into_inner()
-            .map_ok::<models::Repository, _>(Repository::into)
+            .map_ok::<models::RepositorySyncState, _>(RepositorySyncState::into)
             .try_forward_into::<_, _, _, _, InternalError>(|s| self.repository.merge(s.boxed()))
             .await?;
-        Ok(Response::new(MergeRepositoriesResponse {}))
+        Ok(Response::new(MergeRepositorySyncStatesResponse {}))
     }
 
     async fn merge_files(
@@ -121,7 +122,7 @@ where
         &self,
         request: Request<LookupLastIndicesRequest>,
     ) -> Result<Response<LookupLastIndicesResponse>, Status> {
-        let LastIndices { file, blob, name } = self
+        let LastSyncState { file, blob, name } = self
             .repository
             .lookup(RepoID(request.into_inner().repo_id))
             .await?;
@@ -132,17 +133,17 @@ where
         }))
     }
 
-    type SelectRepositoriesStream =
-        Pin<Box<dyn Stream<Item = Result<Repository, Status>> + Send + 'static>>;
+    type SelectRepositorySyncStatesStream =
+        Pin<Box<dyn Stream<Item = Result<RepositorySyncState, Status>> + Send + 'static>>;
 
-    async fn select_repositories(
+    async fn select_repository_sync_states(
         &self,
-        _: Request<SelectRepositoriesRequest>,
-    ) -> Result<Response<Self::SelectRepositoriesStream>, Status> {
-        let stream = <T as Syncer<models::Repository>>::select(&self.repository, ())
+        _: Request<SelectRepositorySyncStatesRequest>,
+    ) -> Result<Response<Self::SelectRepositorySyncStatesStream>, Status> {
+        let stream = <T as Syncer<models::RepositorySyncState>>::select(&self.repository, ())
             .await
             .err_into()
-            .map_ok::<Repository, _>(models::Repository::into);
+            .map_ok::<RepositorySyncState, _>(models::RepositorySyncState::into);
         Ok(Response::new(Box::pin(stream)))
     }
 
