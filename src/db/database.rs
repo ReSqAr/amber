@@ -103,7 +103,7 @@ impl Database {
 
         assert_eq!(r.len(), 1, "expected precisely 1 repository lookup result");
         let (_, result) = r.into_iter().next().unwrap()?;
-        Ok(result.map(|(r, _)| r))
+        Ok(result.map(|(_, status)| status))
     }
 
     pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
@@ -619,7 +619,7 @@ impl Database {
             .logs
             .repository_metadata
             .current()
-            .map(|e| e.map(|(k, v, _)| (k, v.name)))
+            .map(|e| e.map(|(k, _, v)| (k, v.name)))
             .try_collect()
             .await
         {

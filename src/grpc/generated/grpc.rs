@@ -53,8 +53,8 @@ pub struct RepositoryMetadata {
     pub uid: u64,
     #[prost(string, tag = "2")]
     pub repo_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub name: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "4")]
     pub valid_from: ::core::option::Option<::prost_types::Timestamp>,
 }

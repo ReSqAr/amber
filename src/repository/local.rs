@@ -207,7 +207,7 @@ impl LocalRepository {
         db.add_repository_metadata(
             stream::iter([models::InsertRepositoryMetadata {
                 repo_id: repo.repo_id.clone(),
-                name: name.clone(),
+                name: Some(name.clone()),
                 valid_from: chrono::Utc::now(),
             }])
             .boxed(),

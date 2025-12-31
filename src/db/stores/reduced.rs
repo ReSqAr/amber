@@ -35,16 +35,6 @@ pub(crate) trait Status {
     fn status(&self) -> RowStatus<Self::V>;
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Always();
-
-impl Status for Always {
-    type V = ();
-    fn status(&self) -> RowStatus<Self::V> {
-        RowStatus::Keep(())
-    }
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) struct ValidFrom {
     pub(crate) valid_from: DateTime<Utc>,
@@ -368,6 +358,16 @@ mod tests {
     use futures::{StreamExt, TryStreamExt};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub(crate) struct Always();
+
+    impl Status for Always {
+        type V = ();
+        fn status(&self) -> RowStatus<Self::V> {
+            RowStatus::Keep(())
+        }
+    }
 
     fn new_uid(n: u64) -> Uid {
         n.into()

@@ -17,7 +17,7 @@ pub async fn set_name(
         .add_repository_metadata(
             stream::iter([models::InsertRepositoryMetadata {
                 repo_id: meta.id,
-                name: name.clone(),
+                name: Some(name.clone()),
                 valid_from: chrono::Utc::now(),
             }])
             .boxed(),
