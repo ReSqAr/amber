@@ -701,8 +701,8 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].uid, item.uid);
-        assert_eq!(items[0].repo_id.0, item.repo_id.0);
-        assert_eq!(items[0].blob_id.0, item.blob_id.0);
+        assert_eq!(items[0].repo_id, item.repo_id);
+        assert_eq!(items[0].blob_id, item.blob_id);
         assert_eq!(items[0].blob_size, item.blob_size);
         assert_eq!(items[0].has_blob, item.has_blob);
         assert_eq!(items[0].path.as_ref().unwrap().0, item.path.unwrap().0);
@@ -715,30 +715,40 @@ mod tests {
         let path = RepoPath::from_root(temp.path()).join("repository_metadata.parquet");
         let parquet = Parquet::<RepositoryMetadata>::new(path);
 
-        let item = RepositoryMetadata {
+        let item0 = RepositoryMetadata {
             uid: Uid(99),
             repo_id: RepoID("repo".to_string()),
             name: Some("example".to_string()),
             valid_from: chrono::Utc::now(),
         };
 
+        let item1 = RepositoryMetadata {
+            uid: Uid(100),
+            repo_id: RepoID("repo".to_string()),
+            name: None,
+            valid_from: chrono::Utc::now(),
+        };
+
         parquet
-            .merge(stream::iter(vec![item.clone()]).boxed())
+            .merge(stream::iter(vec![item0.clone(), item1.clone()]).boxed())
             .await?;
         let stream = parquet.select(None).await;
         let items: Vec<_> = stream.try_collect().await?;
 
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].uid, item.uid);
-        assert_eq!(items[0].repo_id.0, item.repo_id.0);
-        assert_eq!(items[0].name, item.name);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].uid, item0.uid);
+        assert_eq!(items[0].repo_id, item0.repo_id);
+        assert_eq!(items[0].name, item0.name);
+        assert_eq!(items[1].uid, item1.uid);
+        assert_eq!(items[1].repo_id, item1.repo_id);
+        assert_eq!(items[1].name, item1.name);
         Ok(())
     }
 
     #[tokio::test]
-    async fn parquet_repository_round_trip() -> Result<(), InternalError> {
+    async fn parquet_sync_state_round_trip() -> Result<(), InternalError> {
         let temp = tempdir().map_err(InternalError::IO)?;
-        let path = RepoPath::from_root(temp.path()).join("repositories.parquet");
+        let path = RepoPath::from_root(temp.path()).join("sync_state.parquet");
         let parquet = Parquet::<RepositorySyncState>::new(path);
 
         let item = RepositorySyncState {
@@ -755,7 +765,7 @@ mod tests {
         let items: Vec<_> = stream.try_collect().await?;
 
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].repo_id.0, item.repo_id.0);
+        assert_eq!(items[0].repo_id, item.repo_id);
         assert_eq!(items[0].last_file_index, item.last_file_index);
         assert_eq!(items[0].last_blob_index, item.last_blob_index);
         assert_eq!(items[0].last_name_index, item.last_name_index);
