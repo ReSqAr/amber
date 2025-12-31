@@ -4,6 +4,7 @@ use crate::db::models::{
 };
 use crate::db::stores::reduced;
 use crate::db::stores::reduced::TransactionLike;
+use crate::db::versioning::V1;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::try_join;
@@ -12,9 +13,9 @@ use std::path::PathBuf;
 
 #[derive(Clone)]
 pub(crate) struct Reduced {
-    pub(crate) blobs: reduced::Store<BlobRef, BlobMeta, HasBlob>,
-    pub(crate) files: reduced::Store<Path, (), FileBlobID>,
-    pub(crate) repository_metadata: reduced::Store<RepoID, (), LogRepositoryMetadataStatus>,
+    pub(crate) blobs: reduced::Store<BlobRef, V1<BlobMeta>, HasBlob>,
+    pub(crate) files: reduced::Store<Path, V1<()>, FileBlobID>,
+    pub(crate) repository_metadata: reduced::Store<RepoID, V1<()>, LogRepositoryMetadataStatus>,
     pub(crate) flush_size: usize,
 }
 

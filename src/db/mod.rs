@@ -4,6 +4,7 @@ pub(crate) mod kv;
 pub(crate) mod models;
 pub(crate) mod reduced;
 pub(crate) mod stores;
+mod versioning;
 
 use crate::db::database::Database;
 use crate::db::kv::KVStores;

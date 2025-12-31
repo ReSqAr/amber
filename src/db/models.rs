@@ -1,5 +1,6 @@
 use crate::db::stores::log;
 use crate::db::stores::reduced::{RowStatus, Status, ValidFrom};
+use crate::db::versioning::V1;
 use chrono::prelude::{DateTime, Utc};
 use std::path::PathBuf;
 
@@ -79,10 +80,10 @@ pub struct BlobMeta {
 pub struct HasBlob(pub bool);
 
 impl Status for HasBlob {
-    type V = ();
+    type V = V1<()>;
     fn status(&self) -> RowStatus<Self::V> {
         match *self {
-            HasBlob(true) => RowStatus::Keep(()),
+            HasBlob(true) => RowStatus::Keep(().into()),
             HasBlob(false) => RowStatus::Delete,
         }
     }
@@ -98,7 +99,7 @@ pub struct InsertBlob {
     pub valid_from: DateTime<Utc>,
 }
 
-impl From<InsertBlob> for (BlobRef, BlobMeta, HasBlob, ValidFrom) {
+impl From<InsertBlob> for (BlobRef, V1<BlobMeta>, HasBlob, ValidFrom) {
     fn from(b: InsertBlob) -> Self {
         (
             BlobRef {
@@ -108,7 +109,8 @@ impl From<InsertBlob> for (BlobRef, BlobMeta, HasBlob, ValidFrom) {
             BlobMeta {
                 size: b.blob_size,
                 path: b.path,
-            },
+            }
+            .into(),
             HasBlob(b.has_blob),
             ValidFrom {
                 valid_from: b.valid_from,
@@ -117,7 +119,7 @@ impl From<InsertBlob> for (BlobRef, BlobMeta, HasBlob, ValidFrom) {
     }
 }
 
-impl From<Blob> for (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom) {
+impl From<Blob> for (Uid, BlobRef, V1<BlobMeta>, HasBlob, ValidFrom) {
     fn from(b: Blob) -> Self {
         (
             b.uid,
@@ -128,7 +130,8 @@ impl From<Blob> for (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom) {
             BlobMeta {
                 size: b.blob_size,
                 path: b.path,
-            },
+            }
+            .into(),
             HasBlob(b.has_blob),
             ValidFrom {
                 valid_from: b.valid_from,
@@ -137,8 +140,9 @@ impl From<Blob> for (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom) {
     }
 }
 
-impl From<(Uid, BlobRef, BlobMeta, HasBlob, ValidFrom)> for Blob {
-    fn from((u, br, lb, hb, vf): (Uid, BlobRef, BlobMeta, HasBlob, ValidFrom)) -> Self {
+impl From<(Uid, BlobRef, V1<BlobMeta>, HasBlob, ValidFrom)> for Blob {
+    fn from((u, br, lb, hb, vf): (Uid, BlobRef, V1<BlobMeta>, HasBlob, ValidFrom)) -> Self {
+        let lb: BlobMeta = lb.into_inner();
         Self {
             uid: u,
             repo_id: br.repo_id,
@@ -167,10 +171,10 @@ pub struct File {
 pub struct FileBlobID(pub Option<BlobID>);
 
 impl Status for FileBlobID {
-    type V = BlobID;
+    type V = V1<BlobID>;
     fn status(&self) -> RowStatus<Self::V> {
         match self.clone() {
-            FileBlobID(Some(blob_id)) => RowStatus::Keep(blob_id),
+            FileBlobID(Some(blob_id)) => RowStatus::Keep(blob_id.into()),
             FileBlobID(None) => RowStatus::Delete,
         }
     }
@@ -183,11 +187,11 @@ pub struct InsertFile {
     pub valid_from: DateTime<Utc>,
 }
 
-impl From<InsertFile> for (Path, (), FileBlobID, ValidFrom) {
+impl From<InsertFile> for (Path, V1<()>, FileBlobID, ValidFrom) {
     fn from(file: InsertFile) -> Self {
         (
             file.path,
-            (),
+            ().into(),
             FileBlobID(file.blob_id),
             ValidFrom {
                 valid_from: file.valid_from,
@@ -195,12 +199,12 @@ impl From<InsertFile> for (Path, (), FileBlobID, ValidFrom) {
         )
     }
 }
-impl From<File> for (Uid, Path, (), FileBlobID, ValidFrom) {
+impl From<File> for (Uid, Path, V1<()>, FileBlobID, ValidFrom) {
     fn from(file: File) -> Self {
         (
             file.uid,
             file.path,
-            (),
+            ().into(),
             FileBlobID(file.blob_id),
             ValidFrom {
                 valid_from: file.valid_from,
@@ -209,8 +213,8 @@ impl From<File> for (Uid, Path, (), FileBlobID, ValidFrom) {
     }
 }
 
-impl From<(Uid, Path, (), FileBlobID, ValidFrom)> for File {
-    fn from((uid, path, _, fb, vf): (Uid, Path, (), FileBlobID, ValidFrom)) -> Self {
+impl From<(Uid, Path, V1<()>, FileBlobID, ValidFrom)> for File {
+    fn from((uid, path, _, fb, vf): (Uid, Path, V1<()>, FileBlobID, ValidFrom)) -> Self {
         Self {
             uid,
             path,
@@ -460,21 +464,21 @@ pub struct LogRepositoryMetadata {
 pub struct LogRepositoryMetadataStatus(pub Option<LogRepositoryMetadata>);
 
 impl Status for LogRepositoryMetadataStatus {
-    type V = LogRepositoryMetadata;
+    type V = V1<LogRepositoryMetadata>;
 
     fn status(&self) -> RowStatus<Self::V> {
         match self.0.clone() {
-            Some(value) => RowStatus::Keep(value),
+            Some(value) => RowStatus::Keep(value.into()),
             None => RowStatus::Delete,
         }
     }
 }
 
-impl From<InsertRepositoryMetadata> for (RepoID, (), LogRepositoryMetadataStatus, ValidFrom) {
+impl From<InsertRepositoryMetadata> for (RepoID, V1<()>, LogRepositoryMetadataStatus, ValidFrom) {
     fn from(rn: InsertRepositoryMetadata) -> Self {
         (
             rn.repo_id,
-            (),
+            ().into(),
             LogRepositoryMetadataStatus(rn.name.map(|name| LogRepositoryMetadata { name })),
             ValidFrom {
                 valid_from: rn.valid_from,
@@ -482,12 +486,12 @@ impl From<InsertRepositoryMetadata> for (RepoID, (), LogRepositoryMetadataStatus
         )
     }
 }
-impl From<RepositoryMetadata> for (Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom) {
+impl From<RepositoryMetadata> for (Uid, RepoID, V1<()>, LogRepositoryMetadataStatus, ValidFrom) {
     fn from(rn: RepositoryMetadata) -> Self {
         (
             rn.uid,
             rn.repo_id,
-            (),
+            ().into(),
             LogRepositoryMetadataStatus(rn.name.map(|name| LogRepositoryMetadata { name })),
             ValidFrom {
                 valid_from: rn.valid_from,
@@ -496,9 +500,15 @@ impl From<RepositoryMetadata> for (Uid, RepoID, (), LogRepositoryMetadataStatus,
     }
 }
 
-impl From<(Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom)> for RepositoryMetadata {
+impl From<(Uid, RepoID, V1<()>, LogRepositoryMetadataStatus, ValidFrom)> for RepositoryMetadata {
     fn from(
-        (uid, repo_id, _, status, vf): (Uid, RepoID, (), LogRepositoryMetadataStatus, ValidFrom),
+        (uid, repo_id, _, status, vf): (
+            Uid,
+            RepoID,
+            V1<()>,
+            LogRepositoryMetadataStatus,
+            ValidFrom,
+        ),
     ) -> Self {
         Self {
             uid,
