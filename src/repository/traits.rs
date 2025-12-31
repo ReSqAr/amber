@@ -95,14 +95,14 @@ pub trait Adder {
 }
 
 #[derive(Debug)]
-pub struct LastIndices {
+pub struct LastSyncState {
     pub file: Option<u64>,
     pub blob: Option<u64>,
     pub name: Option<u64>,
 }
 
-pub trait LastIndicesSyncer {
-    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>>;
+pub trait LastSyncStateSyncer {
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastSyncState, InternalError>>;
     fn refresh(&self) -> BoxFuture<'_, Result<(), InternalError>>;
 }
 

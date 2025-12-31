@@ -9,11 +9,12 @@ use crate::grpc::definitions::{
     Blob, CopiedTransferItem, CreateTransferRequestRequest, CurrentRepositoryMetadataRequest, File,
     FinaliseTransferResponse, FlightdeckMessageRequest, LookupLastIndicesRequest,
     LookupLastIndicesResponse, PrepareTransferResponse, RclonePathRequest, RclonePathResponse,
-    Repository, RepositoryName, SelectBlobsRequest, SelectFilesRequest, SelectRepositoriesRequest,
-    SelectRepositoryNamesRequest, TransferItem, UpdateLastIndicesRequest,
+    RepositoryName, RepositorySyncState, SelectBlobsRequest, SelectFilesRequest,
+    SelectRepositoryNamesRequest, SelectRepositorySyncStatesRequest, TransferItem,
+    UpdateLastIndicesRequest,
 };
 use crate::repository::traits::{
-    LastIndices, LastIndicesSyncer, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata,
+    LastSyncState, LastSyncStateSyncer, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata,
     Sender, Syncer,
 };
 use crate::utils::errors::InternalError;
@@ -171,8 +172,8 @@ impl Metadata for GRPCClient {
     }
 }
 
-impl LastIndicesSyncer for GRPCClient {
-    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
+impl LastSyncStateSyncer for GRPCClient {
+    fn lookup(&self, repo_id: RepoID) -> BoxFuture<'_, Result<LastSyncState, InternalError>> {
         let client = self.client.clone();
         async move {
             let LookupLastIndicesResponse { file, blob, name } = client
@@ -183,7 +184,7 @@ impl LastIndicesSyncer for GRPCClient {
                 })
                 .await?
                 .into_inner();
-            Ok(LastIndices { file, blob, name })
+            Ok(LastSyncState { file, blob, name })
         }
         .boxed()
     }
@@ -202,18 +203,22 @@ impl LastIndicesSyncer for GRPCClient {
     }
 }
 
-impl Syncer<models::Repository> for GRPCClient {
+impl Syncer<models::RepositorySyncState> for GRPCClient {
     fn select(
         &self,
         _params: (),
-    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Repository, InternalError>>> {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositorySyncState, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
             let mut guard = arc_client.write().await;
             guard
-                .select_repositories(SelectRepositoriesRequest {})
+                .select_repository_sync_states(SelectRepositorySyncStatesRequest {})
                 .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::Repository::from))
+                .map(|r| {
+                    r.unwrap()
+                        .err_into()
+                        .map_ok(models::RepositorySyncState::from)
+                })
                 .await
                 .track("GRPCClient::Syncer<models::Repository>::select")
                 .boxed()
@@ -223,13 +228,13 @@ impl Syncer<models::Repository> for GRPCClient {
 
     fn merge(
         &self,
-        s: BoxStream<'static, models::Repository>,
+        s: BoxStream<'static, models::RepositorySyncState>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
         let arc_client = self.client.clone();
         Box::pin(async move {
             let mut guard = arc_client.write().await;
             guard
-                .merge_repositories(s.map(Repository::from).boxed())
+                .merge_repository_sync_states(s.map(RepositorySyncState::from).boxed())
                 .err_into()
                 .map_ok(|_| ())
                 .boxed()

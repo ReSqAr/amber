@@ -5,7 +5,7 @@ use crate::db::models::{
     BlobTransferItem, Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck,
     FileSeen, FileTransferItem, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
     InsertFileBundle, InsertMaterialisation, InsertRepositoryName, LocalRepository, MissingFile,
-    Path, RepoID, Repository, RepositoryMetadata, RepositoryName, Uid, VirtualFile,
+    Path, RepoID, RepositoryName, RepositorySyncState, SyncState, Uid, VirtualFile,
 };
 use crate::db::reduced;
 use crate::db::reduced::Reduced;
@@ -350,10 +350,12 @@ impl Database {
         Ok(())
     }
 
-    pub async fn select_repositories(&self) -> BoxStream<'static, Result<Repository, DBError>> {
+    pub async fn select_repository_sync_states(
+        &self,
+    ) -> BoxStream<'static, Result<RepositorySyncState, DBError>> {
         self.kv
-            .stream_repositories()
-            .map_ok(|(repo_id, m)| Repository {
+            .stream_repository_sync_states()
+            .map_ok(|(repo_id, m)| RepositorySyncState {
                 repo_id,
                 last_file_index: m.last_file_index,
                 last_blob_index: m.last_blob_index,
@@ -362,27 +364,35 @@ impl Database {
             .boxed()
     }
 
-    pub async fn merge_repositories(&self, s: BoxStream<'_, Repository>) -> Result<(), DBError> {
-        self.kv.apply_repositories(s.map(Ok).boxed()).await?;
+    pub async fn merge_repository_sync_states(
+        &self,
+        s: BoxStream<'_, RepositorySyncState>,
+    ) -> Result<(), DBError> {
+        self.kv
+            .apply_repository_sync_states(s.map(Ok).boxed())
+            .await?;
         Ok(())
     }
 
-    pub async fn lookup_repository(&self, repo_id: RepoID) -> Result<Repository, DBError> {
+    pub async fn lookup_repository_sync_state(
+        &self,
+        repo_id: RepoID,
+    ) -> Result<RepositorySyncState, DBError> {
         let c: Vec<_> = self
             .kv
-            .left_join_repositories(
+            .left_join_repository_sync_states(
                 stream::iter([Ok::<_, DBError>(repo_id.clone())]).boxed(),
                 |r| r,
             )
             .try_collect()
             .await?;
         let (_, rm) = c.into_iter().next().expect("at least one element");
-        let rm = rm.unwrap_or(RepositoryMetadata {
+        let rm = rm.unwrap_or(SyncState {
             last_file_index: None,
             last_blob_index: None,
             last_name_index: None,
         });
-        Ok(Repository {
+        Ok(RepositorySyncState {
             repo_id,
             last_file_index: rm.last_file_index,
             last_blob_index: rm.last_blob_index,
@@ -390,14 +400,14 @@ impl Database {
         })
     }
 
-    pub async fn update_last_indices(&self) -> Result<(), DBError> {
-        let tracer = Tracer::new_on("Database::update_last_indices");
+    pub async fn update_sync_state(&self) -> Result<(), DBError> {
+        let tracer = Tracer::new_on("Database::update_sync_state");
         let last_file_index = self.logs.files.watermark();
         let last_blob_index = self.logs.blobs.watermark();
         let last_name_index = self.logs.repository_names.watermark();
         self.kv
-            .apply_repositories(
-                stream::iter([Ok(Repository {
+            .apply_repository_sync_states(
+                stream::iter([Ok(RepositorySyncState {
                     repo_id: self.get_or_create_current_repository().await?.repo_id,
                     last_file_index: last_file_index.map(Into::into),
                     last_blob_index: last_blob_index.map(Into::into),

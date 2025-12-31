@@ -7,7 +7,7 @@ use crate::flightdeck::tracer::Tracer;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::parquet::{Parquet, ParquetRecord};
 use crate::repository::traits::{
-    Adder, Availability, LastIndices, LastIndicesSyncer, Local, Metadata, RcloneTargetPath,
+    Adder, Availability, LastSyncState, LastSyncStateSyncer, Local, Metadata, RcloneTargetPath,
     Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
 };
 use crate::utils::errors::InternalError;
@@ -33,7 +33,7 @@ const FILE_ID: &str = "id";
 const FILE_BLOB_STORE: &str = "blobs.parquet";
 const FILE_FILE_STORE: &str = "files.parquet";
 const FILE_REPOSITORY_NAME_STORE: &str = "repository_names.parquet";
-const FILE_REPOSITORY_STORE: &str = "repositories.parquet";
+const FILE_SYNC_STATE_STORE: &str = "sync_states.parquet";
 
 #[derive(Clone)]
 pub struct RCloneStore {
@@ -221,7 +221,7 @@ enum FileList {
     BlobStore,
     FileStore,
     RepositoryNameStore,
-    RepositoryStore,
+    SyncStateStore,
 }
 
 fn as_file_list(f: FileList) -> Vec<&'static str> {
@@ -231,13 +231,13 @@ fn as_file_list(f: FileList) -> Vec<&'static str> {
             FILE_BLOB_STORE,
             FILE_FILE_STORE,
             FILE_REPOSITORY_NAME_STORE,
-            FILE_REPOSITORY_STORE,
+            FILE_SYNC_STATE_STORE,
         ],
         FileList::ID => vec![FILE_ID],
         FileList::BlobStore => vec![FILE_BLOB_STORE],
         FileList::FileStore => vec![FILE_FILE_STORE],
         FileList::RepositoryNameStore => vec![FILE_REPOSITORY_NAME_STORE],
-        FileList::RepositoryStore => vec![FILE_REPOSITORY_STORE],
+        FileList::SyncStateStore => vec![FILE_SYNC_STATE_STORE],
     }
 }
 
@@ -488,26 +488,30 @@ impl Syncer<models::RepositoryName> for RCloneStore {
     }
 }
 
-impl Syncer<models::Repository> for RCloneStore {
+impl Syncer<models::RepositorySyncState> for RCloneStore {
     fn select(
         &self,
-        last_index: <models::Repository as SyncerParams>::Params,
-    ) -> BoxFuture<'_, BoxStream<'static, Result<models::Repository, InternalError>>> {
-        self.select_impl::<models::Repository>(last_index, FILE_REPOSITORY_STORE)
+        last_index: <models::RepositorySyncState as SyncerParams>::Params,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositorySyncState, InternalError>>> {
+        self.select_impl::<models::RepositorySyncState>(last_index, FILE_SYNC_STATE_STORE)
     }
 
     fn merge(
         &self,
-        s: BoxStream<'static, models::Repository>,
+        s: BoxStream<'static, models::RepositorySyncState>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        self.merge_impl::<models::Repository>(s, FILE_REPOSITORY_STORE, FileList::RepositoryStore)
+        self.merge_impl::<models::RepositorySyncState>(
+            s,
+            FILE_SYNC_STATE_STORE,
+            FileList::SyncStateStore,
+        )
     }
 }
 
-impl LastIndicesSyncer for RCloneStore {
-    fn lookup(&self, _repo_id: RepoID) -> BoxFuture<'_, Result<LastIndices, InternalError>> {
+impl LastSyncStateSyncer for RCloneStore {
+    fn lookup(&self, _repo_id: RepoID) -> BoxFuture<'_, Result<LastSyncState, InternalError>> {
         async move {
-            Ok(LastIndices {
+            Ok(LastSyncState {
                 file: None,
                 blob: None,
                 name: None,

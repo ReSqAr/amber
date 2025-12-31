@@ -9,7 +9,7 @@ pub struct CurrentRepositoryMetadataResponse {
     pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Repository {
+pub struct RepositorySyncState {
     #[prost(string, tag = "1")]
     pub repo_id: ::prost::alloc::string::String,
     #[prost(uint64, optional, tag = "2")]
@@ -59,7 +59,7 @@ pub struct RepositoryName {
     pub valid_from: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct MergeRepositoriesResponse {}
+pub struct MergeRepositorySyncStatesResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MergeFilesResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -85,7 +85,7 @@ pub struct LookupLastIndicesResponse {
     pub name: ::core::option::Option<u64>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SelectRepositoriesRequest {}
+pub struct SelectRepositorySyncStatesRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SelectFilesRequest {
     #[prost(uint64, optional, tag = "1")]
@@ -308,11 +308,13 @@ pub mod grpc_client {
                 .insert(GrpcMethod::new("grpc.Grpc", "CurrentRepositoryMetadata"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn merge_repositories(
+        pub async fn merge_repository_sync_states(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::Repository>,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::RepositorySyncState,
+            >,
         ) -> std::result::Result<
-            tonic::Response<super::MergeRepositoriesResponse>,
+            tonic::Response<super::MergeRepositorySyncStatesResponse>,
             tonic::Status,
         > {
             self.inner
@@ -325,11 +327,11 @@ pub mod grpc_client {
                 })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.Grpc/MergeRepositories",
+                "/grpc.Grpc/MergeRepositorySyncStates",
             );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.Grpc", "MergeRepositories"));
+                .insert(GrpcMethod::new("grpc.Grpc", "MergeRepositorySyncStates"));
             self.inner.client_streaming(req, path, codec).await
         }
         pub async fn merge_files(
@@ -446,11 +448,11 @@ pub mod grpc_client {
                 .insert(GrpcMethod::new("grpc.Grpc", "LookupLastIndices"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn select_repositories(
+        pub async fn select_repository_sync_states(
             &mut self,
-            request: impl tonic::IntoRequest<super::SelectRepositoriesRequest>,
+            request: impl tonic::IntoRequest<super::SelectRepositorySyncStatesRequest>,
         ) -> std::result::Result<
-            tonic::Response<tonic::codec::Streaming<super::Repository>>,
+            tonic::Response<tonic::codec::Streaming<super::RepositorySyncState>>,
             tonic::Status,
         > {
             self.inner
@@ -463,11 +465,11 @@ pub mod grpc_client {
                 })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.Grpc/SelectRepositories",
+                "/grpc.Grpc/SelectRepositorySyncStates",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.Grpc", "SelectRepositories"));
+                .insert(GrpcMethod::new("grpc.Grpc", "SelectRepositorySyncStates"));
             self.inner.server_streaming(req, path, codec).await
         }
         pub async fn select_files(
@@ -676,11 +678,11 @@ pub mod grpc_server {
             tonic::Response<super::CurrentRepositoryMetadataResponse>,
             tonic::Status,
         >;
-        async fn merge_repositories(
+        async fn merge_repository_sync_states(
             &self,
-            request: tonic::Request<tonic::Streaming<super::Repository>>,
+            request: tonic::Request<tonic::Streaming<super::RepositorySyncState>>,
         ) -> std::result::Result<
-            tonic::Response<super::MergeRepositoriesResponse>,
+            tonic::Response<super::MergeRepositorySyncStatesResponse>,
             tonic::Status,
         >;
         async fn merge_files(
@@ -718,17 +720,17 @@ pub mod grpc_server {
             tonic::Response<super::LookupLastIndicesResponse>,
             tonic::Status,
         >;
-        /// Server streaming response type for the SelectRepositories method.
-        type SelectRepositoriesStream: tonic::codegen::tokio_stream::Stream<
-                Item = std::result::Result<super::Repository, tonic::Status>,
+        /// Server streaming response type for the SelectRepositorySyncStates method.
+        type SelectRepositorySyncStatesStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::RepositorySyncState, tonic::Status>,
             >
             + std::marker::Send
             + 'static;
-        async fn select_repositories(
+        async fn select_repository_sync_states(
             &self,
-            request: tonic::Request<super::SelectRepositoriesRequest>,
+            request: tonic::Request<super::SelectRepositorySyncStatesRequest>,
         ) -> std::result::Result<
-            tonic::Response<Self::SelectRepositoriesStream>,
+            tonic::Response<Self::SelectRepositorySyncStatesStream>,
             tonic::Status,
         >;
         /// Server streaming response type for the SelectFiles method.
@@ -943,25 +945,28 @@ pub mod grpc_server {
                     };
                     Box::pin(fut)
                 }
-                "/grpc.Grpc/MergeRepositories" => {
+                "/grpc.Grpc/MergeRepositorySyncStates" => {
                     #[allow(non_camel_case_types)]
-                    struct MergeRepositoriesSvc<T: Grpc>(pub Arc<T>);
+                    struct MergeRepositorySyncStatesSvc<T: Grpc>(pub Arc<T>);
                     impl<
                         T: Grpc,
-                    > tonic::server::ClientStreamingService<super::Repository>
-                    for MergeRepositoriesSvc<T> {
-                        type Response = super::MergeRepositoriesResponse;
+                    > tonic::server::ClientStreamingService<super::RepositorySyncState>
+                    for MergeRepositorySyncStatesSvc<T> {
+                        type Response = super::MergeRepositorySyncStatesResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<tonic::Streaming<super::Repository>>,
+                            request: tonic::Request<
+                                tonic::Streaming<super::RepositorySyncState>,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Grpc>::merge_repositories(&inner, request).await
+                                <T as Grpc>::merge_repository_sync_states(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -972,7 +977,7 @@ pub mod grpc_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = MergeRepositoriesSvc(inner);
+                        let method = MergeRepositorySyncStatesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -1211,27 +1216,30 @@ pub mod grpc_server {
                     };
                     Box::pin(fut)
                 }
-                "/grpc.Grpc/SelectRepositories" => {
+                "/grpc.Grpc/SelectRepositorySyncStates" => {
                     #[allow(non_camel_case_types)]
-                    struct SelectRepositoriesSvc<T: Grpc>(pub Arc<T>);
+                    struct SelectRepositorySyncStatesSvc<T: Grpc>(pub Arc<T>);
                     impl<
                         T: Grpc,
                     > tonic::server::ServerStreamingService<
-                        super::SelectRepositoriesRequest,
-                    > for SelectRepositoriesSvc<T> {
-                        type Response = super::Repository;
-                        type ResponseStream = T::SelectRepositoriesStream;
+                        super::SelectRepositorySyncStatesRequest,
+                    > for SelectRepositorySyncStatesSvc<T> {
+                        type Response = super::RepositorySyncState;
+                        type ResponseStream = T::SelectRepositorySyncStatesStream;
                         type Future = BoxFuture<
                             tonic::Response<Self::ResponseStream>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SelectRepositoriesRequest>,
+                            request: tonic::Request<
+                                super::SelectRepositorySyncStatesRequest,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Grpc>::select_repositories(&inner, request).await
+                                <T as Grpc>::select_repository_sync_states(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1242,7 +1250,7 @@ pub mod grpc_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SelectRepositoriesSvc(inner);
+                        let method = SelectRepositorySyncStatesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -246,7 +246,7 @@ pub struct LocalRepository {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RepositoryMetadata {
+pub struct SyncState {
     pub last_file_index: Option<u64>,
     pub last_blob_index: Option<u64>,
     pub last_name_index: Option<u64>,
@@ -430,7 +430,7 @@ impl VirtualFile {
 }
 
 #[derive(Debug, Clone)]
-pub struct Repository {
+pub struct RepositorySyncState {
     pub repo_id: RepoID,
     pub last_file_index: Option<u64>,
     pub last_blob_index: Option<u64>,

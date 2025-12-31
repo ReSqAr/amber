@@ -1,5 +1,5 @@
 use crate::db::models::{
-    Blob, BlobID, File, Path as ModelPath, RepoID, Repository, RepositoryName, Uid,
+    Blob, BlobID, File, Path as ModelPath, RepoID, RepositoryName, RepositorySyncState, Uid,
 };
 use crate::repository::traits::{Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
@@ -513,7 +513,7 @@ impl ParquetRecord for RepositoryName {
     }
 }
 
-impl ParquetRecord for Repository {
+impl ParquetRecord for RepositorySyncState {
     fn schema() -> SchemaRef {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
@@ -593,7 +593,7 @@ impl ParquetRecord for Repository {
                 return Err(InternalError::Stream("unexpected null: repo_id".into()));
             }
 
-            out.push(Repository {
+            out.push(RepositorySyncState {
                 repo_id: RepoID(repo_id.value(row).to_string()),
                 last_file_index: if last_file.is_null(row) {
                     None
@@ -735,9 +735,9 @@ mod tests {
     async fn parquet_repository_round_trip() -> Result<(), InternalError> {
         let temp = tempdir().map_err(InternalError::IO)?;
         let path = RepoPath::from_root(temp.path()).join("repositories.parquet");
-        let parquet = Parquet::<Repository>::new(path);
+        let parquet = Parquet::<RepositorySyncState>::new(path);
 
-        let item = Repository {
+        let item = RepositorySyncState {
             repo_id: RepoID("repo".to_string()),
             last_file_index: Some(1),
             last_blob_index: None,
