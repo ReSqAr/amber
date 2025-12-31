@@ -1,4 +1,4 @@
-use crate::db::models::{Blob, File, RepositoryName, RepositorySyncState};
+use crate::db::models::{Blob, File, RepositoryMetadata, RepositorySyncState};
 use crate::flightdeck::base::BaseObserver;
 use crate::flightdeck::observation::Value;
 use crate::flightdeck::tracer::Tracer;
@@ -67,7 +67,7 @@ where
         + Syncer<RepositorySyncState>
         + Syncer<File>
         + Syncer<Blob>
-        + Syncer<RepositoryName>
+        + Syncer<RepositoryMetadata>
         + Clone
         + Send
         + Sync,
@@ -76,7 +76,7 @@ where
         + Syncer<RepositorySyncState>
         + Syncer<File>
         + Syncer<Blob>
-        + Syncer<RepositoryName>
+        + Syncer<RepositoryMetadata>
         + Clone
         + Send
         + Sync,
@@ -168,12 +168,12 @@ where
         Ok::<_, InternalError>(())
     };
 
-    let repository_names = async {
-        let mut o = BaseObserver::with_id("sync::table", "repository names");
+    let repository_metadata = async {
+        let mut o = BaseObserver::with_id("sync::table", "repository metadata");
         let start = Instant::now();
         let created_at = chrono::Utc::now();
 
-        sync_table::<RepositoryName, _, _>(
+        sync_table::<RepositoryMetadata, _, _>(
             local,
             local_last_indices.name,
             remote,
@@ -201,10 +201,10 @@ where
         Ok(())
     };
 
-    try_join!(blobs_then_files, repository_names)?;
+    try_join!(blobs_then_files, repository_metadata)?;
 
     {
-        let mut o = BaseObserver::with_id("sync::table", "repositories");
+        let mut o = BaseObserver::with_id("sync::table", "repository sync states");
         let start = Instant::now();
         let created_at = chrono::Utc::now();
         try_join!(remote.refresh(), local.refresh())?;

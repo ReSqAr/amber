@@ -6,16 +6,16 @@ use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    FilesWithAvailability, MissingFile, RepoID, RepositoryName, RepositorySyncState, SizedBlobID,
-    VirtualFile,
+    FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata, RepositorySyncState,
+    SizedBlobID, VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, ConnectionManager, LastSyncState, LastSyncStateSyncer,
-    Local, Metadata, RcloneTargetPath, Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
-    TransferItem, VirtualFilesystem,
+    Local, Metadata, RcloneTargetPath, Receiver, RepositoryCurrentMetadata, Sender, Syncer,
+    SyncerParams, TransferItem, VirtualFilesystem,
 };
 use crate::utils::errors::{AppError, InternalError};
 use crate::utils::fs::{Capability, capability_check, link};
@@ -204,8 +204,8 @@ impl LocalRepository {
             .await
             .expect("failed to create repo id");
 
-        db.add_repository_names(
-            stream::iter([models::InsertRepositoryName {
+        db.add_repository_metadata(
+            stream::iter([models::InsertRepositoryMetadata {
                 repo_id: repo.repo_id.clone(),
                 name: name.clone(),
                 valid_from: chrono::Utc::now(),
@@ -317,14 +317,16 @@ impl Config for LocalRepository {
 }
 
 impl Metadata for LocalRepository {
-    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryCurrentMetadata, InternalError>> {
         let db = self.db.clone();
         let repo_id = self.repo_id.clone();
         Box::pin(async move {
-            let name = db.lookup_current_repository_name(repo_id.clone()).await?;
-            Ok(RepositoryMetadata {
+            let meta = db
+                .lookup_current_repository_metadata(repo_id.clone())
+                .await?;
+            Ok(RepositoryCurrentMetadata {
                 id: repo_id.clone(),
-                name: name.unwrap_or("-".into()),
+                name: meta.map(|m| m.name).unwrap_or("-".into()),
             })
         })
     }
@@ -390,12 +392,12 @@ impl Adder for LocalRepository {
         async move { db.add_file_bundles(s).await }.boxed()
     }
 
-    fn add_repository_names<'a>(
+    fn add_repository_metadata<'a>(
         &'a self,
-        s: BoxStream<'a, models::InsertRepositoryName>,
+        s: BoxStream<'a, models::InsertRepositoryMetadata>,
     ) -> BoxFuture<'a, Result<u64, DBError>> {
         let db = self.db.clone();
-        async move { db.add_repository_names(s).await }.boxed()
+        async move { db.add_repository_metadata(s).await }.boxed()
     }
 
     fn add_materialisation<'a>(
@@ -499,18 +501,18 @@ impl Syncer<Blob> for LocalRepository {
     }
 }
 
-impl SyncerParams for RepositoryName {
+impl SyncerParams for RepositoryMetadata {
     type Params = Option<u64>;
 }
 
-impl Syncer<RepositoryName> for LocalRepository {
+impl Syncer<RepositoryMetadata> for LocalRepository {
     fn select(
         &self,
         last_index: Option<u64>,
-    ) -> BoxFuture<'_, BoxStream<'static, Result<RepositoryName, InternalError>>> {
+    ) -> BoxFuture<'_, BoxStream<'static, Result<RepositoryMetadata, InternalError>>> {
         let db = self.db.clone();
         async move {
-            db.select_repository_names(last_index)
+            db.select_repository_metadata(last_index)
                 .await
                 .err_into()
                 .boxed()
@@ -520,9 +522,9 @@ impl Syncer<RepositoryName> for LocalRepository {
 
     fn merge(
         &self,
-        s: BoxStream<'static, RepositoryName>,
+        s: BoxStream<'static, RepositoryMetadata>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        self.db.merge_repository_names(s).err_into().boxed()
+        self.db.merge_repository_metadata(s).err_into().boxed()
     }
 }
 

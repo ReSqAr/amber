@@ -36,7 +36,7 @@ message Blob {
     google.protobuf.Timestamp valid_from = 7;
 }
 
-message RepositoryName {
+message RepositoryMetadata {
     uint64 uid = 1;
     string repo_id = 2;
     string name = 3;
@@ -46,7 +46,7 @@ message RepositoryName {
 message MergeRepositorySyncStatesResponse {}
 message MergeFilesResponse {}
 message MergeBlobsResponse {}
-message MergeRepositoryNamesResponse {}
+message MergeRepositoryMetadataResponse {}
 
 message UpdateLastIndicesRequest {}
 message UpdateLastIndicesResponse {}
@@ -67,7 +67,7 @@ message SelectFilesRequest {
 message SelectBlobsRequest {
     optional uint64 last_index = 1;
 }
-message SelectRepositoryNamesRequest {
+message SelectRepositoryMetadataRequest {
     optional uint64 last_index = 1;
 }
 
@@ -132,14 +132,14 @@ service Grpc {
   rpc MergeRepositorySyncStates (stream RepositorySyncState) returns (MergeRepositorySyncStatesResponse);
   rpc MergeFiles (stream File) returns (MergeFilesResponse);
   rpc MergeBlobs (stream Blob) returns (MergeBlobsResponse);
-  rpc MergeRepositoryNames (stream RepositoryName) returns (MergeRepositoryNamesResponse);
+  rpc MergeRepositoryMetadata (stream RepositoryMetadata) returns (MergeRepositoryMetadataResponse);
   rpc UpdateLastIndices (UpdateLastIndicesRequest) returns (UpdateLastIndicesResponse);
 
   rpc LookupLastIndices (LookupLastIndicesRequest) returns (LookupLastIndicesResponse);
   rpc SelectRepositorySyncStates (SelectRepositorySyncStatesRequest) returns (stream RepositorySyncState);
   rpc SelectFiles (SelectFilesRequest) returns (stream File);
   rpc SelectBlobs (SelectBlobsRequest) returns (stream Blob);
-  rpc SelectRepositoryNames (SelectRepositoryNamesRequest) returns (stream RepositoryName);
+  rpc SelectRepositoryMetadata (SelectRepositoryMetadataRequest) returns (stream RepositoryMetadata);
 
   rpc RclonePath(RclonePathRequest) returns (RclonePathResponse);
   rpc PrepareTransfer(stream TransferItem) returns (PrepareTransferResponse);

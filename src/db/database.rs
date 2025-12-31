@@ -4,8 +4,9 @@ use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobMeta, BlobRef, BlobState,
     BlobTransferItem, Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck,
     FileSeen, FileTransferItem, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
-    InsertFileBundle, InsertMaterialisation, InsertRepositoryName, LocalRepository, MissingFile,
-    Path, RepoID, RepositoryName, RepositorySyncState, SyncState, Uid, VirtualFile,
+    InsertFileBundle, InsertMaterialisation, InsertRepositoryMetadata, LocalRepository,
+    LogRepositoryMetadata, MissingFile, Path, RepoID, RepositoryMetadata, RepositorySyncState,
+    SyncState, Uid, VirtualFile,
 };
 use crate::db::reduced;
 use crate::db::reduced::Reduced;
@@ -50,7 +51,7 @@ impl Database {
             Ok::<_, DBError>(())
         };
         let rn = async {
-            let txn = self.logs.repository_names.transaction().await?;
+            let txn = self.logs.repository_metadata.transaction().await?;
             txn.close().await?;
             Ok::<_, DBError>(())
         };
@@ -90,19 +91,19 @@ impl Database {
         }
     }
 
-    pub async fn lookup_current_repository_name(
+    pub async fn lookup_current_repository_metadata(
         &self,
         repo_id: RepoID,
-    ) -> Result<Option<String>, DBError> {
+    ) -> Result<Option<LogRepositoryMetadata>, DBError> {
         let s = self
             .logs
-            .repository_names
+            .repository_metadata
             .left_join_current(stream::iter(vec![Ok::<_, DBError>(repo_id)]).boxed(), |r| r);
         let r: Vec<_> = s.collect().await;
 
         assert_eq!(r.len(), 1, "expected precisely 1 repository lookup result");
         let (_, result) = r.into_iter().next().unwrap()?;
-        Ok(result.map(|(r, _)| r.name))
+        Ok(result.map(|(r, _)| r))
     }
 
     pub async fn add_blobs(&self, s: BoxStream<'_, InsertBlob>) -> Result<u64, DBError> {
@@ -185,9 +186,9 @@ impl Database {
         Ok(c)
     }
 
-    pub async fn add_repository_names(
+    pub async fn add_repository_metadata(
         &self,
-        s: BoxStream<'_, InsertRepositoryName>,
+        s: BoxStream<'_, InsertRepositoryMetadata>,
     ) -> Result<u64, DBError> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -199,8 +200,8 @@ impl Database {
 
         reduced::add(
             s.boxed(),
-            self.logs.repository_names.transaction().await?,
-            self.logs.repository_names.name().clone(),
+            self.logs.repository_metadata.transaction().await?,
+            self.logs.repository_metadata.name().clone(),
             self.logs.flush_size,
         )
         .await
@@ -250,14 +251,14 @@ impl Database {
             .boxed()
     }
 
-    pub async fn select_repository_names(
+    pub async fn select_repository_metadata(
         &self,
         last_index: Option<u64>,
-    ) -> BoxStream<'static, Result<RepositoryName, DBError>> {
-        let watermark = self.logs.repository_names.watermark();
+    ) -> BoxStream<'static, Result<RepositoryMetadata, DBError>> {
+        let watermark = self.logs.repository_metadata.watermark();
         let from = Self::next_offset(last_index);
         self.logs
-            .repository_names
+            .repository_metadata
             .select(from)
             .await
             .take_while(move |r| {
@@ -268,7 +269,7 @@ impl Database {
             })
             .map_ok(|(_, t)| t.into())
             .boxed()
-            .track("db::select_repository_names")
+            .track("db::select_repository_metadata")
             .boxed()
     }
 
@@ -322,17 +323,17 @@ impl Database {
         Ok(())
     }
 
-    pub async fn merge_repository_names(
+    pub async fn merge_repository_metadata(
         &self,
-        s: BoxStream<'static, RepositoryName>,
+        s: BoxStream<'static, RepositoryMetadata>,
     ) -> Result<(), DBError> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = TokioStreamExt::map(s, Ok);
         let s = self
             .logs
-            .repository_names
-            .left_join_known_uids(s.boxed(), |rn: RepositoryName| rn.uid)
+            .repository_metadata
+            .left_join_known_uids(s.boxed(), |rn: RepositoryMetadata| rn.uid)
             .boxed();
         let s = TokioStreamExt::filter_map(s, |e| match e {
             Ok((_, UidState::Known)) => None,
@@ -342,8 +343,8 @@ impl Database {
 
         reduced::add(
             s.boxed(),
-            self.logs.repository_names.transaction().await?,
-            self.logs.repository_names.name().clone(),
+            self.logs.repository_metadata.transaction().await?,
+            self.logs.repository_metadata.name().clone(),
             self.logs.flush_size,
         )
         .await?;
@@ -404,7 +405,7 @@ impl Database {
         let tracer = Tracer::new_on("Database::update_sync_state");
         let last_file_index = self.logs.files.watermark();
         let last_blob_index = self.logs.blobs.watermark();
-        let last_name_index = self.logs.repository_names.watermark();
+        let last_name_index = self.logs.repository_metadata.watermark();
         self.kv
             .apply_repository_sync_states(
                 stream::iter([Ok(RepositorySyncState {
@@ -616,7 +617,7 @@ impl Database {
     ) -> BoxStream<'static, Result<BlobAssociatedToFiles, DBError>> {
         let repo_names: HashMap<_, _> = match self
             .logs
-            .repository_names
+            .repository_metadata
             .current()
             .map(|e| e.map(|(k, v, _)| (k, v.name)))
             .try_collect()

@@ -1,5 +1,7 @@
 use crate::db::error::DBError;
-use crate::db::models::{BlobMeta, BlobRef, FileBlobID, HasBlob, LogRepositoryName, Path, RepoID};
+use crate::db::models::{
+    BlobMeta, BlobRef, FileBlobID, HasBlob, LogRepositoryMetadata, Path, RepoID,
+};
 use crate::db::stores::reduced;
 use crate::db::stores::reduced::{Always, TransactionLike};
 use crate::flightdeck::tracer::Tracer;
@@ -12,7 +14,7 @@ use std::path::PathBuf;
 pub(crate) struct Reduced {
     pub(crate) blobs: reduced::Store<BlobRef, BlobMeta, HasBlob>,
     pub(crate) files: reduced::Store<Path, (), FileBlobID>,
-    pub(crate) repository_names: reduced::Store<RepoID, LogRepositoryName, Always>,
+    pub(crate) repository_metadata: reduced::Store<RepoID, LogRepositoryMetadata, Always>,
     pub(crate) flush_size: usize,
 }
 
@@ -24,16 +26,16 @@ impl Reduced {
         let b = reduced::Store::open("blobs".to_string(), b_path);
         let f_path = base_path.join("files");
         let f = reduced::Store::open("files".to_string(), f_path);
-        let rn_path = base_path.join("repository_names");
-        let rn = reduced::Store::open("repository_names".to_string(), rn_path);
+        let rm_path = base_path.join("repository_metadata");
+        let rm = reduced::Store::open("repository_metadata".to_string(), rm_path);
 
-        let (b, f, rn) = tokio::try_join!(b, f, rn)?;
+        let (b, f, rm) = tokio::try_join!(b, f, rm)?;
         tracer.measure();
 
         Ok(Self {
             blobs: b,
             files: f,
-            repository_names: rn,
+            repository_metadata: rm,
             flush_size: 10000,
         })
     }
@@ -42,7 +44,7 @@ impl Reduced {
         try_join!(
             self.blobs.close(),
             self.files.close(),
-            self.repository_names.close(),
+            self.repository_metadata.close(),
         )?;
         Ok(())
     }
@@ -51,7 +53,7 @@ impl Reduced {
         try_join!(
             self.blobs.compact(),
             self.files.compact(),
-            self.repository_names.compact(),
+            self.repository_metadata.compact(),
         )?;
         Ok(())
     }

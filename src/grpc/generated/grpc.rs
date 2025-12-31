@@ -48,7 +48,7 @@ pub struct Blob {
     pub valid_from: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct RepositoryName {
+pub struct RepositoryMetadata {
     #[prost(uint64, tag = "1")]
     pub uid: u64,
     #[prost(string, tag = "2")]
@@ -65,7 +65,7 @@ pub struct MergeFilesResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MergeBlobsResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct MergeRepositoryNamesResponse {}
+pub struct MergeRepositoryMetadataResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateLastIndicesRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -97,7 +97,7 @@ pub struct SelectBlobsRequest {
     pub last_index: ::core::option::Option<u64>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SelectRepositoryNamesRequest {
+pub struct SelectRepositoryMetadataRequest {
     #[prost(uint64, optional, tag = "1")]
     pub last_index: ::core::option::Option<u64>,
 }
@@ -376,11 +376,13 @@ pub mod grpc_client {
             req.extensions_mut().insert(GrpcMethod::new("grpc.Grpc", "MergeBlobs"));
             self.inner.client_streaming(req, path, codec).await
         }
-        pub async fn merge_repository_names(
+        pub async fn merge_repository_metadata(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::RepositoryName>,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::RepositoryMetadata,
+            >,
         ) -> std::result::Result<
-            tonic::Response<super::MergeRepositoryNamesResponse>,
+            tonic::Response<super::MergeRepositoryMetadataResponse>,
             tonic::Status,
         > {
             self.inner
@@ -393,11 +395,11 @@ pub mod grpc_client {
                 })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.Grpc/MergeRepositoryNames",
+                "/grpc.Grpc/MergeRepositoryMetadata",
             );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.Grpc", "MergeRepositoryNames"));
+                .insert(GrpcMethod::new("grpc.Grpc", "MergeRepositoryMetadata"));
             self.inner.client_streaming(req, path, codec).await
         }
         pub async fn update_last_indices(
@@ -514,11 +516,11 @@ pub mod grpc_client {
             req.extensions_mut().insert(GrpcMethod::new("grpc.Grpc", "SelectBlobs"));
             self.inner.server_streaming(req, path, codec).await
         }
-        pub async fn select_repository_names(
+        pub async fn select_repository_metadata(
             &mut self,
-            request: impl tonic::IntoRequest<super::SelectRepositoryNamesRequest>,
+            request: impl tonic::IntoRequest<super::SelectRepositoryMetadataRequest>,
         ) -> std::result::Result<
-            tonic::Response<tonic::codec::Streaming<super::RepositoryName>>,
+            tonic::Response<tonic::codec::Streaming<super::RepositoryMetadata>>,
             tonic::Status,
         > {
             self.inner
@@ -531,11 +533,11 @@ pub mod grpc_client {
                 })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.Grpc/SelectRepositoryNames",
+                "/grpc.Grpc/SelectRepositoryMetadata",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.Grpc", "SelectRepositoryNames"));
+                .insert(GrpcMethod::new("grpc.Grpc", "SelectRepositoryMetadata"));
             self.inner.server_streaming(req, path, codec).await
         }
         pub async fn rclone_path(
@@ -699,11 +701,11 @@ pub mod grpc_server {
             tonic::Response<super::MergeBlobsResponse>,
             tonic::Status,
         >;
-        async fn merge_repository_names(
+        async fn merge_repository_metadata(
             &self,
-            request: tonic::Request<tonic::Streaming<super::RepositoryName>>,
+            request: tonic::Request<tonic::Streaming<super::RepositoryMetadata>>,
         ) -> std::result::Result<
-            tonic::Response<super::MergeRepositoryNamesResponse>,
+            tonic::Response<super::MergeRepositoryMetadataResponse>,
             tonic::Status,
         >;
         async fn update_last_indices(
@@ -759,17 +761,17 @@ pub mod grpc_server {
             tonic::Response<Self::SelectBlobsStream>,
             tonic::Status,
         >;
-        /// Server streaming response type for the SelectRepositoryNames method.
-        type SelectRepositoryNamesStream: tonic::codegen::tokio_stream::Stream<
-                Item = std::result::Result<super::RepositoryName, tonic::Status>,
+        /// Server streaming response type for the SelectRepositoryMetadata method.
+        type SelectRepositoryMetadataStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::RepositoryMetadata, tonic::Status>,
             >
             + std::marker::Send
             + 'static;
-        async fn select_repository_names(
+        async fn select_repository_metadata(
             &self,
-            request: tonic::Request<super::SelectRepositoryNamesRequest>,
+            request: tonic::Request<super::SelectRepositoryMetadataRequest>,
         ) -> std::result::Result<
-            tonic::Response<Self::SelectRepositoryNamesStream>,
+            tonic::Response<Self::SelectRepositoryMetadataStream>,
             tonic::Status,
         >;
         async fn rclone_path(
@@ -1079,14 +1081,14 @@ pub mod grpc_server {
                     };
                     Box::pin(fut)
                 }
-                "/grpc.Grpc/MergeRepositoryNames" => {
+                "/grpc.Grpc/MergeRepositoryMetadata" => {
                     #[allow(non_camel_case_types)]
-                    struct MergeRepositoryNamesSvc<T: Grpc>(pub Arc<T>);
+                    struct MergeRepositoryMetadataSvc<T: Grpc>(pub Arc<T>);
                     impl<
                         T: Grpc,
-                    > tonic::server::ClientStreamingService<super::RepositoryName>
-                    for MergeRepositoryNamesSvc<T> {
-                        type Response = super::MergeRepositoryNamesResponse;
+                    > tonic::server::ClientStreamingService<super::RepositoryMetadata>
+                    for MergeRepositoryMetadataSvc<T> {
+                        type Response = super::MergeRepositoryMetadataResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
@@ -1094,12 +1096,13 @@ pub mod grpc_server {
                         fn call(
                             &mut self,
                             request: tonic::Request<
-                                tonic::Streaming<super::RepositoryName>,
+                                tonic::Streaming<super::RepositoryMetadata>,
                             >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Grpc>::merge_repository_names(&inner, request).await
+                                <T as Grpc>::merge_repository_metadata(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1110,7 +1113,7 @@ pub mod grpc_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = MergeRepositoryNamesSvc(inner);
+                        let method = MergeRepositoryMetadataSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -1358,27 +1361,30 @@ pub mod grpc_server {
                     };
                     Box::pin(fut)
                 }
-                "/grpc.Grpc/SelectRepositoryNames" => {
+                "/grpc.Grpc/SelectRepositoryMetadata" => {
                     #[allow(non_camel_case_types)]
-                    struct SelectRepositoryNamesSvc<T: Grpc>(pub Arc<T>);
+                    struct SelectRepositoryMetadataSvc<T: Grpc>(pub Arc<T>);
                     impl<
                         T: Grpc,
                     > tonic::server::ServerStreamingService<
-                        super::SelectRepositoryNamesRequest,
-                    > for SelectRepositoryNamesSvc<T> {
-                        type Response = super::RepositoryName;
-                        type ResponseStream = T::SelectRepositoryNamesStream;
+                        super::SelectRepositoryMetadataRequest,
+                    > for SelectRepositoryMetadataSvc<T> {
+                        type Response = super::RepositoryMetadata;
+                        type ResponseStream = T::SelectRepositoryMetadataStream;
                         type Future = BoxFuture<
                             tonic::Response<Self::ResponseStream>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SelectRepositoryNamesRequest>,
+                            request: tonic::Request<
+                                super::SelectRepositoryMetadataRequest,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Grpc>::select_repository_names(&inner, request).await
+                                <T as Grpc>::select_repository_metadata(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1389,7 +1395,7 @@ pub mod grpc_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SelectRepositoryNamesSvc(inner);
+                        let method = SelectRepositoryMetadataSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

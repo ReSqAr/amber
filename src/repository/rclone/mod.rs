@@ -1,14 +1,14 @@
 use crate::db::models;
 use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem,
-    FilesWithAvailability, InsertBlob, InsertRepositoryName, RepoID,
+    FilesWithAvailability, InsertBlob, InsertRepositoryMetadata, RepoID,
 };
 use crate::flightdeck::tracer::Tracer;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::parquet::{Parquet, ParquetRecord};
 use crate::repository::traits::{
     Adder, Availability, LastSyncState, LastSyncStateSyncer, Local, Metadata, RcloneTargetPath,
-    Receiver, RepositoryMetadata, Sender, Syncer, SyncerParams,
+    Receiver, RepositoryCurrentMetadata, Sender, Syncer, SyncerParams,
 };
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
@@ -32,7 +32,7 @@ const FILES: &str = "files";
 const FILE_ID: &str = "id";
 const FILE_BLOB_STORE: &str = "blobs.parquet";
 const FILE_FILE_STORE: &str = "files.parquet";
-const FILE_REPOSITORY_NAME_STORE: &str = "repository_names.parquet";
+const FILE_REPOSITORY_METADATA_STORE: &str = "repository_metadata.parquet";
 const FILE_SYNC_STATE_STORE: &str = "sync_states.parquet";
 
 #[derive(Clone)]
@@ -100,8 +100,8 @@ impl RCloneStore {
             let repo_id = RepoID(repo_id);
             local
                 .db()
-                .add_repository_names(
-                    stream::iter([InsertRepositoryName {
+                .add_repository_metadata(
+                    stream::iter([InsertRepositoryMetadata {
                         repo_id: repo_id.clone(),
                         name: name.into(),
                         valid_from: chrono::Utc::now(),
@@ -220,7 +220,7 @@ enum FileList {
     ID,
     BlobStore,
     FileStore,
-    RepositoryNameStore,
+    RepositoryMetadataStore,
     SyncStateStore,
 }
 
@@ -230,13 +230,13 @@ fn as_file_list(f: FileList) -> Vec<&'static str> {
             FILE_ID,
             FILE_BLOB_STORE,
             FILE_FILE_STORE,
-            FILE_REPOSITORY_NAME_STORE,
+            FILE_REPOSITORY_METADATA_STORE,
             FILE_SYNC_STATE_STORE,
         ],
         FileList::ID => vec![FILE_ID],
         FileList::BlobStore => vec![FILE_BLOB_STORE],
         FileList::FileStore => vec![FILE_FILE_STORE],
-        FileList::RepositoryNameStore => vec![FILE_REPOSITORY_NAME_STORE],
+        FileList::RepositoryMetadataStore => vec![FILE_REPOSITORY_METADATA_STORE],
         FileList::SyncStateStore => vec![FILE_SYNC_STATE_STORE],
     }
 }
@@ -266,8 +266,8 @@ impl RCloneTarget for Target {
 }
 
 impl Metadata for RCloneStore {
-    fn current(&self) -> BoxFuture<'_, Result<RepositoryMetadata, InternalError>> {
-        let meta = RepositoryMetadata {
+    fn current(&self) -> BoxFuture<'_, Result<RepositoryCurrentMetadata, InternalError>> {
+        let meta = RepositoryCurrentMetadata {
             id: self.repo_id.clone(),
             name: self.name.clone(),
         };
@@ -468,22 +468,22 @@ impl Syncer<models::File> for RCloneStore {
     }
 }
 
-impl Syncer<models::RepositoryName> for RCloneStore {
+impl Syncer<models::RepositoryMetadata> for RCloneStore {
     fn select(
         &self,
-        last_index: <models::RepositoryName as SyncerParams>::Params,
-    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryName, InternalError>>> {
-        self.select_impl::<models::RepositoryName>(last_index, FILE_REPOSITORY_NAME_STORE)
+        last_index: <models::RepositoryMetadata as SyncerParams>::Params,
+    ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryMetadata, InternalError>>> {
+        self.select_impl::<models::RepositoryMetadata>(last_index, FILE_REPOSITORY_METADATA_STORE)
     }
 
     fn merge(
         &self,
-        s: BoxStream<'static, models::RepositoryName>,
+        s: BoxStream<'static, models::RepositoryMetadata>,
     ) -> BoxFuture<'_, Result<(), InternalError>> {
-        self.merge_impl::<models::RepositoryName>(
+        self.merge_impl::<models::RepositoryMetadata>(
             s,
-            FILE_REPOSITORY_NAME_STORE,
-            FileList::RepositoryNameStore,
+            FILE_REPOSITORY_METADATA_STORE,
+            FileList::RepositoryMetadataStore,
         )
     }
 }
