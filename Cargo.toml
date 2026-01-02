@@ -96,3 +96,6 @@ fallible_impl_from = "deny"
 wildcard_enum_match_arm = "deny"
 fn_params_excessive_bools = "deny"
 must_use_candidate = "deny"
+
+[lints.rust]
+unsafe_code = "forbid"
