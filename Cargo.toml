@@ -15,7 +15,7 @@ async-trait = "0"
 backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
 blake3 = "1"
-arrow-array = "51"
+arrow-array = "57"
 arrow-schema = "51"
 chrono = { version = "0", features = ["serde"] }
 cipher = { version = "0.4", features = ["rand_core"] }
