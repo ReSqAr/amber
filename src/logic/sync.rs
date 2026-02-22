@@ -29,15 +29,13 @@ where
     L: Syncer<I> + Send + Sync,
     R: Syncer<I> + Send + Sync,
 {
-    let local_stream = local.select(local_param).await;
-    let remote_stream = remote.select(remote_param).await;
-
     try_join!(
         async {
             if !matches!(mode, Mode::UploadOnly | Mode::Bidirectional) {
                 return Ok(());
             }
 
+            let local_stream = local.select(local_param).await;
             local_stream
                 .try_forward_into::<_, _, _, _, InternalError>(|s| remote.merge(s.boxed()))
                 .await?;
@@ -49,6 +47,7 @@ where
                 return Ok(());
             }
 
+            let remote_stream = remote.select(remote_param).await;
             remote_stream
                 .try_forward_into::<_, _, _, _, InternalError>(|s| local.merge(s.boxed()))
                 .await?;
