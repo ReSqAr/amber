@@ -10,7 +10,7 @@ use crate::utils::fs::Capability;
 use crate::utils::port;
 use futures_core::future::BoxFuture;
 use log::debug;
-use rand::Rng;
+use rand::RngExt;
 use rand::distr::Alphanumeric;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

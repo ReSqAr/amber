@@ -19,7 +19,7 @@ use crate::utils::rclone::{
 use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
-use rand::Rng;
+use rand::RngExt;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;

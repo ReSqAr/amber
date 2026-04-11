@@ -6,7 +6,7 @@ use crate::utils::rclone::{ConfigSection, RCloneTarget};
 use base64::Engine;
 use cipher::{KeyIvInit, StreamCipher};
 use log::{debug, error, info};
-use rand::Rng;
+use rand::RngExt;
 use rand::distr::Alphanumeric;
 use russh::client::AuthResult;
 use russh::keys::Algorithm;
@@ -215,7 +215,8 @@ async fn setup_app_via_ssh(
             let mut authenticated = false;
             let hash_alg = session.best_supported_rsa_hash().await?.flatten();
             let identity_len = identities.len();
-            for pubkey in identities {
+            for identity in identities {
+                let pubkey = identity.public_key().into_owned();
                 let hash_alg = match pubkey.algorithm() {
                     Algorithm::Dsa | Algorithm::Rsa { .. } => hash_alg,
                     Algorithm::Ecdsa { .. }

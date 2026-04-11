@@ -7,7 +7,7 @@ use crate::utils::errors::InternalError;
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
-use rand::Rng;
+use rand::RngExt;
 
 #[derive(Clone)]
 struct InsertBlob(models::BlobID);

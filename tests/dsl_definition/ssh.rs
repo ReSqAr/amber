@@ -1,7 +1,6 @@
 use crate::dsl_definition::writer::ChannelWriter;
 use amber::commands::serve;
 use amber::flightdeck::output::Output;
-use cipher::crypto_common::rand_core::OsRng;
 use futures::FutureExt;
 use futures_core::future::BoxFuture;
 use once_cell::sync::Lazy;
@@ -170,11 +169,11 @@ impl Handler for SshSession {
         if cmd.contains("serve") {
             let response = ServeResult::Success(self.server_response.clone());
             let json = serde_json::to_string(&response)?;
-            session.data(channel, json.into())?;
+            session.data(channel, json)?;
             session.eof(channel)?;
             session.close(channel)?;
         } else {
-            session.data(channel, "Unsupported command".into())?;
+            session.data(channel, "Unsupported command")?;
             session.eof(channel)?;
             session.close(channel)?;
         }
@@ -565,16 +564,16 @@ impl russh_sftp::server::Handler for SftpSession {
         let new_full = self.repo_path.join(newpath);
 
         // If the destination exists, try removing it first.
-        if new_full.exists() {
-            if let Err(e) = tokio::fs::remove_file(&new_full).await {
-                eprintln!(
-                    "rename: failed to remove existing {}: {}",
-                    new_full.display(),
-                    e
-                );
-                // If removal fails, report failure.
-                return Err(StatusCode::Failure);
-            }
+        if new_full.exists()
+            && let Err(e) = tokio::fs::remove_file(&new_full).await
+        {
+            eprintln!(
+                "rename: failed to remove existing {}: {}",
+                new_full.display(),
+                e
+            );
+            // If removal fails, report failure.
+            return Err(StatusCode::Failure);
         }
 
         match tokio::fs::rename(&old_full, &new_full).await {
@@ -600,7 +599,7 @@ pub async fn start_ssh_server(
 ) -> anyhow::Result<BoxFuture<'static, ()>, anyhow::Error> {
     let (tx, rx) = oneshot::channel();
 
-    let key_pair = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?;
+    let key_pair = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?;
 
     let config = russh::server::Config {
         auth_rejection_time: std::time::Duration::from_secs(1),
