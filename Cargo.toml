@@ -15,13 +15,13 @@ async-trait = "0"
 backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
 blake3 = "1"
-arrow-array = "57"
-arrow-schema = "57"
+arrow-array = "58"
+arrow-schema = "58"
 chrono = { version = "0", features = ["serde"] }
-cipher = { version = "0.4", features = ["rand_core"] }
+cipher = { version = "0.5", features = ["rand_core"] }
 clap = { version = "4", features = ["derive", "env"] }
 comfy-table = "7"
-ctr = "0.9"
+ctr = "0"
 dashmap = "6"
 derive_builder = "0"
 env_logger = "0"
@@ -38,11 +38,11 @@ num_cpus = "1"
 once_cell = "1"
 owo-colors = { version = "4", default-features = false }
 parking_lot = "0"
-parquet = "57"
+parquet = "58"
 postcard = { version = "1", features = ["use-std"] }
 prost = "0"
 prost-types = "0"
-rand = "0.9"
+rand = "0.10"
 reflink-copy = "0"
 rocksdb = "0"
 russh = { version = "0", default-features = false, features = ["ring", "rsa", "flate2"] }
@@ -59,8 +59,8 @@ uuid = { version = "1", features = ["v4", "v5", "v7"] }
 [dev-dependencies]
 anyhow = "1"
 rayon = "1"
-rand_chacha = "0.9"
-rand_distr = "0.5"
+rand_chacha = "0"
+rand_distr = "0"
 russh-sftp = ">=2.0.8"
 serial_test = "3"
 

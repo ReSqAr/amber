@@ -17,7 +17,7 @@ use crate::utils::rclone::{
 };
 use crate::utils::units;
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rand::RngExt;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

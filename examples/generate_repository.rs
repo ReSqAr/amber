@@ -2,7 +2,7 @@ use clap::Parser;
 use comfy_table::{Cell, CellAlignment, Table};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::prelude::{IndexedRandom, SliceRandom};
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
 use std::io::BufWriter;
@@ -263,7 +263,7 @@ fn pick_folder(folders: &[Folder], rng: &mut ChaCha8Rng) -> Folder {
 
 /// Generate a three‑word filename with a random file extension.
 fn generate_three_word_filename(rng: &mut ChaCha8Rng) -> String {
-    let words = FILENAME_WORDS.choose_multiple(rng, 3);
+    let words = FILENAME_WORDS.sample(rng, 3);
     let extension = FILE_EXTENSIONS.choose(rng).unwrap();
     format!(
         "{}{}",
@@ -480,10 +480,10 @@ fn main() -> io::Result<()> {
         task.filepath.hash(&mut hasher);
         let file_seed = cli.seed.wrapping_add(hasher.finish());
         let mut task_rng = ChaCha8Rng::seed_from_u64(file_seed);
-        if !task.filepath.exists() {
-            if let Err(e) = write_random_file(&task.filepath, task.size_bytes, &mut task_rng) {
-                eprintln!("Failed to write {:?}: {}", task.filepath, e);
-            }
+        if !task.filepath.exists()
+            && let Err(e) = write_random_file(&task.filepath, task.size_bytes, &mut task_rng)
+        {
+            eprintln!("Failed to write {:?}: {}", task.filepath, e);
         }
         let pb = progress.lock().unwrap();
         pb.inc(1);

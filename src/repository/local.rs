@@ -25,7 +25,7 @@ use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, pin_mut, stream}
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use log::debug;
-use rand::Rng;
+use rand::RngExt;
 use rand::distr::Alphanumeric;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};

@@ -12,7 +12,7 @@ use crate::utils::path::RepoPath;
 use crate::utils::pipe::TryForwardIntoExt;
 use chrono::Utc;
 use futures::{StreamExt, TryStreamExt, stream};
-use rand::Rng;
+use rand::RngExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
