@@ -104,7 +104,7 @@ impl GRPCClient {
                     .map_err(BackoffError::transient)?;
                 let client = GrpcClient::with_interceptor(channel, interceptor);
 
-                debug!("connected to {}", &addr);
+                debug!("connected to {}", addr);
                 Ok(client)
             }
         };
