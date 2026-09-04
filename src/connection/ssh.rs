@@ -9,8 +9,8 @@ use log::{debug, error, info};
 use rand::RngExt;
 use rand::distr::Alphanumeric;
 use russh::client::AuthResult;
-use russh::keys::Algorithm;
 use russh::keys::agent::client::AgentClient;
+use russh::keys::{Algorithm, PublicKeyOrCertificate};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -175,7 +175,7 @@ impl russh::client::Handler for Client {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        _server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }
