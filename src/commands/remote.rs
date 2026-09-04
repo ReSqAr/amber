@@ -29,7 +29,7 @@ pub async fn list(
         output.println("No connections found.".to_string());
     } else {
         let mut table = comfy_table::Table::new();
-        table.load_preset(comfy_table::presets::UTF8_FULL);
+        table.load_style(comfy_table::presets::UTF8_FULL);
         table.set_header(vec!["Name", "Connection Type"]);
 
         connections.sort_by_key(|c| c.name.clone());
