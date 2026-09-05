@@ -108,15 +108,18 @@ impl Handler for SshSession {
     async fn channel_open_session(
         &mut self,
         channel: Channel<russh::server::Msg>,
+        reply: russh::server::ChannelOpenHandle,
         session: &mut Session,
-    ) -> anyhow::Result<bool, Self::Error> {
+    ) -> anyhow::Result<(), Self::Error> {
         let mut clients = self.ssh_clients.lock().await;
         clients.insert((self.client_id, channel.id()), session.handle());
 
         let mut channels = self.channels.lock().await;
         channels.insert(channel.id(), channel);
 
-        Ok(true)
+        reply.accept().await;
+
+        Ok(())
     }
 
     async fn channel_open_direct_tcpip(
@@ -126,8 +129,9 @@ impl Handler for SshSession {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
-    ) -> anyhow::Result<bool, Self::Error> {
+    ) -> anyhow::Result<(), Self::Error> {
         let grpc_port = self.server_response.port;
         if port_to_connect as u16 == grpc_port {
             let mut channel_stream = channel.into_stream();
@@ -147,15 +151,18 @@ impl Handler for SshSession {
                             }
                         }
                     });
-                    Ok(true)
+                    reply.accept().await;
+                    Ok(())
                 }
                 Err(e) => {
                     eprintln!("Failed to connect to GRPC server: {}", e);
-                    Ok(false)
+                    reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
+                    Ok(())
                 }
             }
         } else {
-            Ok(false)
+            reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
+            Ok(())
         }
     }
 
