@@ -157,12 +157,76 @@ fn offset_from_key(key: &[u8]) -> Result<Offset> {
     Ok(Offset(u64::from_be_bytes(buf)))
 }
 
+/// Key holding the durable watermark.
+///
+/// Entry keys are 8 byte big-endian offsets, so a 0xff-prefixed key of a
+/// different length can never collide with one and sorts after all of them.
+const WATERMARK_KEY: &[u8] = &[0xff, b'w', b'm'];
+
 fn max_offset_from_db(db: &DB) -> Result<Option<Offset>> {
     let mut iter = db.iterator(IteratorMode::End);
-    iter.next()
-        .transpose()?
-        .map(|(k, _)| offset_from_key(&k))
-        .transpose()
+    for row in iter.by_ref() {
+        let (key, _) = row?;
+        // Skip meta keys, which live outside the offset keyspace.
+        if key.len() == 8 {
+            return offset_from_key(&key).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn load_watermark(db: &DB) -> Result<Option<Offset>> {
+    match db.get(WATERMARK_KEY)? {
+        Some(bytes) => offset_from_key(&bytes).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Records the watermark durably - this is the commit marker, so unlike the
+/// entries themselves it must survive a crash on its own.
+fn store_watermark(db: &DB, offset: Offset) -> Result<()> {
+    let mut wo = WriteOptions::default();
+    wo.disable_wal(false);
+    wo.set_sync(true);
+    db.put_opt(WATERMARK_KEY, offset_to_key(offset.0), &wo)?;
+    Ok(())
+}
+
+/// Drops entries beyond the watermark: they belong to a transaction that was
+/// never committed, so they are not part of the log.
+///
+/// Entries are written as they are produced and the memtable can be flushed at
+/// any point, so an interrupted transaction can leave durable entries behind.
+fn discard_uncommitted(db: &DB, watermark: Option<Offset>) -> Result<u64> {
+    let mode = match watermark {
+        Some(watermark) => IteratorMode::From(
+            &offset_to_key(watermark.0.saturating_add(1)),
+            Direction::Forward,
+        ),
+        None => IteratorMode::Start,
+    };
+
+    let mut discarded = 0u64;
+    let mut keys = Vec::new();
+    for row in db.iterator(mode) {
+        let (key, _) = row?;
+        if key.len() != 8 {
+            continue;
+        }
+        keys.push(key);
+    }
+
+    let wo = options::write_options();
+    for key in keys {
+        db.delete_opt(&key, &wo)?;
+        discarded += 1;
+    }
+
+    if discarded > 0 {
+        db.flush()?;
+    }
+
+    Ok(discarded)
 }
 
 impl<V> Writer<V>
@@ -177,18 +241,38 @@ where
         let opts = options::make_options();
         let tracer = Tracer::new_on(format!("log::Writer({})::open", name));
         let db = DB::open(&opts, &path)?;
-        let max_offset = max_offset_from_db(&db)?;
+        let watermark = match load_watermark(&db)? {
+            Some(watermark) => Some(watermark),
+            None => {
+                // A log written before watermarks were recorded: everything it
+                // contains was treated as committed, so keep it that way.
+                let max_offset = max_offset_from_db(&db)?;
+                if let Some(max_offset) = max_offset {
+                    store_watermark(&db, max_offset)?;
+                }
+                max_offset
+            }
+        };
+
+        let discarded = discard_uncommitted(&db, watermark)?;
+        if discarded > 0 {
+            log::warn!(
+                "log::Writer({name}): discarded {discarded} uncommitted entries after offset {}",
+                watermark.map_or("<none>".to_string(), |o| o.0.to_string())
+            );
+        }
         tracer.measure();
 
-        let next_offset = AtomicU64::new(match max_offset {
+        let next_offset = AtomicU64::new(match watermark {
             Some(o) => o.0.saturating_add(1),
             None => 0,
         });
-        let watermark = AtomicU64::new(match max_offset {
+        let watermark_value = AtomicU64::new(match watermark {
             Some(o) => o.0,
             None => WATERMARK_SENTINEL,
         });
-        let (watermark_tx, _) = watch::channel(max_offset);
+        let (watermark_tx, _) = watch::channel(watermark);
+        let watermark = watermark_value;
 
         let guard_name = name.clone();
         let db = Arc::new(parking_lot::RwLock::new(DatabaseGuard {
@@ -299,6 +383,17 @@ where
         self.persist_and_publish_blocking()
     }
 
+    /// Marks the transaction as no longer active.
+    ///
+    /// Kept separate from `close_blocking` so that a transaction abandoned
+    /// without closing - an error path, a panic - does not leave the writer
+    /// permanently refusing new transactions.
+    fn release(&mut self) {
+        if let Ok(mut guard) = self.inner.active_tx.write() {
+            *guard = false;
+        }
+    }
+
     pub fn close_blocking(mut self) -> Result<Option<Offset>> {
         let res = self.persist_and_publish_blocking();
         self.closed = true;
@@ -309,9 +404,7 @@ where
             }
         }
 
-        if let Ok(mut g) = self.inner.active_tx.write() {
-            *g = false;
-        }
+        self.release();
 
         res
     }
@@ -327,7 +420,10 @@ where
         ));
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
+        // The entries have to be durable before the watermark that declares them
+        // committed: a crash in between leaves them to be discarded on reopen.
         db_ref.flush()?;
+        store_watermark(db_ref, offset)?;
         tracer.measure();
 
         self.inner.watermark.store(offset.0, Ordering::SeqCst);
@@ -435,6 +531,23 @@ where
     }
 }
 
+impl<V> Drop for Transaction<V>
+where
+    V: Serialize + DeserializeOwned + Send + 'static,
+{
+    fn drop(&mut self) {
+        if !self.closed {
+            // Entries written by this transaction were never published, so they
+            // stay below the watermark and are discarded when the log reopens.
+            log::debug!(
+                "log::Transaction({}) abandoned without closing",
+                self.inner.name
+            );
+            self.release();
+        }
+    }
+}
+
 impl<V> Reader<V>
 where
     V: DeserializeOwned + Send + 'static,
@@ -489,6 +602,11 @@ fn pump_range_blocking<V>(
                 break;
             }
         };
+
+        // Meta keys live outside the offset keyspace and sort after every entry.
+        if k.len() != 8 {
+            continue;
+        }
 
         let off = match offset_from_key(&k) {
             Ok(off) => off,
@@ -959,6 +1077,132 @@ mod tests {
             items,
             vec![(Offset(0), 10), (Offset(1), 20), (Offset(2), 30),]
         );
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// Entries are written as they are produced and RocksDB can flush the memtable
+    /// at any point, so an interrupted transaction can leave durable entries
+    /// behind. They were never published and must not reappear as committed.
+    #[tokio::test]
+    async fn uncommitted_entries_are_discarded_on_reopen() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        {
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("create writer");
+
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&"committed".to_string()).expect("put");
+            let last = tx.flush_blocking().expect("commit");
+            assert_eq!(last, Some(Offset(0)));
+
+            // Written, then made durable by RocksDB itself - but never published.
+            tx.put_blocking(&"uncommitted".to_string()).expect("put");
+            {
+                let guard = writer.inner.db.read();
+                guard.as_ref().expect("db").flush().expect("flush memtable");
+            }
+
+            // The process goes away without the transaction ever being closed.
+            drop(tx);
+            writer.close().await.expect("close writer");
+        }
+
+        {
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("reopen writer");
+            assert_eq!(writer.watermark(), Some(Offset(0)));
+
+            let reader = writer.reader();
+            let items: Vec<(Offset, String)> = reader
+                .from(Offset::start())
+                .try_collect()
+                .await
+                .expect("collect");
+            assert_eq!(items, vec![(Offset(0), "committed".to_string())]);
+
+            // The discarded offset is free again.
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&"next".to_string()).expect("put");
+            let last = tx.close_blocking().expect("close tx");
+            assert_eq!(last, Some(Offset(1)));
+
+            let items: Vec<(Offset, String)> = writer
+                .reader()
+                .from(Offset::start())
+                .try_collect()
+                .await
+                .expect("collect");
+            assert_eq!(
+                items,
+                vec![
+                    (Offset(0), "committed".to_string()),
+                    (Offset(1), "next".to_string()),
+                ]
+            );
+
+            writer.close().await.expect("close writer");
+        }
+    }
+
+    /// A log written before the watermark was recorded has no commit marker;
+    /// everything it holds was treated as committed and has to stay that way.
+    #[tokio::test]
+    async fn a_log_without_a_watermark_keeps_its_entries() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        {
+            let opts = options::make_options();
+            let db = DB::open(&opts, &path).expect("open db");
+            for (offset, value) in ["one", "two"].iter().enumerate() {
+                db.put(
+                    offset_to_key(offset as u64),
+                    ser(&value.to_string()).expect("serialise"),
+                )
+                .expect("put");
+            }
+            db.flush().expect("flush");
+        }
+
+        let writer: Writer<String> =
+            Writer::open(path.clone(), "test".to_string()).expect("open writer");
+        assert_eq!(writer.watermark(), Some(Offset(1)));
+
+        let items: Vec<(Offset, String)> = writer
+            .reader()
+            .from(Offset::start())
+            .try_collect()
+            .await
+            .expect("collect");
+        assert_eq!(
+            items,
+            vec![
+                (Offset(0), "one".to_string()),
+                (Offset(1), "two".to_string()),
+            ]
+        );
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// A transaction that is dropped instead of closed must not leave the writer
+    /// refusing every future transaction.
+    #[tokio::test]
+    async fn dropping_a_transaction_releases_the_writer() {
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
+
+        {
+            let mut tx = writer.transaction().expect("start first tx");
+            tx.put_blocking(&1).expect("put");
+            // no close - the transaction is abandoned
+        }
+
+        let mut tx = writer.transaction().expect("start second tx");
+        tx.put_blocking(&2).expect("put");
+        tx.close_blocking().expect("close");
 
         writer.close().await.expect("close writer");
     }
