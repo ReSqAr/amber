@@ -55,6 +55,7 @@ tokio-stream = { version = "0.1" , features = ["io-util"]}
 tonic = "0"
 tonic-prost = "0"
 uuid = { version = "1", features = ["v4", "v5", "v7"] }
+serde_arrow = { version = "0.15.0", default-features = false, features = ["arrow-59"] }
 
 [dev-dependencies]
 anyhow = "1"

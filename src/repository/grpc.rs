@@ -31,7 +31,39 @@ use tokio::task::JoinHandle;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
 
-pub(crate) type ShutdownFn = Arc<std::sync::RwLock<Option<Box<dyn Fn() + Send + Sync + 'static>>>>;
+/// Tears down the transport behind a client - for an SSH remote, the port
+/// forwarding and the `serve` process on the other end.
+///
+/// Held by `Arc`, so it runs when the last clone of a `GRPCClient` goes away
+/// rather than the first: the client is cloned freely (`connection.remote`
+/// alone hands out clones), and dropping one clone must not disconnect the
+/// others. `close` runs it early and explicitly.
+pub(crate) struct Shutdown {
+    action: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync + 'static>>>,
+}
+
+impl Shutdown {
+    fn new(action: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
+        Self {
+            action: parking_lot::Mutex::new(Some(action)),
+        }
+    }
+
+    fn run(&self) {
+        let action = self.action.lock().take();
+        if let Some(action) = action {
+            action()
+        }
+    }
+}
+
+impl Drop for Shutdown {
+    fn drop(&mut self) {
+        self.run()
+    }
+}
+
+pub(crate) type ShutdownFn = Arc<Shutdown>;
 
 #[derive(Clone)]
 pub(crate) struct GRPCClient {
@@ -41,20 +73,8 @@ pub(crate) struct GRPCClient {
 
 impl GRPCClient {
     pub(crate) async fn close(&self) -> Result<(), InternalError> {
-        let mut guard = self.shutdown.write().unwrap();
-        if let Some(shutdown) = guard.take() {
-            shutdown()
-        };
+        self.shutdown.run();
         Ok(())
-    }
-}
-
-impl Drop for GRPCClient {
-    fn drop(&mut self) {
-        let mut guard = self.shutdown.write().unwrap();
-        if let Some(shutdown) = guard.take() {
-            shutdown()
-        }
     }
 }
 
@@ -122,9 +142,8 @@ impl GRPCClient {
             shutdown();
             flightdeck_handle.abort();
         });
-        let shutdown = Arc::new(std::sync::RwLock::new(Some(shutdown)));
 
-        Ok(Self::new(client, shutdown.clone()))
+        Ok(Self::new(client, Arc::new(Shutdown::new(shutdown))))
     }
 
     async fn forward_flightdeck_messages(
@@ -478,6 +497,7 @@ mod tests {
     use crate::utils::port::find_available_port;
     use futures::TryStreamExt;
     use std::io::Write;
+    use std::sync::atomic::AtomicUsize;
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tokio::task::JoinHandle;
@@ -561,19 +581,6 @@ mod tests {
         handle.await.expect("server task");
     }
 
-    /// Builds a client without talking to anyone: `connect_lazy` hands back a
-    /// channel that only dials when it is first used. Pointed at a port nothing
-    /// is listening on, every call fails at the transport.
-    fn client_to_nowhere() -> GRPCClient {
-        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy();
-        let interceptor = ClientAuth::new("auth-key").expect("interceptor");
-        let shutdown: Box<dyn Fn() + Send + Sync + 'static> = Box::new(|| {});
-        GRPCClient::new(
-            GrpcClient::with_interceptor(channel, interceptor),
-            Arc::new(std::sync::RwLock::new(Some(shutdown))),
-        )
-    }
-
     /// A rejected authentication token has to surface as an error - the very first
     /// thing a client does is an RPC, so this is the failed-call path.
     #[tokio::test(flavor = "multi_thread")]
@@ -592,10 +599,11 @@ mod tests {
 
     /// The `Syncer`/`Receiver` traits hand back a bare stream, so a failure of the
     /// streaming call itself has to be reported as an item of that stream rather
-    /// than taking the process down.
+    /// than taking the process down. The lazy client points at a port nothing is
+    /// listening on, so every call fails at the transport.
     #[tokio::test(flavor = "multi_thread")]
     async fn select_reports_transport_errors_through_the_stream() {
-        let client = client_to_nowhere();
+        let client = lazy_client(|| {});
 
         let files: Result<Vec<models::File>, _> = Syncer::<models::File>::select(&client, None)
             .await
@@ -616,7 +624,7 @@ mod tests {
     /// The same for the other two syncers and the transfer request.
     #[tokio::test(flavor = "multi_thread")]
     async fn every_streaming_call_reports_transport_errors() {
-        let client = client_to_nowhere();
+        let client = lazy_client(|| {});
 
         let states: Result<Vec<models::RepositorySyncState>, _> =
             Syncer::<models::RepositorySyncState>::select(&client, ())
@@ -641,5 +649,61 @@ mod tests {
             items.is_err(),
             "expected a stream error for the transfer request"
         );
+    }
+
+    /// Builds a client without talking to anyone: `connect_lazy` hands back a
+    /// channel that only dials when it is first used.
+    fn lazy_client(shutdown: impl Fn() + Send + Sync + 'static) -> GRPCClient {
+        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy();
+        let interceptor = ClientAuth::new("auth-key").expect("interceptor");
+        GRPCClient::new(
+            GrpcClient::with_interceptor(channel, interceptor),
+            Arc::new(Shutdown::new(Box::new(shutdown))),
+        )
+    }
+
+    /// `connection.remote` hands out clones, so tearing the transport down when
+    /// the first one is dropped would disconnect the clones still in use.
+    #[tokio::test]
+    async fn dropping_a_clone_does_not_shut_the_client_down() {
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let counter = calls.clone();
+        let client = lazy_client(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let clone = client.clone();
+        drop(clone);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "dropping a clone must not shut the client down"
+        );
+
+        drop(client);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the last clone going away must shut the client down"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_shuts_the_client_down_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let counter = calls.clone();
+        let client = lazy_client(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        client.close().await.expect("close");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Neither a second close nor the drop repeats it.
+        client.close().await.expect("close again");
+        drop(client);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
