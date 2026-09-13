@@ -139,7 +139,16 @@ where
         }
 
         let config_path = temp_path.join("rclone.conf");
-        let file = fs::File::create(&config_path).await?;
+        // The config can carry an obscured password, so keep it to the owner.
+        let file = {
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&config_path)
+                .await?
+        };
         let mut writer = tokio::io::BufWriter::new(file);
         writer.write_all(sections.join("\n").as_bytes()).await?;
         writer.flush().await?;

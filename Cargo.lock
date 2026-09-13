@@ -133,6 +133,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "subtle",
  "tempfile",
  "thiserror",
  "tokio",

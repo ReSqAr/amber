@@ -106,6 +106,10 @@ In this case just run `amber sync` to materialise all available files.
 
 **Note:**
 
+- amber verifies the host key against your `~/.ssh/known_hosts`, so connect once
+with `ssh` first to record it. A host that is not recorded - or that answers with
+a different key than the one recorded - is refused.
+Set `AMBER_SSH_KNOWN_HOSTS` to use a different file.
 - SSH key auth is supported - amber leverages the ssh agent for key discovery.
 So make sure that you `ssh-add` your keys before running amber
 - you can explicitly specify a password for the connection using this syntax:

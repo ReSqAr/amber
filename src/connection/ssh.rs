@@ -10,6 +10,7 @@ use rand::RngExt;
 use rand::distr::Alphanumeric;
 use russh::client::AuthResult;
 use russh::keys::agent::client::AgentClient;
+use russh::keys::known_hosts::{check_known_hosts, check_known_hosts_path};
 use russh::keys::{Algorithm, PublicKeyOrCertificate};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -168,16 +169,136 @@ struct SshSetup {
     shutdown: ShutdownFn,
 }
 
-struct Client;
+/// Outcome of matching a server key against the user's `known_hosts`.
+#[derive(Debug)]
+pub(crate) enum HostKeyVerdict {
+    /// The key is recorded for this host and matches.
+    Accepted,
+    /// The host has no entry - first contact, or the wrong host.
+    Unknown { fingerprint: String },
+    /// An entry exists and the key does not match it.
+    Changed { line: usize, fingerprint: String },
+    /// `known_hosts` could not be consulted at all.
+    Unreadable { error: String },
+    /// Host certificates are not supported.
+    UnsupportedCertificate,
+}
+
+impl HostKeyVerdict {
+    fn describe(&self, host: &str, port: u16) -> String {
+        match self {
+            HostKeyVerdict::Accepted => format!("host key for {host}:{port} is known"),
+            HostKeyVerdict::Unknown { fingerprint } => format!(
+                "the host key of {host}:{port} ({fingerprint}) is not in your known_hosts file. \
+                 Connect once with `ssh -p {port} {host}` to record it, then retry"
+            ),
+            HostKeyVerdict::Changed { line, fingerprint } => format!(
+                "REMOTE HOST IDENTIFICATION HAS CHANGED: the host key of {host}:{port} \
+                 ({fingerprint}) does not match the entry on line {line} of your known_hosts \
+                 file. Someone could be eavesdropping on you right now. If the host key was \
+                 changed legitimately, remove that line and record the new key"
+            ),
+            HostKeyVerdict::Unreadable { error } => {
+                format!("unable to check the host key of {host}:{port}: {error}")
+            }
+            HostKeyVerdict::UnsupportedCertificate => format!(
+                "{host}:{port} authenticated with a host certificate, which amber cannot verify"
+            ),
+        }
+    }
+}
+
+/// Overrides the `known_hosts` file to consult, like ssh's `UserKnownHostsFile`.
+pub(crate) const KNOWN_HOSTS_ENV: &str = "AMBER_SSH_KNOWN_HOSTS";
+
+static KNOWN_HOSTS_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Sets the `known_hosts` file programmatically; takes precedence over the
+/// environment variable and can only be set once, before the first connection.
+pub(crate) fn set_known_hosts_path(path: std::path::PathBuf) {
+    let _ = KNOWN_HOSTS_PATH.set(path);
+}
+
+fn known_hosts_override() -> Option<std::path::PathBuf> {
+    if let Some(path) = KNOWN_HOSTS_PATH.get() {
+        return Some(path.clone());
+    }
+    std::env::var_os(KNOWN_HOSTS_ENV).map(std::path::PathBuf::from)
+}
+
+/// Checks a server key against `known_hosts` - the user's own file, or `path`
+/// when one is given.
+pub(crate) fn verify_host_key(
+    host: &str,
+    port: u16,
+    key: &PublicKeyOrCertificate,
+    path: Option<&std::path::Path>,
+) -> HostKeyVerdict {
+    let key = match key {
+        PublicKeyOrCertificate::PublicKey { key, .. } => key,
+        PublicKeyOrCertificate::Certificate(_) => {
+            return HostKeyVerdict::UnsupportedCertificate;
+        }
+    };
+    let fingerprint = key.fingerprint(Default::default()).to_string();
+
+    let known = match path {
+        Some(path) => check_known_hosts_path(host, port, key, path),
+        None => check_known_hosts(host, port, key),
+    };
+
+    match known {
+        Ok(true) => HostKeyVerdict::Accepted,
+        Ok(false) => HostKeyVerdict::Unknown { fingerprint },
+        Err(russh::keys::Error::KeyChanged { line }) => {
+            HostKeyVerdict::Changed { line, fingerprint }
+        }
+        Err(e) => HostKeyVerdict::Unreadable {
+            error: e.to_string(),
+        },
+    }
+}
+
+/// Records why a host key was rejected, so the connection error can say more
+/// than "unknown key".
+type RejectionSlot = Arc<std::sync::Mutex<Option<String>>>;
+
+struct Client {
+    host: String,
+    port: u16,
+    rejection: RejectionSlot,
+}
 
 impl russh::client::Handler for Client {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKeyOrCertificate,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let verdict = verify_host_key(
+            &self.host,
+            self.port,
+            server_public_key,
+            known_hosts_override().as_deref(),
+        );
+        let message = verdict.describe(&self.host, self.port);
+        match verdict {
+            HostKeyVerdict::Accepted => {
+                debug!("{message}");
+                Ok(true)
+            }
+            HostKeyVerdict::Unknown { .. }
+            | HostKeyVerdict::Changed { .. }
+            | HostKeyVerdict::Unreadable { .. }
+            | HostKeyVerdict::UnsupportedCertificate => {
+                error!("{message}");
+                if let Ok(mut slot) = self.rejection.lock() {
+                    *slot = Some(message);
+                }
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -186,13 +307,23 @@ async fn setup_app_via_ssh(
     local_port: u16,
 ) -> Result<SshSetup, InternalError> {
     let config = Arc::new(russh::client::Config::default());
-    let mut session = russh::client::connect(
-        config,
-        (ssh_config.host, ssh_config.port.unwrap_or(22)),
-        Client,
-    )
-    .await
-    .map_err(|e| InternalError::Ssh(format!("Connection failed: {}", e)))?;
+    let port = ssh_config.port.unwrap_or(22);
+    let rejection: RejectionSlot = Arc::new(std::sync::Mutex::new(None));
+    let handler = Client {
+        host: ssh_config.host.clone(),
+        port,
+        rejection: rejection.clone(),
+    };
+    let mut session = russh::client::connect(config, (ssh_config.host, port), handler)
+        .await
+        .map_err(|e| {
+            // A rejected host key surfaces as a generic protocol error, so report
+            // the reason the handler recorded instead.
+            match rejection.lock().ok().and_then(|mut slot| slot.take()) {
+                Some(reason) => InternalError::Ssh(reason),
+                None => InternalError::Ssh(format!("Connection failed: {}", e)),
+            }
+        })?;
 
     match ssh_config.auth {
         SshAuth::Password(pwd) => {
@@ -272,8 +403,7 @@ async fn setup_app_via_ssh(
         .await
         .map_err(|e| InternalError::Ssh(format!("Failed to read from channel: {}", e)))?;
 
-    let output = String::from_utf8(buffer.into())
-        .map_err(|e| InternalError::Ssh(format!("UTF8 error: {}", e)))?;
+    let output = buffer;
     debug!("received output: {}", output);
 
     let serve_response: ServeResult = serde_json::from_str(&output)
@@ -291,11 +421,18 @@ async fn setup_app_via_ssh(
     let remote_reader_handle = tokio::spawn(async move {
         loop {
             let mut buffer = String::new();
-            if let Err(e) = reader.read_line(&mut buffer).await {
-                error!("Failed to read from remote channel: {}", e);
-                break;
+            match reader.read_line(&mut buffer).await {
+                // End of the remote channel - without this the loop spins.
+                Ok(0) => {
+                    debug!("remote channel closed");
+                    break;
+                }
+                Ok(_) => debug!("[remote] {buffer}"),
+                Err(e) => {
+                    error!("Failed to read from remote channel: {}", e);
+                    break;
+                }
             }
-            debug!("[remote] {buffer}");
         }
     });
 
@@ -412,7 +549,10 @@ fn rclone_obscure_password(input: &str) -> String {
     if input.is_empty() {
         return "".to_string();
     }
-    let iv = [0u8; 16];
+    // rclone prepends a random IV to the ciphertext and reads it back when
+    // deobscuring. A fixed IV would reuse the same keystream for every password.
+    let mut iv = [0u8; 16];
+    rand::rng().fill(&mut iv[..]);
     let mut buffer = Vec::with_capacity(iv.len() + input.len());
     buffer.extend_from_slice(&iv);
     buffer.extend_from_slice(input.as_bytes());
@@ -424,4 +564,113 @@ fn rclone_obscure_password(input: &str) -> String {
         base64::engine::general_purpose::NO_PAD,
     );
     engine.encode(&buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use russh::keys::PrivateKey;
+    use std::io::Write as _;
+
+    fn key_pair() -> PrivateKey {
+        PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("generate key")
+    }
+
+    fn known_hosts_file(entries: &[(&str, &PrivateKey)]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        for (host, key) in entries {
+            let public = key.public_key().to_openssh().expect("openssh encoding");
+            writeln!(file, "{host} {public}").expect("write entry");
+        }
+        file.flush().expect("flush");
+        file
+    }
+
+    fn public(key: &PrivateKey) -> PublicKeyOrCertificate {
+        PublicKeyOrCertificate::PublicKey {
+            key: key.public_key().clone(),
+            hash_alg: None,
+        }
+    }
+
+    #[test]
+    fn a_recorded_host_key_is_accepted() {
+        let key = key_pair();
+        let file = known_hosts_file(&[("[tycho.com]:2222", &key)]);
+
+        let verdict = verify_host_key("tycho.com", 2222, &public(&key), Some(file.path()));
+        assert!(
+            matches!(verdict, HostKeyVerdict::Accepted),
+            "expected the recorded key to be accepted, got {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn an_unrecorded_host_key_is_rejected() {
+        let key = key_pair();
+        let file = known_hosts_file(&[]);
+
+        let verdict = verify_host_key("tycho.com", 2222, &public(&key), Some(file.path()));
+        assert!(
+            matches!(verdict, HostKeyVerdict::Unknown { .. }),
+            "expected an unknown host key, got {verdict:?}"
+        );
+    }
+
+    /// The case that matters: the host is known, and answers with another key.
+    #[test]
+    fn a_changed_host_key_is_rejected() {
+        let recorded = key_pair();
+        let impostor = key_pair();
+        let file = known_hosts_file(&[("[tycho.com]:2222", &recorded)]);
+
+        let verdict = verify_host_key("tycho.com", 2222, &public(&impostor), Some(file.path()));
+        assert!(
+            matches!(verdict, HostKeyVerdict::Changed { .. }),
+            "expected a changed host key, got {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_recorded_for_another_host_is_rejected() {
+        let key = key_pair();
+        let file = known_hosts_file(&[("[medina.com]:2222", &key)]);
+
+        let verdict = verify_host_key("tycho.com", 2222, &public(&key), Some(file.path()));
+        assert!(
+            matches!(verdict, HostKeyVerdict::Unknown { .. }),
+            "expected an unknown host key, got {verdict:?}"
+        );
+    }
+
+    /// rclone reads the IV back from the first 16 bytes, so a random IV round
+    /// trips just as well - and does not reuse the keystream.
+    #[test]
+    fn obscured_passwords_use_a_fresh_iv() {
+        let first = rclone_obscure_password("hunter2");
+        let second = rclone_obscure_password("hunter2");
+        assert_ne!(
+            first, second,
+            "the same password must not obscure to the same value twice"
+        );
+
+        for obscured in [first, second] {
+            let engine = base64::engine::GeneralPurpose::new(
+                &base64::alphabet::URL_SAFE,
+                base64::engine::general_purpose::NO_PAD,
+            );
+            let mut buffer = engine.decode(obscured).expect("decode");
+            assert!(buffer.len() > 16);
+            let (iv, ciphertext) = buffer.split_at_mut(16);
+            let iv: [u8; 16] = iv.try_into().expect("iv");
+            let mut cipher = Aes256Ctr::new(&RCLONE_KEY.into(), &iv.into());
+            cipher.apply_keystream(ciphertext);
+            assert_eq!(std::str::from_utf8(ciphertext).expect("utf8"), "hunter2");
+        }
+    }
+
+    #[test]
+    fn an_empty_password_stays_empty() {
+        assert_eq!(rclone_obscure_password(""), "");
+    }
 }
