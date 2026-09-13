@@ -15,6 +15,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures_core::stream::BoxStream;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::arrow_writer::{ArrowWriter, ArrowWriterOptions};
+use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -109,7 +110,12 @@ where
             let bg = task::spawn_blocking(move || -> Result<(), InternalError> {
                 let file = std::fs::File::create_new(path.abs())?;
 
-                let props = WriterProperties::builder().build();
+                // The metadata stores are copied to and from the remote on every
+                // sync, so they are worth compressing. ZSTD at its default level
+                // decompresses about as fast as the uncompressed file reads.
+                let props = WriterProperties::builder()
+                    .set_compression(Compression::ZSTD(ZstdLevel::default()))
+                    .build();
                 let options = ArrowWriterOptions::new().with_properties(props);
 
                 let mut writer = ArrowWriter::try_new_with_options(file, T::schema(), options)
@@ -674,6 +680,54 @@ mod tests {
             items[0].valid_from.timestamp_nanos_opt().unwrap(),
             item.valid_from.timestamp_nanos_opt().unwrap()
         );
+        Ok(())
+    }
+
+    /// Blob rows are highly repetitive - the same repository id on every row, hex
+    /// blob ids - so compression pays for itself on every sync.
+    #[tokio::test]
+    async fn blobs_are_written_compressed() -> Result<(), InternalError> {
+        let temp = tempdir().map_err(InternalError::IO)?;
+        let path = RepoPath::from_root(temp.path()).join("blobs.parquet");
+        let parquet = Parquet::<Blob>::new(path.clone());
+
+        let items: Vec<Blob> = (0..5_000)
+            .map(|i| Blob {
+                uid: Uid(i),
+                repo_id: RepoID("11111111-2222-3333-4444-555555555555".to_string()),
+                blob_id: BlobID(format!("{:064x}", i)),
+                blob_size: i * 1024,
+                has_blob: true,
+                path: Some(ModelPath(format!("photos/2024/IMG_{i:05}.jpg"))),
+                valid_from: chrono::Utc::now(),
+            })
+            .collect();
+
+        parquet.merge(stream::iter(items.clone()).boxed()).await?;
+
+        let written = std::fs::metadata(path.abs())
+            .map_err(InternalError::IO)?
+            .len();
+        let raw: u64 = items
+            .iter()
+            .map(|b| {
+                (b.repo_id.0.len()
+                    + b.blob_id.0.len()
+                    + b.path.as_ref().map_or(0, |p| p.0.len())
+                    + 17) as u64
+            })
+            .sum();
+        assert!(
+            written < raw / 2,
+            "expected the file ({written} bytes) to be well under half the raw row bytes ({raw})"
+        );
+
+        // ... and it still reads back.
+        let read_back: Vec<_> = parquet.select(None).await.try_collect().await?;
+        assert_eq!(read_back.len(), items.len());
+        assert_eq!(read_back[0].blob_id, items[0].blob_id);
+        assert_eq!(read_back[4_999].blob_id, items[4_999].blob_id);
+
         Ok(())
     }
 
