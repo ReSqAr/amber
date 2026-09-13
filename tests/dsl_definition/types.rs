@@ -6,10 +6,13 @@ use std::path::PathBuf;
 pub(crate) enum CommandLine {
     AmberCommand {
         repo: String,
+        /// Directory inside the repository to run the command from (`@repo/sub`).
+        subdir: Option<String>,
         sub_command: Vec<String>,
     },
     AmberCommandFailure {
         repo: String,
+        subdir: Option<String>,
         sub_command: Vec<String>,
         expected_failure: String,
     },
