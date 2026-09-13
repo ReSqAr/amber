@@ -583,3 +583,237 @@ pub struct MissingFile {
     pub target_blob_id: BlobID,
     pub local_has_target_blob: bool,
 }
+
+// The panic arms below deliberately catch every other state.
+#[allow(clippy::wildcard_enum_match_arm)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &str = "aaaa";
+    const B: &str = "bbbb";
+
+    fn at(secs: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(secs, 0).expect("timestamp")
+    }
+
+    /// A file as the walker saw it: modified at `t=100`, 10 bytes.
+    fn seen(size: u64) -> FileSeen {
+        FileSeen {
+            path: Path("photo.jpg".into()),
+            seen_id: 1,
+            seen_dttm: at(200),
+            last_modified_dttm: at(100),
+            size,
+        }
+    }
+
+    /// The parts a virtual file is assembled from; every test starts here and
+    /// sets only what it is about.
+    struct Builder {
+        file_seen: FileSeen,
+        current_file: Option<CurrentFile>,
+        current_blob: Option<BlobMeta>,
+        current_materialisation: Option<Materialisation>,
+        current_check: Option<Check>,
+    }
+
+    impl Builder {
+        fn new() -> Self {
+            Self {
+                file_seen: seen(10),
+                current_file: None,
+                current_blob: None,
+                current_materialisation: None,
+                current_check: None,
+            }
+        }
+
+        fn seen_size(mut self, size: u64) -> Self {
+            self.file_seen = seen(size);
+            self
+        }
+
+        /// The blob the repository wants at this path.
+        fn file(mut self, blob_id: &str) -> Self {
+            self.current_file = Some(CurrentFile {
+                blob_id: BlobID(blob_id.into()),
+            });
+            self
+        }
+
+        /// The blob is available locally, at `size` bytes.
+        fn blob(mut self, size: u64) -> Self {
+            self.current_blob = Some(BlobMeta { size, path: None });
+            self
+        }
+
+        /// What was last linked into place at this path.
+        fn materialisation(mut self, blob_id: &str) -> Self {
+            self.current_materialisation = Some(Materialisation {
+                blob_id: BlobID(blob_id.into()),
+            });
+            self
+        }
+
+        /// A hash taken at `t=150`, i.e. after the file was last modified.
+        fn check(mut self, blob_id: &str) -> Self {
+            self.current_check = Some(Check {
+                check_last_dttm: at(150),
+                check_last_hash: BlobID(blob_id.into()),
+            });
+            self
+        }
+
+        /// A hash taken at `t=50`, before the file was last modified.
+        fn stale_check(mut self, blob_id: &str) -> Self {
+            self.current_check = Some(Check {
+                check_last_dttm: at(50),
+                check_last_hash: BlobID(blob_id.into()),
+            });
+            self
+        }
+
+        fn state(self) -> VirtualFileState {
+            VirtualFile {
+                file_seen: self.file_seen,
+                current_file: self.current_file,
+                current_blob: self.current_blob,
+                current_materialisation: self.current_materialisation,
+                current_check: self.current_check,
+            }
+            .state()
+        }
+    }
+
+    #[test]
+    fn nothing_known_about_the_file_is_new() {
+        assert!(matches!(Builder::new().state(), VirtualFileState::New));
+    }
+
+    /// Known to the repository, but never hashed here.
+    #[test]
+    fn a_file_without_a_check_needs_one() {
+        assert!(matches!(
+            Builder::new().file(A).blob(10).state(),
+            VirtualFileState::NeedsCheck
+        ));
+    }
+
+    /// The file changed after it was last hashed, so the hash says nothing.
+    #[test]
+    fn a_check_older_than_the_file_needs_a_new_one() {
+        assert!(matches!(
+            Builder::new()
+                .file(A)
+                .blob(10)
+                .materialisation(A)
+                .stale_check(A)
+                .state(),
+            VirtualFileState::NeedsCheck
+        ));
+    }
+
+    #[test]
+    fn the_wanted_blob_present_and_materialised_is_ok() {
+        assert!(matches!(
+            Builder::new()
+                .file(A)
+                .blob(10)
+                .materialisation(A)
+                .check(A)
+                .state(),
+            VirtualFileState::Ok { .. }
+        ));
+    }
+
+    /// Right content on disk, but the materialisation records another blob.
+    #[test]
+    fn a_stale_materialisation_record_is_reported() {
+        assert!(matches!(
+            Builder::new()
+                .file(A)
+                .blob(10)
+                .materialisation(B)
+                .check(A)
+                .state(),
+            VirtualFileState::OkMaterialisationMissing { .. }
+        ));
+    }
+
+    /// The file is what it should be, but the blob store has lost the blob.
+    #[test]
+    fn the_wanted_content_without_its_blob_is_ok_but_blob_missing() {
+        let state = Builder::new().file(A).materialisation(A).check(A).state();
+        match state {
+            VirtualFileState::OkBlobMissing { file } => assert_eq!(file.blob_id.0, A),
+            other => panic!("expected OkBlobMissing, got {other:?}"),
+        }
+    }
+
+    /// Hashed to something the repository does not know about.
+    #[test]
+    fn content_that_matches_neither_file_nor_materialisation_is_altered() {
+        let state = Builder::new().file(A).blob(10).check(B).state();
+        match state {
+            VirtualFileState::Altered { file, blob } => {
+                assert_eq!(file.blob_id.0, A);
+                assert!(blob.is_some());
+            }
+            other => panic!("expected Altered, got {other:?}"),
+        }
+    }
+
+    /// On disk is what was materialised last time; the repository has moved on.
+    #[test]
+    fn the_previously_materialised_content_is_outdated() {
+        let state = Builder::new()
+            .file(A)
+            .blob(10)
+            .materialisation(B)
+            .check(B)
+            .state();
+        match state {
+            VirtualFileState::Outdated { file, .. } => {
+                assert_eq!(file.expect("file").blob_id.0, A)
+            }
+            other => panic!("expected Outdated, got {other:?}"),
+        }
+    }
+
+    /// The same, for a path the repository no longer tracks.
+    #[test]
+    fn a_materialised_file_deleted_from_the_repository_is_outdated() {
+        let state = Builder::new().materialisation(A).check(A).state();
+        match state {
+            VirtualFileState::Outdated { file, .. } => assert!(file.is_none()),
+            other => panic!("expected Outdated, got {other:?}"),
+        }
+    }
+
+    /// The hash matches the wanted blob but the size does not, so the two
+    /// cannot both be true.
+    #[test]
+    fn a_matching_hash_with_a_different_size_is_corruption() {
+        assert!(matches!(
+            Builder::new()
+                .seen_size(11)
+                .file(A)
+                .blob(10)
+                .materialisation(A)
+                .check(A)
+                .state(),
+            VirtualFileState::CorruptionDetected { .. }
+        ));
+    }
+
+    /// Untracked path, nothing materialised - but the blob happens to exist
+    /// here because some other path uses it.
+    #[test]
+    fn an_untracked_path_whose_blob_exists_is_new() {
+        assert!(matches!(
+            Builder::new().blob(10).check(A).state(),
+            VirtualFileState::New
+        ));
+    }
+}
