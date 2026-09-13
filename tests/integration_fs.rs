@@ -736,3 +736,104 @@ async fn integration_test_mv_changed_file_and_then_delete() -> anyhow::Result<()
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// `rm` matches its arguments against the paths stored in the database, which are
+/// relative to the repository root. Arguments are relative to the working directory
+/// (or absolute), so they have to be resolved first.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rm_absolute_path() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a amber rm --hard $ROOT/a/test.txt
+
+        # then
+        assert_output_contains "removed test.txt"
+        @a assert_does_not_exist test.txt
+        @a amber status
+        assert_output_contains "no files detected"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rm_from_subdirectory() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/inner.txt "inner"
+        @a write_file dir/keep.txt "keep"
+        @a write_file outer.txt "outer"
+        @a amber add
+
+        # action: run from inside dir/, addressing the file by its bare name
+        @a/dir amber rm --hard inner.txt
+
+        # then
+        @a assert_does_not_exist dir/inner.txt
+        @a assert_exists dir/keep.txt "keep"
+        @a assert_exists outer.txt "outer"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rm_directory_from_subdirectory() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/sub/one.txt "one"
+        @a write_file dir/sub/two.txt "two"
+        @a write_file dir/other.txt "other"
+        @a amber add
+
+        # action: a directory selector relative to the working directory
+        @a/dir amber rm --hard sub/
+
+        # then
+        @a assert_does_not_exist dir/sub/one.txt
+        @a assert_does_not_exist dir/sub/two.txt
+        @a assert_exists dir/other.txt "other"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_mv_from_subdirectory() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a/dir amber mv test.txt moved.txt
+
+        # then
+        @a assert_exists dir/moved.txt "Hello world!"
+        @a assert_does_not_exist dir/test.txt
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// `add` and `status` operate on the whole repository, so running them from a
+/// subdirectory has to discover the repository root and still cover every file.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_add_and_status_from_subdirectory() -> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file dir/inner.txt "inner"
+        @a write_file outer.txt "outer"
+
+        # action
+        @a/dir amber add
+
+        # then: both files were added, not just the ones below dir/ - `add` and
+        # `status` are repository-wide regardless of the working directory
+        @a/dir amber status
+        assert_output_contains "2 materialised files"
+        @a amber status
+        assert_output_contains "2 materialised files"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}

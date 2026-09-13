@@ -16,7 +16,8 @@ static COMMAND_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 pub(crate) async fn run_amber_cli_command(
     args: &[String],
-    working_dir: &Path,
+    repo_dir: &Path,
+    subdir: Option<&str>,
     root: &Path,
     expected_failure: Option<String>,
 ) -> anyhow::Result<String, anyhow::Error> {
@@ -26,7 +27,18 @@ pub(crate) async fn run_amber_cli_command(
         .collect();
 
     let mut cli = Cli::try_parse_from(&substituted)?;
-    cli.path = Some(working_dir.to_path_buf());
+
+    // Without a subdirectory the repository is addressed explicitly via `--path`.
+    // With one, the command runs from inside the repository and has to locate the
+    // root itself - the way a user invokes amber.
+    let working_dir = match subdir {
+        None => {
+            cli.path = Some(repo_dir.to_path_buf());
+            repo_dir.to_path_buf()
+        }
+        Some(subdir) => repo_dir.join(subdir),
+    };
+    let working_dir = working_dir.as_path();
 
     let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = unbounded_channel();
     let writer = ChannelWriter::new(tx);

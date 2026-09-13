@@ -83,21 +83,27 @@ pub(crate) async fn rm(
 
     let root = local.root();
 
-    let mut paths_with_hint: Vec<(RepoPath, String)> = Vec::new();
+    // Selectors are matched against the paths stored in the database, which are
+    // relative to the repository root - so they have to be built from the resolved
+    // `RepoPath`, not from the argument as the user typed it (which is relative to
+    // the current working directory, or absolute).
+    let mut selectors: Vec<String> = Vec::new();
     for p in paths {
-        let (src_is_file, src_is_dir) = fs::metadata(&p)
+        // A trailing slash is a directory hint and only survives on the argument -
+        // resolving the path normalises it away - so it has to be read off `p`.
+        let ends_with_slash = p.to_string_lossy().ends_with('/');
+        let path = RepoPath::from_current(&p, &root)?;
+        let is_dir = fs::metadata(path.abs())
             .await
-            .map(|m| (m.is_file(), m.is_dir()))
-            .unwrap_or((false, false));
-        let normalised_path = if src_is_file {
-            p.to_string_lossy().to_string()
-        } else if src_is_dir || p.to_string_lossy().ends_with('/') {
-            format!("{}/", p.to_string_lossy().to_string().trim_end_matches('/'))
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        let rel = path.rel().to_string_lossy().to_string();
+        let selector = if ends_with_slash || is_dir {
+            format!("{}/", rel.trim_end_matches('/'))
         } else {
-            p.to_string_lossy().to_string()
+            rel
         };
-        let path = RepoPath::from_current(p, &root)?;
-        paths_with_hint.push((path, normalised_path));
+        selectors.push(selector);
     }
 
     let obs_clone = obs.clone();
@@ -116,7 +122,7 @@ pub(crate) async fn rm(
     )
     .await?;
 
-    for (_, normalised_path) in paths_with_hint {
+    for normalised_path in selectors {
         let s = local
             .select_current_files_with_prefix(normalised_path.clone())
             .await

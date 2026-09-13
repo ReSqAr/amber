@@ -43,7 +43,11 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
         println!("[{:2}] {}", line_number, line.trim());
         if let Some(cmd) = parser::parse_line(line) {
             match cmd {
-                CommandLine::AmberCommand { repo, sub_command } => {
+                CommandLine::AmberCommand {
+                    repo,
+                    subdir,
+                    sub_command,
+                } => {
                     let repo_instance = env.repos.entry(repo.clone()).or_insert_with(|| {
                         let repo_path = root.join(&repo);
                         std::fs::create_dir_all(&repo_path)
@@ -55,11 +59,18 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     });
                     // Call run_cli_command, passing in the global root for $ROOT substitution.
                     let repo_path = repo_instance.path.clone();
-                    last_command_output =
-                        amber::run_amber_cli_command(&sub_command, &repo_path, &root, None).await?;
+                    last_command_output = amber::run_amber_cli_command(
+                        &sub_command,
+                        &repo_path,
+                        subdir.as_deref(),
+                        &root,
+                        None,
+                    )
+                    .await?;
                 }
                 CommandLine::AmberCommandFailure {
                     repo,
+                    subdir,
                     sub_command,
                     expected_failure,
                 } => {
@@ -76,6 +87,7 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     last_command_output = amber::run_amber_cli_command(
                         &sub_command,
                         &repo_instance.path,
+                        subdir.as_deref(),
                         &root,
                         Some(expected_failure),
                     )
