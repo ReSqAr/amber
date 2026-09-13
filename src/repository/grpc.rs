@@ -552,12 +552,26 @@ mod tests {
         )
     }
 
-    /// A connected client keeps a flightdeck stream open for its whole lifetime,
-    /// and a graceful shutdown waits for exactly that - so stop the server hard.
+    /// Stops the server and waits for it to shut down cleanly, which is what
+    /// closes the repository it serves. No connected client may remain: a client
+    /// holds its flightdeck stream open for its whole lifetime, and a graceful
+    /// shutdown waits for exactly that.
     async fn stop_server(stop_tx: oneshot::Sender<()>, handle: JoinHandle<()>) {
         let _ = stop_tx.send(());
-        handle.abort();
-        let _ = handle.await;
+        handle.await.expect("server task");
+    }
+
+    /// Builds a client without talking to anyone: `connect_lazy` hands back a
+    /// channel that only dials when it is first used. Pointed at a port nothing
+    /// is listening on, every call fails at the transport.
+    fn client_to_nowhere() -> GRPCClient {
+        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy();
+        let interceptor = ClientAuth::new("auth-key").expect("interceptor");
+        let shutdown: Box<dyn Fn() + Send + Sync + 'static> = Box::new(|| {});
+        GRPCClient::new(
+            GrpcClient::with_interceptor(channel, interceptor),
+            Arc::new(std::sync::RwLock::new(Some(shutdown))),
+        )
     }
 
     /// A rejected authentication token has to surface as an error - the very first
@@ -581,15 +595,7 @@ mod tests {
     /// than taking the process down.
     #[tokio::test(flavor = "multi_thread")]
     async fn select_reports_transport_errors_through_the_stream() {
-        let dir = TempDir::new().expect("tempdir");
-        let (addr, auth_key, stop_tx, handle) = serve_repository(&dir).await;
-
-        let client = GRPCClient::connect(addr, auth_key, || {})
-            .await
-            .expect("connect");
-
-        // The server goes away underneath a connected client.
-        stop_server(stop_tx, handle).await;
+        let client = client_to_nowhere();
 
         let files: Result<Vec<models::File>, _> = Syncer::<models::File>::select(&client, None)
             .await
@@ -605,5 +611,35 @@ mod tests {
             .try_collect()
             .await;
         assert!(blobs.is_err(), "expected a stream error for blobs as well");
+    }
+
+    /// The same for the other two syncers and the transfer request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn every_streaming_call_reports_transport_errors() {
+        let client = client_to_nowhere();
+
+        let states: Result<Vec<models::RepositorySyncState>, _> =
+            Syncer::<models::RepositorySyncState>::select(&client, ())
+                .await
+                .try_collect()
+                .await;
+        assert!(states.is_err(), "expected a stream error for sync states");
+
+        let metadata: Result<Vec<models::RepositoryMetadata>, _> =
+            Syncer::<models::RepositoryMetadata>::select(&client, None)
+                .await
+                .try_collect()
+                .await;
+        assert!(metadata.is_err(), "expected a stream error for metadata");
+
+        let items: Result<Vec<models::BlobTransferItem>, _> = client
+            .create_transfer_request(1, RepoID("repo".to_string()), vec![])
+            .await
+            .try_collect()
+            .await;
+        assert!(
+            items.is_err(),
+            "expected a stream error for the transfer request"
+        );
     }
 }
