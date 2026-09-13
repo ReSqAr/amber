@@ -82,6 +82,11 @@ where
 {
     let tracer = Tracer::new_on("sync_repositories");
 
+    // Both resume points are keyed by the repository whose log is being read:
+    // `local_last_indices` says how far the remote has consumed the *local* log
+    // (i.e. where the upload resumes) and `remote_last_indices` how far we have
+    // consumed the *remote* log (where the download resumes). Looking either one
+    // up under the wrong repository id silently skips log entries.
     let (local_last_indices, remote_last_indices) = try_join!(
         async {
             let tracer = Tracer::new_on("sync_repositories::local_last_indices");
@@ -92,7 +97,7 @@ where
         },
         async {
             let tracer = Tracer::new_on("sync_repositories::remote_last_indices");
-            let remote_meta = local.current().await?;
+            let remote_meta = remote.current().await?;
             let result = local.lookup(remote_meta.id).await;
             tracer.measure();
             result
