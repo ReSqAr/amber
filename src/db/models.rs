@@ -432,7 +432,7 @@ impl VirtualFile {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepositorySyncState {
     pub repo_id: RepoID,
     pub last_file_index: Option<u64>,
