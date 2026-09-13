@@ -134,6 +134,7 @@ dependencies = [
  "serde_arrow",
  "serde_json",
  "serial_test",
+ "subtle",
  "tempfile",
  "thiserror",
  "tokio",
