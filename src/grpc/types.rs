@@ -6,8 +6,8 @@ use crate::grpc::definitions::{
     Blob, CopiedTransferItem, File, FlightdeckData, FlightdeckMessage, FlightdeckObservation,
     RepositoryMetadata, RepositorySyncState, TransferItem,
 };
+use crate::utils::errors::InternalError;
 use chrono::{DateTime, TimeZone, Utc};
-use log::ParseLevelError;
 use prost_types::Timestamp;
 use std::str::FromStr;
 
@@ -162,11 +162,14 @@ impl From<models::CopiedTransferItem> for CopiedTransferItem {
 }
 
 impl TryFrom<FlightdeckMessage> for flightdeck::observation::Message {
-    type Error = ParseLevelError;
+    type Error = InternalError;
     fn try_from(m: FlightdeckMessage) -> Result<Self, Self::Error> {
+        let observation = m.observation.ok_or_else(|| {
+            InternalError::Grpc("flightdeck message without an observation".into())
+        })?;
         Ok(Self {
             level: log::Level::from_str(&m.level)?,
-            observation: m.observation.unwrap().into(),
+            observation: observation.into(),
         })
     }
 }
@@ -187,7 +190,10 @@ impl From<FlightdeckObservation> for flightdeck::observation::Observation {
             id: o.id,
             timestamp: timestamp_to_datetime(&o.timestamp),
             is_terminal: o.is_terminal,
-            data: o.data.into_iter().map(|d| d.into()).collect(),
+            // A data entry carrying no value at all - a peer using a `oneof`
+            // variant we do not know - is dropped rather than failing the whole
+            // observation: this is progress reporting, not repository state.
+            data: o.data.into_iter().filter_map(convert_data).collect(),
         }
     }
 }
@@ -204,12 +210,15 @@ impl From<flightdeck::observation::Observation> for FlightdeckObservation {
     }
 }
 
-#[allow(clippy::fallible_impl_from)]
-impl From<FlightdeckData> for flightdeck::observation::Data {
-    fn from(m: FlightdeckData) -> Self {
-        Self {
+fn convert_data(m: FlightdeckData) -> Option<flightdeck::observation::Data> {
+    match m.value {
+        Some(value) => Some(flightdeck::observation::Data {
             key: m.key,
-            value: m.value.unwrap().into(),
+            value: value.into(),
+        }),
+        None => {
+            log::debug!("dropping flightdeck data entry {} without a value", m.key);
+            None
         }
     }
 }
