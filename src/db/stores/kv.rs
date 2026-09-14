@@ -7,8 +7,9 @@ use futures::StreamExt;
 use futures_core::stream::BoxStream;
 use parking_lot::RwLock;
 use parking_lot::lock_api::MappedRwLockReadGuard;
-use rocksdb::{DB, IteratorMode};
+use rocksdb::{DB, IteratorMode, WriteBatch};
 use serde::{Serialize, de::DeserializeOwned};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -18,6 +19,8 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 const DEFAULT_BUFFER_SIZE: usize = 100;
+/// Number of changes accumulated into a single RocksDB write.
+const WRITE_BATCH_SIZE: usize = 1000;
 
 fn ser<T: Serialize + ?Sized>(v: &T) -> Result<Vec<u8>, DBError> {
     Ok(postcard::to_stdvec(v)?)
@@ -214,24 +217,31 @@ where
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::apply", name));
             let mut count = 0u64;
+            let mut batch = WriteBatch::default();
+            let mut batched = 0usize;
             while let Some(item) = rx.blocking_recv() {
                 let (key, value) = item?;
                 tracer.on();
 
                 let key_bytes = ser(&key)?;
                 match value {
-                    None => {
-                        db_ref.delete_opt(&key_bytes, &wo).map_err(Into::into)?;
-                    }
-                    Some(v) => {
-                        let val_bytes = ser(&v)?;
-                        db_ref
-                            .put_opt(&key_bytes, &val_bytes, &wo)
-                            .map_err(Into::into)?;
-                    }
+                    None => batch.delete(&key_bytes),
+                    Some(v) => batch.put(&key_bytes, &ser(&v)?),
                 }
                 count += 1;
+                batched += 1;
+
+                if batched >= WRITE_BATCH_SIZE {
+                    db_ref
+                        .write_opt(std::mem::take(&mut batch), &wo)
+                        .map_err(Into::into)?;
+                    batched = 0;
+                }
                 tracer.off();
+            }
+
+            if batched > 0 {
+                db_ref.write_opt(batch, &wo).map_err(Into::into)?;
             }
             tracer.measure();
 
@@ -265,6 +275,11 @@ where
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::upsert", name));
             let mut count = 0u64;
+            let mut batch = WriteBatch::default();
+            // Changes in the open batch are not visible to `get` yet, so an
+            // upsert of a key touched earlier in the same batch has to read its
+            // value from here to stay a read-modify-write.
+            let mut pending: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
             while let Some(item) = rx.blocking_recv() {
                 let item: U = item?;
@@ -272,38 +287,44 @@ where
                 tracer.on();
 
                 let key_bytes = ser(&key)?;
-                let existing = db_ref.get(&key_bytes).map_err(Into::into)?;
+                let existing = match pending.get(&key_bytes) {
+                    Some(pending) => pending.clone(),
+                    None => db_ref.get(&key_bytes).map_err(Into::into)?,
+                };
+                let current: Option<V> = match existing {
+                    Some(bytes) => Some(de(&bytes)?),
+                    None => None,
+                };
+                let existed = current.is_some();
 
-                match existing {
-                    Some(bytes) => {
-                        let current: V = de(&bytes)?;
-                        match item.upsert(Some(current)) {
-                            UpsertAction::Change(v) => {
-                                let v_bytes = ser(&v)?;
-                                db_ref
-                                    .put_opt(&key_bytes, &v_bytes, &wo)
-                                    .map_err(Into::into)?;
-                                count += 1;
-                            }
-                            UpsertAction::Delete => {
-                                db_ref.delete_opt(&key_bytes, &wo).map_err(Into::into)?;
-                                count += 1;
-                            }
-                            UpsertAction::NoChange => {}
-                        }
+                match item.upsert(current) {
+                    UpsertAction::Change(v) => {
+                        let v_bytes = ser(&v)?;
+                        batch.put(&key_bytes, &v_bytes);
+                        pending.insert(key_bytes, Some(v_bytes));
+                        count += 1;
                     }
-                    None => {
-                        if let UpsertAction::Change(v) = item.upsert(None) {
-                            let v_bytes = ser(&v)?;
-                            db_ref
-                                .put_opt(&key_bytes, &v_bytes, &wo)
-                                .map_err(Into::into)?;
-                            count += 1;
-                        }
+                    // Deleting a key that is not there changes nothing.
+                    UpsertAction::Delete if existed => {
+                        batch.delete(&key_bytes);
+                        pending.insert(key_bytes, None);
+                        count += 1;
                     }
+                    UpsertAction::Delete | UpsertAction::NoChange => {}
+                }
+
+                if pending.len() >= WRITE_BATCH_SIZE {
+                    db_ref
+                        .write_opt(std::mem::take(&mut batch), &wo)
+                        .map_err(Into::into)?;
+                    pending.clear();
                 }
 
                 tracer.off();
+            }
+
+            if !pending.is_empty() {
+                db_ref.write_opt(batch, &wo).map_err(Into::into)?;
             }
             tracer.measure();
 
@@ -399,6 +420,9 @@ where
 
         let bg = task::spawn_blocking(move || -> Result<u64, DBError> {
             let db_ref = Self::open_db(&db, &name, "streaming_upsert")?;
+            // Deliberately not batched, unlike `apply` and `upsert`: the consumer
+            // observes each row as it is produced and may read it back from the
+            // store, so a change has to be visible once it has been reported.
             let wo = options::write_options();
 
             let mut tracer = Tracer::new_off(format!("KVStore({})::streaming_upsert", name));
@@ -847,6 +871,107 @@ mod tests {
                 ("new_change".to_string(), 1),
             ],
         );
+
+        store.close().await.expect("close store");
+    }
+
+    /// Changes are accumulated into batches, so a stream longer than one batch
+    /// has to end up complete - including the trailing partial batch.
+    #[tokio::test]
+    async fn apply_writes_span_multiple_batches() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: Store<u64, u64> = Store::new(path, "apply-batches".to_string())
+            .await
+            .expect("create store");
+
+        let total = (WRITE_BATCH_SIZE * 2 + 7) as u64;
+        let items: Vec<Result<_, DBError>> = (0..total).map(|i| Ok((i, Some(i * 2)))).collect();
+
+        let written = store
+            .apply::<DBError>(stream::iter(items).boxed())
+            .await
+            .expect("apply items");
+        assert_eq!(written, total);
+
+        let mut contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        contents.sort_by_key(|(k, _)| *k);
+        assert_eq!(contents.len() as u64, total);
+        assert_eq!(contents.first(), Some(&(0u64, 0u64)));
+        assert_eq!(contents.last(), Some(&(total - 1, (total - 1) * 2)));
+
+        store.close().await.expect("close store");
+    }
+
+    /// An upsert is a read-modify-write, so repeated keys have to see the changes
+    /// made earlier in the same - not yet written - batch.
+    #[tokio::test]
+    async fn upsert_reads_changes_made_earlier_in_the_same_batch() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: Store<String, i32> = Store::new(path, "upsert-batch".to_string())
+            .await
+            .expect("create store");
+
+        let upserts: Vec<Result<_, DBError>> = (0..10)
+            .map(|_| {
+                Ok(SumUpsert {
+                    key: "counter".to_string(),
+                    delta: 1,
+                })
+            })
+            .collect();
+
+        let updated = store
+            .upsert::<_, DBError>(stream::iter(upserts).boxed())
+            .await
+            .expect("run upserts");
+        assert_eq!(updated, 10);
+
+        let contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        assert_eq!(contents, vec![("counter".to_string(), 10)]);
+
+        store.close().await.expect("close store");
+    }
+
+    /// The same, but with the repeats separated by a batch boundary: after the
+    /// batch has been written the value has to be read back from the store.
+    #[tokio::test]
+    async fn upsert_accumulates_across_batch_boundaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: Store<String, i32> = Store::new(path, "upsert-boundary".to_string())
+            .await
+            .expect("create store");
+
+        // Distinct keys push the shared key over successive batch boundaries.
+        let mut upserts: Vec<Result<_, DBError>> = Vec::new();
+        for i in 0..(WRITE_BATCH_SIZE * 2) {
+            upserts.push(Ok(SumUpsert {
+                key: "shared".to_string(),
+                delta: 1,
+            }));
+            upserts.push(Ok(SumUpsert {
+                key: format!("key-{i}"),
+                delta: 3,
+            }));
+        }
+
+        store
+            .upsert::<_, DBError>(stream::iter(upserts).boxed())
+            .await
+            .expect("run upserts");
+
+        let contents: Vec<_> = store.stream().try_collect().await.expect("collect");
+        let shared = contents
+            .iter()
+            .find(|(k, _)| k == "shared")
+            .expect("shared key");
+        assert_eq!(shared.1, (WRITE_BATCH_SIZE * 2) as i32);
+        assert_eq!(contents.len(), WRITE_BATCH_SIZE * 2 + 1);
 
         store.close().await.expect("close store");
     }

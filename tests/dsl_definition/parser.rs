@@ -65,7 +65,12 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
             })
         }
         token if token.starts_with('@') => {
-            let repo = token[1..].to_string();
+            // `@repo` runs in the repository root, `@repo/sub/dir` from a
+            // subdirectory of it (which also exercises repository discovery).
+            let (repo, subdir) = match token[1..].split_once('/') {
+                Some((repo, subdir)) => (repo.to_string(), Some(subdir.to_string())),
+                None => (token[1..].to_string(), None),
+            };
             if tokens.len() < 2 {
                 panic!("No command specified for repo {} in line: {}", repo, line);
             }
@@ -74,7 +79,11 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
                 "amber" => {
                     // All tokens from index 1 onward form the command.
                     let sub_command = tokens[1..].iter().map(|s| s.to_string()).collect();
-                    Some(CommandLine::AmberCommand { repo, sub_command })
+                    Some(CommandLine::AmberCommand {
+                        repo,
+                        subdir,
+                        sub_command,
+                    })
                 }
                 "expect" => {
                     // Format is: expect <expected failure> amber <sub cmds>
@@ -85,6 +94,7 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
                     let sub_command = tokens[3..].iter().map(|s| s.to_string()).collect();
                     Some(CommandLine::AmberCommandFailure {
                         repo,
+                        subdir,
                         sub_command,
                         expected_failure,
                     })
