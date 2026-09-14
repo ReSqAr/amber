@@ -1,20 +1,14 @@
-use crate::db::models::{
-    Blob, BlobID, File, Path as ModelPath, RepoID, RepositoryMetadata, RepositorySyncState, Uid,
-};
+use crate::db::models::{Blob, File, RepositoryMetadata, RepositorySyncState};
 use crate::repository::traits::{Syncer, SyncerParams};
 use crate::utils::errors::InternalError;
 use crate::utils::path::RepoPath;
-use arrow_array::builder::{
-    BooleanBuilder, StringBuilder, TimestampNanosecondBuilder, UInt64Builder,
-};
-use arrow_array::{
-    Array, BooleanArray, RecordBatch, StringArray, TimestampNanosecondArray, UInt64Array,
-};
+use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures_core::stream::BoxStream;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::arrow_writer::{ArrowWriter, ArrowWriterOptions};
+use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -109,7 +103,12 @@ where
             let bg = task::spawn_blocking(move || -> Result<(), InternalError> {
                 let file = std::fs::File::create_new(path.abs())?;
 
-                let props = WriterProperties::builder().build();
+                // The metadata stores are copied to and from the remote on every
+                // sync, so they are worth compressing. ZSTD at its default level
+                // decompresses about as fast as the uncompressed file reads.
+                let props = WriterProperties::builder()
+                    .set_compression(Compression::ZSTD(ZstdLevel::default()))
+                    .build();
                 let options = ArrowWriterOptions::new().with_properties(props);
 
                 let mut writer = ArrowWriter::try_new_with_options(file, T::schema(), options)
@@ -160,466 +159,72 @@ where
     }
 }
 
-impl ParquetRecord for File {
-    fn schema() -> SchemaRef {
-        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-        SCHEMA
-            .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("uid", DataType::UInt64, false),
-                    Field::new("path", DataType::Utf8, false),
-                    Field::new("blob_id", DataType::Utf8, true),
-                    Field::new(
-                        "valid_from",
-                        DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
-                        false,
-                    ),
-                ]))
-            })
-            .clone()
-    }
-
-    fn to_record_batch_many(items: &[Self]) -> Result<RecordBatch, InternalError> {
-        let n = items.len();
-
-        let mut uid_b = UInt64Builder::with_capacity(n);
-        let mut path_b = StringBuilder::with_capacity(n, n * 32);
-        let mut blob_id_b = StringBuilder::with_capacity(n, n * 32);
-        let mut ts_b = utc_ts_builder(n);
-
-        for it in items {
-            uid_b.append_value(it.uid.0);
-            path_b.append_value(&it.path.0);
-
-            if let Some(id) = &it.blob_id {
-                blob_id_b.append_value(&id.0);
-            } else {
-                blob_id_b.append_null();
+macro_rules! parquet_record {
+    ($ty:ty, $fields:expr) => {
+        impl ParquetRecord for $ty {
+            fn schema() -> SchemaRef {
+                static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+                SCHEMA
+                    .get_or_init(|| Arc::new(Schema::new($fields)))
+                    .clone()
             }
 
-            ts_b.append_value(it.valid_from.timestamp_nanos_opt().unwrap());
+            fn to_record_batch_many(items: &[Self]) -> Result<RecordBatch, InternalError> {
+                let schema = Self::schema();
+                serde_arrow::to_record_batch(schema.fields(), &items)
+                    .map_err(|e| parquet_error("build record batch", e))
+            }
+
+            fn from_batch(batch: &RecordBatch) -> Result<Vec<Self>, InternalError> {
+                serde_arrow::from_record_batch(batch)
+                    .map_err(|e| parquet_error("read record batch", e))
+            }
         }
-
-        let valid_from = finish_ts_utc(ts_b);
-
-        RecordBatch::try_new(
-            Self::schema(),
-            vec![
-                Arc::new(uid_b.finish()),
-                Arc::new(path_b.finish()),
-                Arc::new(blob_id_b.finish()),
-                Arc::new(valid_from),
-            ],
-        )
-        .map_err(|e| parquet_error("build record batch", e))
-    }
-
-    fn from_batch(batch: &RecordBatch) -> Result<Vec<Self>, InternalError> {
-        let uid = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("uid column missing".into()))?;
-
-        let path = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("path column missing".into()))?;
-
-        let blob_id = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("blob_id column missing".into()))?;
-
-        let valid_from = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| InternalError::Stream("valid_from column missing".into()))?;
-
-        let mut out = Vec::with_capacity(batch.num_rows());
-        for row in 0..batch.num_rows() {
-            if uid.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: uid".into()));
-            }
-            if path.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: path".into()));
-            }
-            if valid_from.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: valid_from".into()));
-            }
-
-            let nanos = valid_from.value(row);
-            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(nanos);
-
-            out.push(File {
-                uid: Uid(uid.value(row)),
-                path: ModelPath(path.value(row).to_string()),
-                blob_id: if blob_id.is_null(row) {
-                    None
-                } else {
-                    Some(BlobID(blob_id.value(row).to_string()))
-                },
-                valid_from: dt,
-            });
-        }
-        Ok(out)
-    }
+    };
 }
 
-impl ParquetRecord for Blob {
-    fn schema() -> SchemaRef {
-        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-        SCHEMA
-            .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("uid", DataType::UInt64, false),
-                    Field::new("repo_id", DataType::Utf8, false),
-                    Field::new("blob_id", DataType::Utf8, false),
-                    Field::new("blob_size", DataType::UInt64, false),
-                    Field::new("has_blob", DataType::Boolean, false),
-                    Field::new("path", DataType::Utf8, true),
-                    Field::new(
-                        "valid_from",
-                        DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
-                        false,
-                    ),
-                ]))
-            })
-            .clone()
-    }
+parquet_record!(
+    File,
+    vec![
+        Field::new("uid", DataType::UInt64, false),
+        Field::new("path", DataType::Utf8, false),
+        Field::new("blob_id", DataType::Utf8, true),
+        Field::new("valid_from", utc_timestamp(), false),
+    ]
+);
 
-    fn to_record_batch_many(items: &[Self]) -> Result<RecordBatch, InternalError> {
-        let n = items.len();
+parquet_record!(
+    Blob,
+    vec![
+        Field::new("uid", DataType::UInt64, false),
+        Field::new("repo_id", DataType::Utf8, false),
+        Field::new("blob_id", DataType::Utf8, false),
+        Field::new("blob_size", DataType::UInt64, false),
+        Field::new("has_blob", DataType::Boolean, false),
+        Field::new("path", DataType::Utf8, true),
+        Field::new("valid_from", utc_timestamp(), false),
+    ]
+);
 
-        let mut uid_b = UInt64Builder::with_capacity(n);
-        let mut repo_id_b = StringBuilder::with_capacity(n, n * 32);
-        let mut blob_id_b = StringBuilder::with_capacity(n, n * 32);
-        let mut blob_size_b = UInt64Builder::with_capacity(n);
-        let mut has_blob_b = BooleanBuilder::with_capacity(n);
-        let mut path_b = StringBuilder::with_capacity(n, n * 32);
-        let mut ts_b = utc_ts_builder(n);
+parquet_record!(
+    RepositoryMetadata,
+    vec![
+        Field::new("uid", DataType::UInt64, false),
+        Field::new("repo_id", DataType::Utf8, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("valid_from", utc_timestamp(), false),
+    ]
+);
 
-        for it in items {
-            uid_b.append_value(it.uid.0);
-            repo_id_b.append_value(&it.repo_id.0);
-            blob_id_b.append_value(&it.blob_id.0);
-            blob_size_b.append_value(it.blob_size);
-            has_blob_b.append_value(it.has_blob);
-
-            if let Some(p) = &it.path {
-                path_b.append_value(&p.0);
-            } else {
-                path_b.append_null();
-            }
-
-            ts_b.append_value(it.valid_from.timestamp_nanos_opt().unwrap());
-        }
-
-        let valid_from = finish_ts_utc(ts_b);
-
-        RecordBatch::try_new(
-            Self::schema(),
-            vec![
-                Arc::new(uid_b.finish()),
-                Arc::new(repo_id_b.finish()),
-                Arc::new(blob_id_b.finish()),
-                Arc::new(blob_size_b.finish()),
-                Arc::new(has_blob_b.finish()),
-                Arc::new(path_b.finish()),
-                Arc::new(valid_from),
-            ],
-        )
-        .map_err(|e| parquet_error("build record batch", e))
-    }
-
-    fn from_batch(batch: &RecordBatch) -> Result<Vec<Self>, InternalError> {
-        let uid = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("uid column missing".into()))?;
-        let repo_id = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("repo_id column missing".into()))?;
-        let blob_id = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("blob_id column missing".into()))?;
-        let blob_size = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("blob_size column missing".into()))?;
-        let has_blob = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BooleanArray>()
-            .ok_or_else(|| InternalError::Stream("has_blob column missing".into()))?;
-        let path = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("path column missing".into()))?;
-        let valid_from = batch
-            .column(6)
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| InternalError::Stream("valid_from column missing".into()))?;
-
-        let mut out = Vec::with_capacity(batch.num_rows());
-        for row in 0..batch.num_rows() {
-            if uid.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: uid".into()));
-            }
-            if repo_id.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: repo_id".into()));
-            }
-            if blob_id.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: blob_id".into()));
-            }
-            if blob_size.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: blob_size".into()));
-            }
-            if has_blob.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: has_blob".into()));
-            }
-            if valid_from.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: valid_from".into()));
-            }
-
-            let nanos = valid_from.value(row);
-            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(nanos);
-
-            out.push(Blob {
-                uid: Uid(uid.value(row)),
-                repo_id: RepoID(repo_id.value(row).to_string()),
-                blob_id: BlobID(blob_id.value(row).to_string()),
-                blob_size: blob_size.value(row),
-                has_blob: has_blob.value(row),
-                path: if path.is_null(row) {
-                    None
-                } else {
-                    Some(ModelPath(path.value(row).to_string()))
-                },
-                valid_from: dt,
-            });
-        }
-        Ok(out)
-    }
-}
-
-impl ParquetRecord for RepositoryMetadata {
-    fn schema() -> SchemaRef {
-        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-        SCHEMA
-            .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("uid", DataType::UInt64, false),
-                    Field::new("repo_id", DataType::Utf8, false),
-                    Field::new("name", DataType::Utf8, true),
-                    Field::new(
-                        "valid_from",
-                        DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
-                        false,
-                    ),
-                ]))
-            })
-            .clone()
-    }
-
-    fn to_record_batch_many(items: &[Self]) -> Result<RecordBatch, InternalError> {
-        let n = items.len();
-
-        let mut uid_b = UInt64Builder::with_capacity(n);
-        let mut repo_id_b = StringBuilder::with_capacity(n, n * 32);
-        let mut name_b = StringBuilder::with_capacity(n, n * 32);
-        let mut ts_b = utc_ts_builder(n);
-
-        for it in items {
-            uid_b.append_value(it.uid.0);
-            repo_id_b.append_value(&it.repo_id.0);
-            match &it.name {
-                Some(name) => name_b.append_value(name),
-                None => name_b.append_null(),
-            }
-            ts_b.append_value(it.valid_from.timestamp_nanos_opt().unwrap());
-        }
-
-        let valid_from = finish_ts_utc(ts_b);
-
-        RecordBatch::try_new(
-            Self::schema(),
-            vec![
-                Arc::new(uid_b.finish()),
-                Arc::new(repo_id_b.finish()),
-                Arc::new(name_b.finish()),
-                Arc::new(valid_from),
-            ],
-        )
-        .map_err(|e| parquet_error("build record batch", e))
-    }
-
-    fn from_batch(batch: &RecordBatch) -> Result<Vec<Self>, InternalError> {
-        let uid = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("uid column missing".into()))?;
-        let repo_id = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("repo_id column missing".into()))?;
-        let name = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("name column missing".into()))?;
-        let valid_from = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| InternalError::Stream("valid_from column missing".into()))?;
-
-        let mut out = Vec::with_capacity(batch.num_rows());
-        for row in 0..batch.num_rows() {
-            if uid.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: uid".into()));
-            }
-            if repo_id.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: repo_id".into()));
-            }
-            if valid_from.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: valid_from".into()));
-            }
-
-            let nanos = valid_from.value(row);
-            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(nanos);
-
-            out.push(RepositoryMetadata {
-                uid: Uid(uid.value(row)),
-                repo_id: RepoID(repo_id.value(row).to_string()),
-                name: if name.is_null(row) {
-                    None
-                } else {
-                    Some(name.value(row).to_string())
-                },
-                valid_from: dt,
-            });
-        }
-        Ok(out)
-    }
-}
-
-impl ParquetRecord for RepositorySyncState {
-    fn schema() -> SchemaRef {
-        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-        SCHEMA
-            .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("repo_id", DataType::Utf8, false),
-                    Field::new("last_file_index", DataType::UInt64, true),
-                    Field::new("last_blob_index", DataType::UInt64, true),
-                    Field::new("last_name_index", DataType::UInt64, true),
-                ]))
-            })
-            .clone()
-    }
-
-    fn to_record_batch_many(items: &[Self]) -> Result<RecordBatch, InternalError> {
-        let n = items.len();
-
-        let mut repo_id_b = StringBuilder::with_capacity(n, n * 32);
-        let mut last_file_b = UInt64Builder::with_capacity(n);
-        let mut last_blob_b = UInt64Builder::with_capacity(n);
-        let mut last_name_b = UInt64Builder::with_capacity(n);
-
-        for it in items {
-            repo_id_b.append_value(&it.repo_id.0);
-
-            match it.last_file_index {
-                Some(v) => last_file_b.append_value(v),
-                None => last_file_b.append_null(),
-            }
-            match it.last_blob_index {
-                Some(v) => last_blob_b.append_value(v),
-                None => last_blob_b.append_null(),
-            }
-            match it.last_name_index {
-                Some(v) => last_name_b.append_value(v),
-                None => last_name_b.append_null(),
-            }
-        }
-
-        RecordBatch::try_new(
-            Self::schema(),
-            vec![
-                Arc::new(repo_id_b.finish()),
-                Arc::new(last_file_b.finish()),
-                Arc::new(last_blob_b.finish()),
-                Arc::new(last_name_b.finish()),
-            ],
-        )
-        .map_err(|e| parquet_error("build record batch", e))
-    }
-
-    fn from_batch(batch: &RecordBatch) -> Result<Vec<Self>, InternalError> {
-        let repo_id = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| InternalError::Stream("repo_id column missing".into()))?;
-        let last_file = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("last_file_index column missing".into()))?;
-        let last_blob = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("last_blob_index column missing".into()))?;
-        let last_name = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or_else(|| InternalError::Stream("last_name_index column missing".into()))?;
-
-        let mut out = Vec::with_capacity(batch.num_rows());
-        for row in 0..batch.num_rows() {
-            if repo_id.is_null(row) {
-                return Err(InternalError::Stream("unexpected null: repo_id".into()));
-            }
-
-            out.push(RepositorySyncState {
-                repo_id: RepoID(repo_id.value(row).to_string()),
-                last_file_index: if last_file.is_null(row) {
-                    None
-                } else {
-                    Some(last_file.value(row))
-                },
-                last_blob_index: if last_blob.is_null(row) {
-                    None
-                } else {
-                    Some(last_blob.value(row))
-                },
-                last_name_index: if last_name.is_null(row) {
-                    None
-                } else {
-                    Some(last_name.value(row))
-                },
-            });
-        }
-
-        Ok(out)
-    }
-}
+parquet_record!(
+    RepositorySyncState,
+    vec![
+        Field::new("repo_id", DataType::Utf8, false),
+        Field::new("last_file_index", DataType::UInt64, true),
+        Field::new("last_blob_index", DataType::UInt64, true),
+        Field::new("last_name_index", DataType::UInt64, true),
+    ]
+);
 
 fn parquet_error(context: &str, e: impl std::fmt::Display) -> InternalError {
     InternalError::Parquet {
@@ -628,21 +233,51 @@ fn parquet_error(context: &str, e: impl std::fmt::Display) -> InternalError {
     }
 }
 
-fn utc_ts_builder(len: usize) -> TimestampNanosecondBuilder {
-    TimestampNanosecondBuilder::with_capacity(len)
-}
-
-fn finish_ts_utc(mut b: TimestampNanosecondBuilder) -> TimestampNanosecondArray {
-    b.finish().with_timezone("UTC".to_string())
+/// The timestamp type the stores have always used; serde_arrow converts the
+/// RFC 3339 strings chrono serialises into it, and back.
+fn utc_timestamp() -> DataType {
+    DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()))
 }
 
 #[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::{BlobID, Path as ModelPath, RepoID, Uid};
     use futures::TryStreamExt;
     use futures::stream;
     use tempfile::tempdir;
+
+    /// Files written before the codecs moved to serde_arrow have to stay
+    /// readable: they are sitting on people's rclone remotes. The fixture is
+    /// produced by the hand-written writer this replaces.
+    #[tokio::test]
+    async fn reads_a_legacy_file() -> Result<(), InternalError> {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let path = RepoPath::from_root(fixtures).join("legacy_blobs.parquet");
+        let parquet = Parquet::<Blob>::new(path);
+        let items: Vec<Blob> = parquet.select(None).await.try_collect().await?;
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].uid, Uid(0));
+        assert_eq!(items[0].repo_id, RepoID("repo-abc".to_string()));
+        assert_eq!(items[0].blob_id, BlobID("blob0".to_string()));
+        assert_eq!(items[0].blob_size, 100);
+        assert!(items[0].has_blob);
+        assert_eq!(
+            items[0].path.as_ref().map(|p| p.0.clone()),
+            Some("p/0.bin".to_string())
+        );
+        assert_eq!(
+            items[0].valid_from.timestamp_nanos_opt(),
+            Some(1_700_000_000_000_000_123)
+        );
+
+        assert!(items[1].path.is_none());
+        assert!(!items[1].has_blob);
+        assert_eq!(items[2].blob_id, BlobID("blob2".to_string()));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn parquet_file_round_trip() -> Result<(), InternalError> {
@@ -674,6 +309,54 @@ mod tests {
             items[0].valid_from.timestamp_nanos_opt().unwrap(),
             item.valid_from.timestamp_nanos_opt().unwrap()
         );
+        Ok(())
+    }
+
+    /// Blob rows are highly repetitive - the same repository id on every row, hex
+    /// blob ids - so compression pays for itself on every sync.
+    #[tokio::test]
+    async fn blobs_are_written_compressed() -> Result<(), InternalError> {
+        let temp = tempdir().map_err(InternalError::IO)?;
+        let path = RepoPath::from_root(temp.path()).join("blobs.parquet");
+        let parquet = Parquet::<Blob>::new(path.clone());
+
+        let items: Vec<Blob> = (0..5_000)
+            .map(|i| Blob {
+                uid: Uid(i),
+                repo_id: RepoID("11111111-2222-3333-4444-555555555555".to_string()),
+                blob_id: BlobID(format!("{:064x}", i)),
+                blob_size: i * 1024,
+                has_blob: true,
+                path: Some(ModelPath(format!("photos/2024/IMG_{i:05}.jpg"))),
+                valid_from: chrono::Utc::now(),
+            })
+            .collect();
+
+        parquet.merge(stream::iter(items.clone()).boxed()).await?;
+
+        let written = std::fs::metadata(path.abs())
+            .map_err(InternalError::IO)?
+            .len();
+        let raw: u64 = items
+            .iter()
+            .map(|b| {
+                (b.repo_id.0.len()
+                    + b.blob_id.0.len()
+                    + b.path.as_ref().map_or(0, |p| p.0.len())
+                    + 17) as u64
+            })
+            .sum();
+        assert!(
+            written < raw / 2,
+            "expected the file ({written} bytes) to be well under half the raw row bytes ({raw})"
+        );
+
+        // ... and it still reads back.
+        let read_back: Vec<_> = parquet.select(None).await.try_collect().await?;
+        assert_eq!(read_back.len(), items.len());
+        assert_eq!(read_back[0].blob_id, items[0].blob_id);
+        assert_eq!(read_back[4_999].blob_id, items[4_999].blob_id);
+
         Ok(())
     }
 

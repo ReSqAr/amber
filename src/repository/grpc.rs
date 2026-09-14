@@ -20,7 +20,7 @@ use crate::repository::traits::{
 use crate::utils::errors::InternalError;
 use backoff::future::retry;
 use backoff::{Error as BackoffError, ExponentialBackoff};
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, stream};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use log::debug;
@@ -31,7 +31,39 @@ use tokio::task::JoinHandle;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
 
-pub(crate) type ShutdownFn = Arc<std::sync::RwLock<Option<Box<dyn Fn() + Send + Sync + 'static>>>>;
+/// Tears down the transport behind a client - for an SSH remote, the port
+/// forwarding and the `serve` process on the other end.
+///
+/// Held by `Arc`, so it runs when the last clone of a `GRPCClient` goes away
+/// rather than the first: the client is cloned freely (`connection.remote`
+/// alone hands out clones), and dropping one clone must not disconnect the
+/// others. `close` runs it early and explicitly.
+pub(crate) struct Shutdown {
+    action: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync + 'static>>>,
+}
+
+impl Shutdown {
+    fn new(action: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
+        Self {
+            action: parking_lot::Mutex::new(Some(action)),
+        }
+    }
+
+    fn run(&self) {
+        let action = self.action.lock().take();
+        if let Some(action) = action {
+            action()
+        }
+    }
+}
+
+impl Drop for Shutdown {
+    fn drop(&mut self) {
+        self.run()
+    }
+}
+
+pub(crate) type ShutdownFn = Arc<Shutdown>;
 
 #[derive(Clone)]
 pub(crate) struct GRPCClient {
@@ -41,20 +73,8 @@ pub(crate) struct GRPCClient {
 
 impl GRPCClient {
     pub(crate) async fn close(&self) -> Result<(), InternalError> {
-        let mut guard = self.shutdown.write().unwrap();
-        if let Some(shutdown) = guard.take() {
-            shutdown()
-        };
+        self.shutdown.run();
         Ok(())
-    }
-}
-
-impl Drop for GRPCClient {
-    fn drop(&mut self) {
-        let mut guard = self.shutdown.write().unwrap();
-        if let Some(shutdown) = guard.take() {
-            shutdown()
-        }
     }
 }
 
@@ -122,9 +142,8 @@ impl GRPCClient {
             shutdown();
             flightdeck_handle.abort();
         });
-        let shutdown = Arc::new(std::sync::RwLock::new(Some(shutdown)));
 
-        Ok(Self::new(client, shutdown.clone()))
+        Ok(Self::new(client, Arc::new(Shutdown::new(shutdown))))
     }
 
     async fn forward_flightdeck_messages(
@@ -137,7 +156,7 @@ impl GRPCClient {
             .into_inner()
             .map(|m| {
                 m.map_err(Into::<InternalError>::into)
-                    .and_then(|m| Message::try_from(m).map_err(Into::into))
+                    .and_then(Message::try_from)
             });
 
         let forward_handle = tokio::spawn(async move {
@@ -150,6 +169,35 @@ impl GRPCClient {
         });
 
         Ok(forward_handle)
+    }
+}
+
+/// Turns the result of a server-streaming call into a stream.
+///
+/// The call itself can fail (transport, authentication, a server-side error
+/// raised before the first message); that failure has to be reported through the
+/// stream, because the `Syncer`/`Receiver` traits hand back a bare stream.
+fn response_stream<P, T>(
+    response: Result<tonic::Response<tonic::Streaming<P>>, tonic::Status>,
+    name: &'static str,
+    convert: fn(P) -> T,
+) -> BoxStream<'static, Result<T, InternalError>>
+where
+    P: Send + Sync + 'static,
+    T: Send + Sync + 'static,
+{
+    match response {
+        Ok(response) => response
+            .into_inner()
+            .map_ok(convert)
+            .err_into()
+            .boxed()
+            .track(name)
+            .boxed(),
+        Err(status) => {
+            log::error!("{name} failed: {status}");
+            stream::iter([Err(InternalError::Status(status))]).boxed()
+        }
     }
 }
 
@@ -210,18 +258,17 @@ impl Syncer<models::RepositorySyncState> for GRPCClient {
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositorySyncState, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
-            let mut guard = arc_client.write().await;
-            guard
-                .select_repository_sync_states(SelectRepositorySyncStatesRequest {})
-                .map_ok(tonic::Response::into_inner)
-                .map(|r| {
-                    r.unwrap()
-                        .err_into()
-                        .map_ok(models::RepositorySyncState::from)
-                })
-                .await
-                .track("GRPCClient::Syncer<models::Repository>::select")
-                .boxed()
+            let response = {
+                let mut guard = arc_client.write().await;
+                guard
+                    .select_repository_sync_states(SelectRepositorySyncStatesRequest {})
+                    .await
+            };
+            response_stream(
+                response,
+                "GRPCClient::Syncer<models::Repository>::select",
+                models::RepositorySyncState::from,
+            )
         }
         .boxed()
     }
@@ -250,14 +297,15 @@ impl Syncer<models::File> for GRPCClient {
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::File, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
-            let mut guard = arc_client.write().await;
-            guard
-                .select_files(SelectFilesRequest { last_index })
-                .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::File::from))
-                .await
-                .track("GRPCClient::Syncer<models::File>::select")
-                .boxed()
+            let response = {
+                let mut guard = arc_client.write().await;
+                guard.select_files(SelectFilesRequest { last_index }).await
+            };
+            response_stream(
+                response,
+                "GRPCClient::Syncer<models::File>::select",
+                models::File::from,
+            )
         }
         .boxed()
     }
@@ -287,14 +335,15 @@ impl Syncer<models::Blob> for GRPCClient {
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::Blob, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
-            let mut guard = arc_client.write().await;
-            guard
-                .select_blobs(SelectBlobsRequest { last_index })
-                .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::Blob::from))
-                .await
-                .track("GRPCClient::Syncer<models::Blob>::select")
-                .boxed()
+            let response = {
+                let mut guard = arc_client.write().await;
+                guard.select_blobs(SelectBlobsRequest { last_index }).await
+            };
+            response_stream(
+                response,
+                "GRPCClient::Syncer<models::Blob>::select",
+                models::Blob::from,
+            )
         }
         .boxed()
     }
@@ -324,18 +373,17 @@ impl Syncer<models::RepositoryMetadata> for GRPCClient {
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::RepositoryMetadata, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
-            let mut guard = arc_client.write().await;
-            guard
-                .select_repository_metadata(SelectRepositoryMetadataRequest { last_index })
-                .map_ok(tonic::Response::into_inner)
-                .map(|r| {
-                    r.unwrap()
-                        .err_into()
-                        .map_ok(models::RepositoryMetadata::from)
-                })
-                .await
-                .track("GRPCClient::Syncer<models::RepositoryMetadata>::select")
-                .boxed()
+            let response = {
+                let mut guard = arc_client.write().await;
+                guard
+                    .select_repository_metadata(SelectRepositoryMetadataRequest { last_index })
+                    .await
+            };
+            response_stream(
+                response,
+                "GRPCClient::Syncer<models::RepositoryMetadata>::select",
+                models::RepositoryMetadata::from,
+            )
         }
         .boxed()
     }
@@ -403,18 +451,21 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
     ) -> BoxFuture<'_, BoxStream<'static, Result<models::BlobTransferItem, InternalError>>> {
         let arc_client = self.client.clone();
         async move {
-            let mut guard = arc_client.write().await;
-            guard
-                .create_transfer_request(CreateTransferRequestRequest {
-                    transfer_id,
-                    repo_id: repo_id.0,
-                    paths,
-                })
-                .map_ok(tonic::Response::into_inner)
-                .map(|r| r.unwrap().err_into().map_ok(models::BlobTransferItem::from))
-                .await
-                .track("GRPCClient::Receiver<models::BlobTransferItem>>::create_transfer_request")
-                .boxed()
+            let response = {
+                let mut guard = arc_client.write().await;
+                guard
+                    .create_transfer_request(CreateTransferRequestRequest {
+                        transfer_id,
+                        repo_id: repo_id.0,
+                        paths,
+                    })
+                    .await
+            };
+            response_stream(
+                response,
+                "GRPCClient::Receiver<models::BlobTransferItem>>::create_transfer_request",
+                models::BlobTransferItem::from,
+            )
         }
         .boxed()
     }
@@ -434,5 +485,225 @@ impl Receiver<models::BlobTransferItem> for GRPCClient {
             Ok(count)
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::serve;
+    use crate::flightdeck::output::Output;
+    use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
+    use crate::utils::port::find_available_port;
+    use futures::TryStreamExt;
+    use std::io::Write;
+    use std::sync::atomic::AtomicUsize;
+    use tempfile::TempDir;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
+    struct Sink;
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn sink() -> Output {
+        Output::Override(Arc::new(std::sync::Mutex::new(
+            Box::new(Sink) as Box<dyn Write + Send + Sync>
+        )))
+    }
+
+    /// Serves a fresh repository on a free port; returns the address, the auth key
+    /// it expects, a handle to stop it and the join handle of the server task.
+    async fn serve_repository(
+        dir: &TempDir,
+    ) -> (String, String, oneshot::Sender<()>, JoinHandle<()>) {
+        let root = dir.path().join("repo");
+        tokio::fs::create_dir_all(&root).await.expect("create root");
+        LocalRepository::create(
+            LocalRepositoryConfig {
+                maybe_root: Some(root.clone()),
+                app_folder: ".amb".into(),
+                preferred_capability: None,
+            },
+            "served".into(),
+        )
+        .await
+        .expect("create repository")
+        .close()
+        .await
+        .expect("close repository");
+
+        let port = find_available_port().await.expect("free port");
+        let auth_key = serve::generate_auth_key();
+        let (stop_tx, stop_rx) = oneshot::channel();
+
+        let auth_key_clone = auth_key.clone();
+        let handle = tokio::spawn(async move {
+            let shutdown = async {
+                let _ = stop_rx.await;
+            }
+            .boxed();
+            if let Err(e) = serve::serve_on_port(
+                Some(root),
+                ".amb".into(),
+                None,
+                sink(),
+                port,
+                auth_key_clone,
+                shutdown,
+            )
+            .await
+            {
+                log::error!("test server stopped with an error: {e}");
+            }
+        });
+
+        (
+            format!("http://127.0.0.1:{port}"),
+            auth_key,
+            stop_tx,
+            handle,
+        )
+    }
+
+    /// Stops the server and waits for it to shut down cleanly, which is what
+    /// closes the repository it serves. No connected client may remain: a client
+    /// holds its flightdeck stream open for its whole lifetime, and a graceful
+    /// shutdown waits for exactly that.
+    async fn stop_server(stop_tx: oneshot::Sender<()>, handle: JoinHandle<()>) {
+        let _ = stop_tx.send(());
+        handle.await.expect("server task");
+    }
+
+    /// A rejected authentication token has to surface as an error - the very first
+    /// thing a client does is an RPC, so this is the failed-call path.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn connecting_with_a_wrong_auth_key_is_an_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let (addr, _auth_key, stop_tx, handle) = serve_repository(&dir).await;
+
+        let client = GRPCClient::connect(addr, "not-the-auth-key".to_string(), || {}).await;
+        assert!(
+            client.is_err(),
+            "expected an authentication error, got a connected client"
+        );
+
+        stop_server(stop_tx, handle).await;
+    }
+
+    /// The `Syncer`/`Receiver` traits hand back a bare stream, so a failure of the
+    /// streaming call itself has to be reported as an item of that stream rather
+    /// than taking the process down. The lazy client points at a port nothing is
+    /// listening on, so every call fails at the transport.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn select_reports_transport_errors_through_the_stream() {
+        let client = lazy_client(|| {});
+
+        let files: Result<Vec<models::File>, _> = Syncer::<models::File>::select(&client, None)
+            .await
+            .try_collect()
+            .await;
+        assert!(
+            files.is_err(),
+            "expected the failed call to be reported as a stream error"
+        );
+
+        let blobs: Result<Vec<models::Blob>, _> = Syncer::<models::Blob>::select(&client, None)
+            .await
+            .try_collect()
+            .await;
+        assert!(blobs.is_err(), "expected a stream error for blobs as well");
+    }
+
+    /// The same for the other two syncers and the transfer request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn every_streaming_call_reports_transport_errors() {
+        let client = lazy_client(|| {});
+
+        let states: Result<Vec<models::RepositorySyncState>, _> =
+            Syncer::<models::RepositorySyncState>::select(&client, ())
+                .await
+                .try_collect()
+                .await;
+        assert!(states.is_err(), "expected a stream error for sync states");
+
+        let metadata: Result<Vec<models::RepositoryMetadata>, _> =
+            Syncer::<models::RepositoryMetadata>::select(&client, None)
+                .await
+                .try_collect()
+                .await;
+        assert!(metadata.is_err(), "expected a stream error for metadata");
+
+        let items: Result<Vec<models::BlobTransferItem>, _> = client
+            .create_transfer_request(1, RepoID("repo".to_string()), vec![])
+            .await
+            .try_collect()
+            .await;
+        assert!(
+            items.is_err(),
+            "expected a stream error for the transfer request"
+        );
+    }
+
+    /// Builds a client without talking to anyone: `connect_lazy` hands back a
+    /// channel that only dials when it is first used.
+    fn lazy_client(shutdown: impl Fn() + Send + Sync + 'static) -> GRPCClient {
+        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy();
+        let interceptor = ClientAuth::new("auth-key").expect("interceptor");
+        GRPCClient::new(
+            GrpcClient::with_interceptor(channel, interceptor),
+            Arc::new(Shutdown::new(Box::new(shutdown))),
+        )
+    }
+
+    /// `connection.remote` hands out clones, so tearing the transport down when
+    /// the first one is dropped would disconnect the clones still in use.
+    #[tokio::test]
+    async fn dropping_a_clone_does_not_shut_the_client_down() {
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let counter = calls.clone();
+        let client = lazy_client(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let clone = client.clone();
+        drop(clone);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "dropping a clone must not shut the client down"
+        );
+
+        drop(client);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the last clone going away must shut the client down"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_shuts_the_client_down_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let counter = calls.clone();
+        let client = lazy_client(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        client.close().await.expect("close");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Neither a second close nor the drop repeats it.
+        client.close().await.expect("close again");
+        drop(client);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

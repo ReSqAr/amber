@@ -598,6 +598,37 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 }
 
+/// amber verifies host keys against `known_hosts`, so the key of each test
+/// server has to be recorded before a client connects to it. The file is shared
+/// by all servers in this process; entries are keyed by port, so they cannot
+/// collide.
+fn record_known_host(port: u16, key: &PrivateKey) -> anyhow::Result<(), anyhow::Error> {
+    use std::io::Write as _;
+
+    static KNOWN_HOSTS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    let path = KNOWN_HOSTS.get_or_init(|| {
+        let path =
+            std::env::temp_dir().join(format!("amber-test-known-hosts-{}", std::process::id()));
+        amber::set_ssh_known_hosts_path(path.clone());
+        path
+    });
+
+    let _guard = LOCK.lock().map_err(|e| anyhow::anyhow!("poisoned: {e}"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        "[localhost]:{port} {}",
+        key.public_key().to_openssh()?
+    )?;
+    file.flush()?;
+    Ok(())
+}
+
 pub async fn start_ssh_server(
     repo_path: PathBuf,
     app_folder: PathBuf,
@@ -607,6 +638,7 @@ pub async fn start_ssh_server(
     let (tx, rx) = oneshot::channel();
 
     let key_pair = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?;
+    record_known_host(ssh_port, &key_pair)?;
 
     let config = russh::server::Config {
         auth_rejection_time: std::time::Duration::from_secs(1),
