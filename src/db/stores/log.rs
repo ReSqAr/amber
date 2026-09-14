@@ -4,7 +4,7 @@ use crate::db::stores::options;
 use crate::flightdeck::tracer::Tracer;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use rocksdb::{DB, Direction, IteratorMode, WriteOptions};
+use rocksdb::{DB, Direction, IteratorMode, WriteBatch, WriteOptions};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
@@ -137,6 +137,9 @@ where
 {
     inner: Arc<Inner>,
     write_opt: WriteOptions,
+    /// Entries written but not yet committed. Held in memory so that nothing
+    /// reaches the database until the transaction commits.
+    batch: WriteBatch,
     /// Last offset written by this transaction (if any).
     last_offset: Option<Offset>,
     tail_cancels: Mutex<Vec<tokio::sync::oneshot::Sender<()>>>,
@@ -256,6 +259,7 @@ where
         Ok(Transaction {
             inner: Arc::clone(&self.inner),
             write_opt: options::write_options(),
+            batch: WriteBatch::default(),
             last_offset: None,
             tail_cancels: Mutex::new(Vec::new()),
             closed: false,
@@ -287,9 +291,9 @@ where
         let key = offset_to_key(offset_u64);
         let bytes = ser(v)?;
 
-        let guard = self.inner.db.read();
-        let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
-        db_ref.put_opt(key, &bytes, &self.write_opt)?;
+        // Staged only - an entry becomes visible to the database when the
+        // transaction commits, so an abandoned transaction leaves nothing behind.
+        self.batch.put(key, &bytes);
         self.last_offset = Some(offset);
 
         Ok(())
@@ -297,6 +301,27 @@ where
 
     pub fn flush_blocking(&mut self) -> Result<Option<Offset>> {
         self.persist_and_publish_blocking()
+    }
+
+    /// Marks the transaction as no longer active and discards anything staged.
+    ///
+    /// Kept separate from `close_blocking` so that a transaction abandoned
+    /// without closing - an error path, a panic - does not leave the writer
+    /// permanently refusing new transactions.
+    fn release(&mut self) {
+        self.batch = WriteBatch::default();
+
+        // Uncommitted offsets were never written, so hand them back rather than
+        // leaving a hole in the log for the rest of the process's life.
+        let next = match self.inner.current_watermark() {
+            Some(w) => w.0.saturating_add(1),
+            None => 0,
+        };
+        self.inner.next_offset.store(next, Ordering::SeqCst);
+
+        if let Ok(mut guard) = self.inner.active_tx.write() {
+            *guard = false;
+        }
     }
 
     pub fn close_blocking(mut self) -> Result<Option<Offset>> {
@@ -309,9 +334,7 @@ where
             }
         }
 
-        if let Ok(mut g) = self.inner.active_tx.write() {
-            *g = false;
-        }
+        self.release();
 
         res
     }
@@ -327,6 +350,10 @@ where
         ));
         let guard = self.inner.db.read();
         let db_ref = guard.as_ref().ok_or(Error::AccessAfterDrop)?;
+        // Apply the staged entries atomically, then make them durable. Until
+        // this point nothing the transaction wrote exists in the database.
+        let batch = std::mem::take(&mut self.batch);
+        db_ref.write_opt(batch, &self.write_opt)?;
         db_ref.flush()?;
         tracer.measure();
 
@@ -432,6 +459,21 @@ where
         });
 
         ReceiverStream::new(rx).boxed()
+    }
+}
+
+impl<V> Drop for Transaction<V>
+where
+    V: Serialize + DeserializeOwned + Send + 'static,
+{
+    fn drop(&mut self) {
+        if !self.closed {
+            log::debug!(
+                "log::Transaction({}) abandoned without closing",
+                self.inner.name
+            );
+            self.release();
+        }
     }
 }
 
@@ -1018,5 +1060,173 @@ mod tests {
 
             writer.close().await.expect("close writer");
         }
+    }
+
+    /// The entries of an abandoned transaction must not come back as committed
+    /// history. Nothing enforces that at read time, so it has to hold on disk:
+    /// staged entries never enter the database at all.
+    ///
+    /// Fails before this change: closing the database flushes the memtable, so
+    /// the uncommitted entry became durable and `Writer::open` - which took the
+    /// highest key present as the watermark - counted it as committed.
+    #[tokio::test]
+    async fn abandoned_transaction_leaves_nothing_behind_on_reopen() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        {
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("create writer");
+
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&"committed".to_string()).expect("put");
+            assert_eq!(tx.flush_blocking().expect("commit"), Some(Offset(0)));
+
+            tx.put_blocking(&"uncommitted".to_string()).expect("put");
+
+            // Abandoned without closing, then an ordinary shutdown.
+            drop(tx);
+            writer.close().await.expect("close writer");
+        }
+
+        let writer: Writer<String> =
+            Writer::open(path.clone(), "test".to_string()).expect("reopen writer");
+
+        let items: Vec<(Offset, String)> = writer
+            .reader()
+            .from(Offset::start())
+            .try_collect()
+            .await
+            .expect("collect stream");
+
+        assert_eq!(items, vec![(Offset(0), "committed".to_string())]);
+        assert_eq!(writer.watermark(), Some(Offset(0)));
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// Even an explicit memtable flush in the middle of a transaction cannot
+    /// make uncommitted entries durable, because they are not in the memtable.
+    #[tokio::test]
+    async fn a_memtable_flush_cannot_publish_uncommitted_entries() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        {
+            let writer: Writer<String> =
+                Writer::open(path.clone(), "test".to_string()).expect("create writer");
+
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&"committed".to_string()).expect("put");
+            tx.flush_blocking().expect("commit");
+
+            tx.put_blocking(&"uncommitted".to_string()).expect("put");
+            {
+                let guard = writer.inner.db.read();
+                guard.as_ref().expect("db").flush().expect("flush memtable");
+            }
+
+            drop(tx);
+            writer.close().await.expect("close writer");
+        }
+
+        let writer: Writer<String> =
+            Writer::open(path.clone(), "test".to_string()).expect("reopen writer");
+
+        let items: Vec<(Offset, String)> = writer
+            .reader()
+            .from(Offset::start())
+            .try_collect()
+            .await
+            .expect("collect stream");
+
+        assert_eq!(items, vec![(Offset(0), "committed".to_string())]);
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// A transaction dropped without closing - an error path, a panic - used to
+    /// leave the active-transaction flag set, so the writer refused every later
+    /// transaction for the rest of the process's life.
+    #[tokio::test]
+    async fn abandoning_a_transaction_releases_the_writer() {
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
+
+        {
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&1).expect("put");
+            drop(tx);
+        }
+
+        let mut tx = writer.transaction().expect("start tx after abandoned one");
+        tx.put_blocking(&2).expect("put");
+        tx.close_blocking().expect("close");
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// Offsets staged by an abandoned transaction were never written, so they
+    /// are handed back rather than left as a permanent hole in the log.
+    #[tokio::test]
+    async fn abandoned_offsets_are_reused() {
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
+
+        {
+            let mut tx = writer.transaction().expect("start tx");
+            tx.put_blocking(&1).expect("put");
+            tx.flush_blocking().expect("commit");
+
+            // Staged, then abandoned.
+            tx.put_blocking(&2).expect("put");
+            tx.put_blocking(&3).expect("put");
+            drop(tx);
+        }
+
+        let mut tx = writer.transaction().expect("start second tx");
+        tx.put_blocking(&4).expect("put");
+        let last = tx.close_blocking().expect("close");
+
+        assert_eq!(last, Some(Offset(1)));
+
+        let items: Vec<(Offset, u64)> = writer
+            .reader()
+            .from(Offset::start())
+            .try_collect()
+            .await
+            .expect("collect stream");
+        assert_eq!(items, vec![(Offset(0), 1), (Offset(1), 4)]);
+
+        writer.close().await.expect("close writer");
+    }
+
+    /// Several commits in one transaction, as `reduced::add` does every
+    /// `flush_size` rows: each applies its own staged entries and nothing else.
+    #[tokio::test]
+    async fn each_commit_applies_only_its_own_entries() {
+        let (_tmp, writer): (_, Writer<u64>) = make_writer();
+
+        let mut tx = writer.transaction().expect("start tx");
+
+        tx.put_blocking(&1).expect("put");
+        tx.put_blocking(&2).expect("put");
+        assert_eq!(tx.flush_blocking().expect("commit"), Some(Offset(1)));
+
+        tx.put_blocking(&3).expect("put");
+        assert_eq!(tx.flush_blocking().expect("commit"), Some(Offset(2)));
+
+        // Nothing left staged, so a further commit publishes nothing new.
+        assert_eq!(tx.flush_blocking().expect("commit"), Some(Offset(2)));
+
+        tx.close_blocking().expect("close");
+
+        let items: Vec<(Offset, u64)> = writer
+            .reader()
+            .from(Offset::start())
+            .try_collect()
+            .await
+            .expect("collect stream");
+        assert_eq!(items, vec![(Offset(0), 1), (Offset(1), 2), (Offset(2), 3)]);
+
+        writer.close().await.expect("close writer");
     }
 }
