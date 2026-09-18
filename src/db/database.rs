@@ -530,9 +530,13 @@ impl Database {
         let s = self
             .logs
             .blobs
-            .left_join_current(s, move |(_, cf)| BlobRef {
-                blob_id: cf.map(|(_, b)| b.into_inner()).unwrap_or(BlobID("".into())), // yz - this is wrong - needs some missing value
-                repo_id: repo_id.clone(),
+            // A file with no current entry has no blob to look up: there is no
+            // key to join on rather than a key which happens to find nothing.
+            .left_join_current_opt(s, move |(_, cf)| {
+                cf.map(|(_, b)| BlobRef {
+                    blob_id: b.into_inner(),
+                    repo_id: repo_id.clone(),
+                })
             })
             .map_ok(|((f, cf), cb)| (f, cf, cb))
             .boxed();

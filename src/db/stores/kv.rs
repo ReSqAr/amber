@@ -353,6 +353,24 @@ where
         KF: Fn(IK) -> K + Sync + Send + 'static,
         IK: Clone + Send + Sync + 'static,
     {
+        self.left_join_opt(s, move |k| Some(key_func(k)))
+    }
+
+    /// [`left_join`](Self::left_join) where an item need not have a key.
+    ///
+    /// An item whose key function returns `None` has nothing to join against,
+    /// so it yields `None` without a lookup - rather than forcing the caller to
+    /// invent a key it knows does not exist.
+    pub(crate) fn left_join_opt<IK, KF, E>(
+        &self,
+        s: BoxStream<'static, Result<IK, E>>,
+        key_func: KF,
+    ) -> BoxStream<'static, Result<(IK, Option<V>), E>>
+    where
+        E: From<DBError> + Debug + Send + Sync + 'static,
+        KF: Fn(IK) -> Option<K> + Sync + Send + 'static,
+        IK: Clone + Send + Sync + 'static,
+    {
         let (tx_in, mut rx_in) = mpsc::channel::<Result<_, E>>(DEFAULT_BUFFER_SIZE);
         let (tx, rx) = flightdeck::tracked::mpsc_channel::<Result<_, E>>(
             format!("KVStore({})::left_join", self.name),
@@ -368,7 +386,11 @@ where
                 let mut tracer = Tracer::new_off(format!("KVStore({})::left_join", name));
                 while let Some(key_like) = rx_in.blocking_recv() {
                     let key_like: IK = key_like?;
-                    let key: K = key_func(key_like.clone());
+                    let Some(key): Option<K> = key_func(key_like.clone()) else {
+                        tx.blocking_send(Ok((key_like, None)))
+                            .map_err(Into::<DBError>::into)?;
+                        continue;
+                    };
                     tracer.on();
 
                     let key_bytes = ser(&key)?;
@@ -1066,6 +1088,53 @@ mod tests {
 
         let entries: Vec<_> = store.stream().try_collect().await.expect("collect store");
         assert_eq!(entries, vec![("existing".to_string(), 42)]);
+
+        store.close().await.expect("close store");
+    }
+
+    /// An item with no key joins to nothing without consulting the store, so a
+    /// caller with nothing to look up does not have to invent a key it knows
+    /// will miss.
+    #[tokio::test]
+    async fn left_join_opt_skips_items_without_a_key() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("db");
+
+        let store: Store<String, i32> = Store::new(path, "left-join-opt".to_string())
+            .await
+            .expect("create store");
+
+        let seed = vec![
+            Ok(("have".to_string(), Some(9))),
+            Ok(("".to_string(), Some(-1))),
+        ];
+        store
+            .apply::<DBError>(stream::iter(seed).boxed())
+            .await
+            .expect("seed store");
+
+        let items: Vec<Result<_, DBError>> = vec![
+            Ok(Some("have".to_string())),
+            Ok(None),
+            Ok(Some("missing".to_string())),
+        ];
+
+        let results: Vec<_> = store
+            .left_join_opt(stream::iter(items).boxed(), |k: Option<String>| k)
+            .try_collect()
+            .await
+            .expect("collect left join");
+
+        assert_eq!(
+            results,
+            vec![
+                (Some("have".to_string()), Some(9)),
+                // Not the value stored under the empty key, which is what a
+                // caller inventing a key would have found.
+                (None, None),
+                (Some("missing".to_string()), None),
+            ]
+        );
 
         store.close().await.expect("close store");
     }
