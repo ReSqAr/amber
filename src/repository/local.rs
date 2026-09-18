@@ -148,7 +148,7 @@ impl LocalRepository {
         let repo = db
             .get_or_create_current_repository()
             .await
-            .expect("failed to create repo id");
+            .inspect_err(|e| log::error!("failed to create repo id: {e}"))?;
 
         debug!("db connected");
 
@@ -202,7 +202,7 @@ impl LocalRepository {
         let repo = db
             .get_or_create_current_repository()
             .await
-            .expect("failed to create repo id");
+            .inspect_err(|e| log::error!("failed to create repo id: {e}"))?;
 
         db.add_repository_metadata(
             stream::iter([models::InsertRepositoryMetadata {
