@@ -147,6 +147,25 @@ where
             .boxed()
     }
 
+    /// [`left_join_current`](Self::left_join_current) where an item need not
+    /// have a key - see [`kv::Store::left_join_opt`].
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn left_join_current_opt<IK, KF, E>(
+        &self,
+        s: BoxStream<'static, Result<IK, E>>,
+        key_func: KF,
+    ) -> BoxStream<'static, Result<(IK, Option<(V, S::V)>), E>>
+    where
+        KF: Fn(IK) -> Option<K> + Sync + Send + 'static,
+        IK: Clone + Send + Sync + 'static,
+        E: From<DBError> + Debug + Send + Sync + 'static,
+    {
+        self.reduced
+            .left_join_opt(s, key_func)
+            .map_ok(|(k, o)| (k, o.map(|(v, vs, _)| (v, vs))))
+            .boxed()
+    }
+
     pub(crate) fn left_join_known_uids<IK, KF>(
         &self,
         s: BoxStream<'static, Result<IK, DBError>>,
