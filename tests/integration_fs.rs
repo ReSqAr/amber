@@ -167,6 +167,8 @@ async fn integration_mv_not_yet_pushed_dir() -> anyhow::Result<(), anyhow::Error
     dsl_definition::run_dsl_script(script).await
 }
 
+/// The path the error names is the one that is in the way - the destination.
+/// It used to report the source, which is the one path the user knows exists.
 #[tokio::test(flavor = "multi_thread")]
 async fn integration_mv_destination_file_exists() -> anyhow::Result<(), anyhow::Error> {
     let script = r#"
@@ -176,7 +178,7 @@ async fn integration_mv_destination_file_exists() -> anyhow::Result<(), anyhow::
         @a amber add
 
         # action
-        @a expect "destination a.txt does already exist" amber mv a.txt b.txt
+        @a expect "destination b.txt does already exist" amber mv a.txt b.txt
 
         # assert
         @a assert_exists a.txt "A"
@@ -834,6 +836,46 @@ async fn integration_test_add_and_status_from_subdirectory() -> anyhow::Result<(
         assert_output_contains "2 materialised files"
         @a amber status
         assert_output_contains "2 materialised files"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// `rm` stages its work in a scratch database under `.amb/staging`. `mv` clears
+/// that directory when it is done; `rm` used to leave it behind, so the scratch
+/// database sat in the repository until the next command opened it.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rm_cleans_up_its_staging_directory() -> anyhow::Result<(), anyhow::Error>
+{
+    let script = r#"
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a amber rm test.txt
+
+        # then
+        @a assert_does_not_exist .amb/staging
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// The same for `mv`, which closes the scratch database only after the
+/// directory holding it has been removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_mv_cleans_up_its_staging_directory() -> anyhow::Result<(), anyhow::Error>
+{
+    let script = r#"
+        @a amber init a
+        @a write_file test.txt "Hello world!"
+        @a amber add
+
+        # action
+        @a amber mv test.txt moved.txt
+
+        # then
+        @a assert_exists moved.txt "Hello world!"
+        @a assert_does_not_exist .amb/staging
     "#;
     dsl_definition::run_dsl_script(script).await
 }

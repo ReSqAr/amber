@@ -17,6 +17,10 @@ use tokio::task;
 
 const DEFAULT_BUFFER_SIZE: usize = 100;
 const FLUSH_ROWS: usize = 16384;
+/// Rows decoded per arrow batch. The channel downstream is per row, so this
+/// only sets how much work each decode does - a batch of 100 pays the
+/// per-batch overhead 160 times more often than it needs to.
+const READ_BATCH_ROWS: usize = 16384;
 
 pub trait ParquetRecord: Sized + Send + Sync + 'static {
     fn schema() -> SchemaRef;
@@ -66,7 +70,7 @@ where
                     let file = std::fs::File::open(path)?;
                     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
                         .map_err(|e| parquet_error("open parquet reader", e))?
-                        .with_batch_size(DEFAULT_BUFFER_SIZE);
+                        .with_batch_size(READ_BATCH_ROWS);
 
                     let mut reader = builder
                         .build()
@@ -148,7 +152,13 @@ where
 
             let mut stream = s;
             while let Some(item) = stream.next().await {
-                tx.send(Ok(item)).await?;
+                // The writer drops the receiver when it fails, so a send error
+                // means it has already stopped. Reporting that as a send error
+                // would hide why - stop feeding it and let the writer's own
+                // error come back out of `bg`.
+                if tx.send(Ok(item)).await.is_err() {
+                    break;
+                }
             }
             drop(tx);
 
@@ -426,6 +436,39 @@ mod tests {
         assert_eq!(items[1].repo_id, item1.repo_id);
         assert_eq!(items[1].name, item1.name);
         Ok(())
+    }
+
+    /// The writer drops its receiver when it fails, so feeding it afterwards
+    /// fails too. Reporting that send would say "observation send error" and
+    /// bury what actually went wrong.
+    #[tokio::test]
+    async fn a_writer_failure_is_reported_rather_than_the_send_that_follows_it() {
+        let temp = tempdir().expect("tempdir");
+        let path = RepoPath::from_root(temp.path()).join("blobs.parquet");
+        std::fs::write(path.abs(), b"in the way").expect("occupy the path");
+
+        let parquet = Parquet::<Blob>::new(path);
+        let items: Vec<Blob> = (0..10_000)
+            .map(|i| Blob {
+                uid: Uid(i),
+                repo_id: RepoID("repo".to_string()),
+                blob_id: BlobID(format!("{i:064x}")),
+                blob_size: i,
+                has_blob: true,
+                path: None,
+                valid_from: chrono::Utc::now(),
+            })
+            .collect();
+
+        let err = parquet
+            .merge(stream::iter(items).boxed())
+            .await
+            .expect_err("writing over an existing file must fail");
+
+        assert!(
+            matches!(err, InternalError::IO(_)),
+            "expected the writer's own I/O error, got {err:?}"
+        );
     }
 
     #[tokio::test]

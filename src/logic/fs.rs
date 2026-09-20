@@ -50,7 +50,9 @@ pub async fn compute_mv_type_hint(
     let dst_folder_like = destination_ends_with_slash || dst_is_dir;
 
     if dst_is_file {
-        return Err(AppError::DestinationDoesExist(source.to_string_lossy().to_string()).into());
+        return Err(
+            AppError::DestinationDoesExist(destination.to_string_lossy().to_string()).into(),
+        );
     }
 
     if src_is_file && dst_folder_like {
@@ -258,6 +260,8 @@ pub(crate) async fn rm(
         .observe_termination(log::Level::Info, format!("{msg} in {duration:.2?}"));
 
     scratch.close().await?;
+    files::cleanup_staging(&local.staging_path()).await?;
+
     if error_count > 0 {
         Err(AppError::RmErrors.into())
     } else {
@@ -336,7 +340,6 @@ pub(crate) async fn mv(
              ..
          }| (p, b),
     );
-    let s = s.map_ok(|(src, b)| (src.clone(), b));
     let dst_clone = dst.clone();
     let s = local.left_join_current_files(s.boxed(), move |(src, _)| dst_clone(&src));
     let s = s
@@ -513,18 +516,163 @@ pub(crate) async fn mv(
         msg.push(format!("encountered {error_count} errors"));
     }
 
+    // The scratch store lives under the staging directory, so it has to be
+    // closed before that directory goes away - not after.
+    scratch.close().await?;
     files::cleanup_staging(&local.staging_path()).await?;
 
     let msg = msg.join(" and ");
     let duration = start_time.elapsed();
     let msg = format!("{msg} in {duration:.2?}");
 
-    scratch.close().await?;
     obs.lock().await.observe_termination(log::Level::Info, msg);
 
     if error_count > 0 {
         Err(AppError::MvErrors.into())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// `compute_mv_type_hint` reads a trailing slash off the argument as the
+    /// user typed it, so the paths here are built as strings rather than
+    /// joined - `PathBuf::join` drops it.
+    fn arg(root: &std::path::Path, rest: &str) -> PathBuf {
+        PathBuf::from(format!("{}/{rest}", root.display()))
+    }
+
+    async fn write(root: &std::path::Path, rest: &str) {
+        let path = root.join(rest);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await.expect("create parent");
+        }
+        fs::write(path, b"contents").await.expect("write file");
+    }
+
+    #[tokio::test]
+    async fn a_file_moved_onto_a_free_name_is_a_file_move() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+        write(&root, "from.txt").await;
+
+        let (src, dst, kind) = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "from.txt"),
+            &arg(&root, "to.txt"),
+        )
+        .await
+        .expect("a file move");
+
+        assert_eq!(kind, PathType::File);
+        assert_eq!(src.rel().to_string_lossy(), "from.txt");
+        assert_eq!(dst.rel().to_string_lossy(), "to.txt");
+    }
+
+    #[tokio::test]
+    async fn an_existing_directory_is_a_directory_move() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+        write(&root, "photos/one.jpg").await;
+
+        let (_, _, kind) = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "photos"),
+            &arg(&root, "pictures"),
+        )
+        .await
+        .expect("a directory move");
+
+        assert_eq!(kind, PathType::Dir);
+    }
+
+    /// Neither side is on disk - a purely virtual move of files the repository
+    /// knows about but has not materialised.
+    #[tokio::test]
+    async fn two_paths_that_do_not_exist_are_undecided() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+
+        let (_, _, kind) = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "gone.txt"),
+            &arg(&root, "also-gone.txt"),
+        )
+        .await
+        .expect("an undecided move");
+
+        assert_eq!(kind, PathType::Unknown);
+    }
+
+    /// A trailing slash is a directory hint even when nothing is there yet.
+    #[tokio::test]
+    async fn a_trailing_slash_makes_it_a_directory_move() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+
+        let (_, _, kind) = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "photos/"),
+            &arg(&root, "pictures/"),
+        )
+        .await
+        .expect("a directory move");
+
+        assert_eq!(kind, PathType::Dir);
+    }
+
+    /// The error has to name the path that is in the way - the destination -
+    /// not the source the user is moving.
+    #[tokio::test]
+    async fn an_occupied_destination_is_named_in_the_error() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+        write(&root, "from.txt").await;
+        write(&root, "taken.txt").await;
+
+        let err = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "from.txt"),
+            &arg(&root, "taken.txt"),
+        )
+        .await
+        .expect_err("the destination is occupied");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("taken.txt"),
+            "expected the destination in {message}"
+        );
+        assert!(
+            !message.contains("from.txt"),
+            "expected the source not to be reported as existing: {message}"
+        );
+    }
+
+    /// Moving a file into a directory is not supported - and the directory is
+    /// what the error is about.
+    #[tokio::test]
+    async fn a_file_moved_into_a_directory_is_rejected() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonicalize");
+        write(&root, "from.txt").await;
+        fs::create_dir_all(root.join("into")).await.expect("mkdir");
+
+        let err = compute_mv_type_hint(
+            RepoPath::from_root(root.clone()),
+            &arg(&root, "from.txt"),
+            &arg(&root, "into"),
+        )
+        .await
+        .expect_err("a file cannot be moved onto a directory");
+
+        assert!(
+            err.to_string().contains("into"),
+            "expected the directory in {err}"
+        );
     }
 }

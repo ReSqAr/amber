@@ -118,3 +118,32 @@ async fn integration_test_fsck_quarantine_behavior_with_ref_links()
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// A blob whose backing file has gone - deleted by hand, lost to a failing
+/// disk - is exactly what fsck is for. It used to abort the whole run with the
+/// underlying "no such file" error instead, so every blob after it went
+/// unchecked.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_fsck_reports_a_blob_whose_file_is_gone()
+-> anyhow::Result<(), anyhow::Error> {
+    let script = r#"
+        @a amber init a
+        @a write_file empty.txt ""
+        @a write_file other.txt "Hello world!"
+        @a amber add
+
+        # The blob backing the empty file: blake3("") is well known.
+        @a assert_exists .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+        @a remove_file .amb/blobs/af/13/49b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+
+        # action: fsck completes rather than failing on the missing file
+        @a amber fsck
+        assert_output_contains "blob missing"
+        assert_output_contains "checked 2 blobs"
+
+        # then: the blob is recorded as lost, so the file is reported missing
+        @a amber missing
+        assert_output_contains "missing empty.txt (lost - no known location)"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
