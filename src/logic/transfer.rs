@@ -268,7 +268,7 @@ pub async fn transfer<T: TransferItem>(
         })
     })
     .boxed();
-    let (stream, _) = scratch.streaming_upsert(stream);
+    let (stream, staging_writes) = scratch.streaming_upsert(stream);
     let stream = TokioStreamExt::filter_map(stream, move |item| match item {
         Ok(UpsertedValue {
             previous_value: Some(_),
@@ -319,6 +319,10 @@ pub async fn transfer<T: TransferItem>(
         })?;
 
         writing_task.await??;
+        // Dropping this handle detaches the task staging the transfer items, so
+        // a failure writing them would never be reported and the transfer would
+        // quietly carry on with fewer blobs than it selected.
+        staging_writes.await??;
 
         count
     };
