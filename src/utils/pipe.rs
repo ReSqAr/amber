@@ -1,8 +1,9 @@
 use futures::Stream;
+use parking_lot::Mutex;
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -34,7 +35,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // If we've already recorded an error, produce no more items.
-        if self.shared_error.lock().unwrap().is_some() {
+        if self.shared_error.lock().is_some() {
             return Poll::Ready(None);
         }
 
@@ -46,7 +47,7 @@ where
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Ok(item))) => Poll::Ready(Some(item)),
             Poll::Ready(Some(Err(e))) => {
-                *this.shared_error.lock().unwrap() = Some(e);
+                *this.shared_error.lock() = Some(e);
                 Poll::Ready(None)
             }
         }
@@ -79,7 +80,7 @@ pub(crate) trait TryForwardIntoExt<I, EStream>:
         let result = f(adapter).await;
 
         // If the upstream encountered an error, return that first converted into EFinal
-        if let Some(err) = shared_error.lock().unwrap().take() {
+        if let Some(err) = shared_error.lock().take() {
             return Err(err.into());
         }
 
