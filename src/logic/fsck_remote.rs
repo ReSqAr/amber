@@ -38,6 +38,35 @@ pub struct ObservedBlob {
     pub valid_from: DateTime<Utc>,
 }
 
+/// Turns one rclone check result into the blob observation to record.
+///
+/// `blob` is the entry the scratch store holds for the checked path. It is
+/// `None` when rclone reports an object that was never staged for this run - a
+/// leftover from an interrupted fsck, or anything else that happens to sit in
+/// the directory being checked. Such an object is not one of the blobs under
+/// test and there is nothing to record for it, so it is skipped rather than
+/// taking the process down.
+fn check_result_to_blob(observed: ObservedBlob, blob: Option<SizedBlobID>) -> Option<InsertBlob> {
+    let Some(blob) = blob else {
+        log::warn!(
+            "fsck: ignoring object reported by rclone which was not staged for checking: {}",
+            observed.path.0
+        );
+        BaseObserver::with_id("rclone:check", observed.path.0)
+            .observe_termination(log::Level::Warn, "unexpected object - ignored");
+        return None;
+    };
+
+    Some(InsertBlob {
+        repo_id: observed.repo_id,
+        blob_id: blob.blob_id,
+        blob_size: blob.blob_size,
+        has_blob: observed.has_blob,
+        path: Some(observed.path),
+        valid_from: observed.valid_from,
+    })
+}
+
 pub(crate) async fn fsck_remote(
     local: &(impl Config + Local + Adder + Sync + Send + Clone + 'static),
     remote: &(impl Metadata + Availability + RcloneTargetPath),
@@ -174,18 +203,9 @@ pub(crate) async fn fsck_remote(
             .left_join::<_, _, InternalError>(futures::StreamExt::boxed(s), |e: ObservedBlob| {
                 e.path
             });
-        let s = StreamExt::map(s, |r| {
-            r.map(|(o, b)| {
-                let b = b.unwrap();
-                InsertBlob {
-                    repo_id: o.repo_id,
-                    blob_id: b.blob_id,
-                    blob_size: b.blob_size,
-                    has_blob: o.has_blob,
-                    path: Some(o.path),
-                    valid_from: o.valid_from,
-                }
-            })
+        let s = StreamExt::filter_map(s, |r| match r {
+            Ok((o, b)) => check_result_to_blob(o, b).map(Ok),
+            Err(e) => Some(Err(e)),
         });
         s.try_forward_into::<_, _, _, _, InternalError>(|s| {
             local_clone.add_blobs(futures::StreamExt::boxed(s))
@@ -383,4 +403,56 @@ async fn execute_rclone(
     Observer::without_id("rclone").observe_termination(log::Level::Info, msg);
 
     Ok(final_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::models::BlobID;
+
+    fn observed(path: &str, has_blob: bool) -> ObservedBlob {
+        ObservedBlob {
+            repo_id: RepoID("repo".into()),
+            has_blob,
+            path: models::Path(path.into()),
+            valid_from: Utc::now(),
+        }
+    }
+
+    fn staged() -> SizedBlobID {
+        SizedBlobID {
+            blob_id: BlobID("abc123".into()),
+            blob_size: 42,
+        }
+    }
+
+    #[test]
+    fn a_checked_blob_is_recorded_with_its_staged_identity() {
+        let insert = check_result_to_blob(observed("some/blob", true), Some(staged()))
+            .expect("a staged blob is recorded");
+
+        assert_eq!(insert.blob_id, BlobID("abc123".into()));
+        assert_eq!(insert.blob_size, 42);
+        assert!(insert.has_blob);
+        assert_eq!(insert.path, Some(models::Path("some/blob".into())));
+    }
+
+    /// A failed check is recorded too - that is how corruption is reported -
+    /// it just carries `has_blob: false`.
+    #[test]
+    fn a_failed_check_is_recorded_as_missing() {
+        let insert = check_result_to_blob(observed("some/blob", false), Some(staged()))
+            .expect("a staged blob is recorded");
+
+        assert!(!insert.has_blob);
+    }
+
+    /// rclone reports whatever it finds in the directory it is pointed at. An
+    /// object that was never staged for this run has no entry in the scratch
+    /// store; it must be skipped rather than panicking the fsck.
+    #[test]
+    fn an_object_that_was_never_staged_is_skipped() {
+        assert!(check_result_to_blob(observed("stray/object", true), None).is_none());
+        assert!(check_result_to_blob(observed("stray/object", false), None).is_none());
+    }
 }
