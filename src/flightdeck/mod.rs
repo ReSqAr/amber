@@ -124,12 +124,12 @@ impl FlightDeck {
                 msg = rx_guard.recv() => {
                     match msg {
                         Some(Flow::Data(Message { level, observation })) => {
-                            self.manager.observe(level, observation.clone()).await;
+                            self.manager.observe(level, observation).await;
                         },
                         Some(Flow::Shutdown) => {
                             while let Ok(msg) = rx_guard.try_recv() {
                                 if let Flow::Data(Message { level, observation }) = msg {
-                                    self.manager.observe(level, observation.clone()).await;
+                                    self.manager.observe(level, observation).await;
                                 }
                             }
                             self.manager.flush().await;

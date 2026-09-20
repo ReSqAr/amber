@@ -223,14 +223,8 @@ pub async fn state_with_checks(
     let root = vfs.root();
     let last_seen_id = current_timestamp_ns();
 
-    let mut vfs_obs = BaseObserver::without_id("vfs:refresh");
-    vfs_obs.observe_state(log::Level::Debug, "refreshing virtual filesystem...");
-    let start_time = tokio::time::Instant::now();
-    let duration = start_time.elapsed();
-    vfs_obs.observe_termination(
-        log::Level::Debug,
-        format!("refreshed virtual filesystem in {:.2?}", duration),
-    );
+    BaseObserver::without_id("vfs:refresh")
+        .observe_state(log::Level::Debug, "refreshing virtual filesystem...");
 
     let buffer_size = vfs.buffer_size(BufferType::StateBufferChannelSize);
     let checker_buffer_size = vfs.buffer_size(BufferType::StateCheckerParallelism);
