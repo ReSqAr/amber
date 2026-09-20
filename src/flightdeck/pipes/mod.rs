@@ -19,14 +19,19 @@ pub struct Pipes {
 
 impl Pipes {
     pub(crate) async fn observe(&mut self, level: log::Level, obs: Observation) {
+        // Every observation in the process passes through here, so the pipe
+        // that sees it last takes it instead of working from one more clone.
         if let Some(progress_manager) = self.progress_bar.as_mut() {
             progress_manager.observe(level, obs.clone());
         }
-        if let Some(file_manager) = self.file.as_mut() {
-            file_manager.observe(level, obs.clone());
-        }
-        if let Some(terminal_manager) = self.terminal.as_mut() {
-            terminal_manager.observe(level, obs.clone());
+        match (self.file.as_mut(), self.terminal.as_mut()) {
+            (Some(file_manager), Some(terminal_manager)) => {
+                file_manager.observe(level, obs.clone());
+                terminal_manager.observe(level, obs);
+            }
+            (Some(file_manager), None) => file_manager.observe(level, obs),
+            (None, Some(terminal_manager)) => terminal_manager.observe(level, obs),
+            (None, None) => {}
         }
 
         let needs_flush = self
