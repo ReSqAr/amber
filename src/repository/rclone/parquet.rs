@@ -17,6 +17,10 @@ use tokio::task;
 
 const DEFAULT_BUFFER_SIZE: usize = 100;
 const FLUSH_ROWS: usize = 16384;
+/// Rows decoded per arrow batch. The channel downstream is per row, so this
+/// only sets how much work each decode does - a batch of 100 pays the
+/// per-batch overhead 160 times more often than it needs to.
+const READ_BATCH_ROWS: usize = 16384;
 
 pub trait ParquetRecord: Sized + Send + Sync + 'static {
     fn schema() -> SchemaRef;
@@ -66,7 +70,7 @@ where
                     let file = std::fs::File::open(path)?;
                     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
                         .map_err(|e| parquet_error("open parquet reader", e))?
-                        .with_batch_size(DEFAULT_BUFFER_SIZE);
+                        .with_batch_size(READ_BATCH_ROWS);
 
                     let mut reader = builder
                         .build()

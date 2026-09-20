@@ -62,7 +62,8 @@ fn write_rclone_files_clone<T: TransferItem>(
             tokio_stream::StreamExt::chunks_timeout(rx, writer_buffer_size, TIMEOUT).boxed();
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
-                acc.push_str(&(item.path() + "\n"));
+                acc.push_str(&item.path());
+                acc.push('\n');
                 acc
             });
 

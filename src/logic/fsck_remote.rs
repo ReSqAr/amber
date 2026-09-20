@@ -256,7 +256,8 @@ fn write_rclone_files_fsck_clone(
         );
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, path| {
-                acc.push_str(&(path + "\n"));
+                acc.push_str(&path);
+                acc.push('\n');
                 acc
             });
 
