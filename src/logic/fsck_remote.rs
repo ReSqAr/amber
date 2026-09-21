@@ -256,7 +256,8 @@ fn write_rclone_files_fsck_clone(
         );
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, path| {
-                acc.push_str(&(path + "\n"));
+                acc.push_str(&path);
+                acc.push('\n');
                 acc
             });
 
@@ -275,6 +276,19 @@ fn write_rclone_files_fsck_clone(
 enum RCloneResult {
     Success(String),
     Failure(String),
+}
+
+/// Hands one check result to the task recording them.
+///
+/// That task stops at the first error it hits and drops the receiver with it.
+/// rclone is still running and still reporting, so a send after that is an
+/// ordinary outcome - not a reason to panic out of the callback and, with
+/// `panic = "abort"`, take the process down. The error the task returns is
+/// what gets reported.
+fn send_result(listener: &mpsc::UnboundedSender<RCloneResult>, result: RCloneResult) {
+    if listener.send(result).is_err() {
+        log::debug!("fsck: result receiver has gone - dropping the check result");
+    }
 }
 
 async fn execute_rclone(
@@ -306,13 +320,13 @@ async fn execute_rclone(
             RcloneEvent::Ok(object) => {
                 let new_count = count_clone.fetch_add(1, Ordering::Relaxed) + 1;
                 obs.observe_position(log::Level::Trace, new_count);
-                listener.send(RCloneResult::Success(object)).unwrap();
+                send_result(&listener, RCloneResult::Success(object));
             }
             RcloneEvent::Fail(object) => {
                 let new_count = count_clone.fetch_add(1, Ordering::Relaxed) + 1;
                 obs.observe_position(log::Level::Trace, new_count);
                 failed_count_clone.fetch_add(1, Ordering::Relaxed);
-                listener.send(RCloneResult::Failure(object)).unwrap();
+                send_result(&listener, RCloneResult::Failure(object));
             }
             RcloneEvent::UnknownMessage(msg) => {
                 detail_obs.observe_state(log::Level::Debug, msg);

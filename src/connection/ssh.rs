@@ -226,6 +226,26 @@ fn known_hosts_override() -> Option<std::path::PathBuf> {
     std::env::var_os(KNOWN_HOSTS_ENV).map(std::path::PathBuf::from)
 }
 
+/// The `known_hosts` file rclone should verify against.
+///
+/// rclone's sftp backend does no host key checking unless it is given a file,
+/// so the blob transfer would otherwise trust whatever answers - even though
+/// the control connection right next to it insists on a recorded key. Never
+/// `None`: falling back to no file would quietly give that trust back.
+pub(crate) fn known_hosts_file_path() -> std::path::PathBuf {
+    if let Some(path) = known_hosts_override() {
+        return path;
+    }
+    match std::env::var_os("HOME") {
+        Some(home) => std::path::PathBuf::from(home)
+            .join(".ssh")
+            .join("known_hosts"),
+        // rclone expands `~` itself, so it still ends up at the same file the
+        // control connection consulted.
+        None => std::path::PathBuf::from("~/.ssh/known_hosts"),
+    }
+}
+
 /// Checks a server key against `known_hosts` - the user's own file, or `path`
 /// when one is given.
 pub(crate) fn verify_host_key(
@@ -533,6 +553,13 @@ impl RCloneTarget for SshTarget {
             SshAuth::Agent => lines.push("key_use_agent = true".into()),
         }
 
+        // Without this rclone accepts any host key, so a transfer could be
+        // intercepted even though the control connection verified the host.
+        lines.push(format!(
+            "known_hosts_file = {}",
+            known_hosts_file_path().display()
+        ));
+
         lines.push("".into());
         ConfigSection::Config(lines.join("\n"))
     }
@@ -672,5 +699,41 @@ mod tests {
     #[test]
     fn an_empty_password_stays_empty() {
         assert_eq!(rclone_obscure_password(""), "");
+    }
+
+    fn rclone_config_for(auth: SshAuth) -> String {
+        let target = SshConfig {
+            application: "amber".into(),
+            host: "tycho.com".into(),
+            port: Some(2222),
+            user: "holden".into(),
+            auth,
+            remote_path: "/home/holden".into(),
+        }
+        .as_rclone_target("/home/holden/.amb/staging/t1".into());
+
+        match target.to_config_section() {
+            ConfigSection::Config(config) => config,
+            ConfigSection::None | ConfigSection::GlobalConfig => {
+                panic!("an ssh target configures its own remote")
+            }
+        }
+    }
+
+    /// rclone's sftp backend checks no host key unless it is given a file, so
+    /// without this the blobs would travel over a connection amber never
+    /// authenticated - while the control connection beside it insists on a
+    /// recorded key.
+    #[test]
+    fn the_rclone_remote_verifies_the_host_key() {
+        let file = known_hosts_file_path();
+
+        for auth in [SshAuth::Agent, SshAuth::Password("hunter2".into())] {
+            let config = rclone_config_for(auth);
+            assert!(
+                config.contains(&format!("known_hosts_file = {}", file.display())),
+                "expected host key verification to be configured, got:\n{config}"
+            );
+        }
     }
 }

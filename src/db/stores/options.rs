@@ -1,5 +1,15 @@
 use rocksdb::{BlockBasedOptions, Cache, DBCompressionType, Options, WriteOptions};
 
+/// The block cache every store shares.
+///
+/// A repository opens a dozen or so databases - six key-value stores, four per
+/// reduced store, plus a scratch store per command. A cache built per database
+/// would give each of them its own budget, so the process would be sized for a
+/// dozen times what was intended. RocksDB caches are built to be shared, so
+/// there is one.
+static BLOCK_CACHE: once_cell::sync::Lazy<Cache> =
+    once_cell::sync::Lazy::new(|| Cache::new_lru_cache(128 * 1024 * 1024));
+
 pub(crate) fn make_options() -> Options {
     let mut opts = Options::default();
 
@@ -15,8 +25,7 @@ pub(crate) fn make_options() -> Options {
     block_opts.set_bloom_filter(10.0, false);
 
     // Cache data/index/filter blocks in memory.
-    let cache = Cache::new_lru_cache(128 * 1024 * 1024);
-    block_opts.set_block_cache(&cache);
+    block_opts.set_block_cache(&BLOCK_CACHE);
     block_opts.set_cache_index_and_filter_blocks(true);
 
     // Reasonable block size
