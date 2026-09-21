@@ -403,7 +403,7 @@ where
                 })
                 .await
                 {
-                    eprintln!("tail initial snapshot join error: {join_err:?}");
+                    log::error!("tail initial snapshot join error: {join_err:?}");
                     return;
                 }
 
@@ -423,7 +423,7 @@ where
                                     let tx = tx.clone();
                                     move || pump_range_blocking::<V>(db, next, wm, tx)
                                }).await {
-                                eprintln!("tail final drain join error: {join_err:?}");
+                                log::error!("tail final drain join error: {join_err:?}");
                             }
                         break;
                     }
@@ -447,7 +447,7 @@ where
                             let tx = tx.clone();
                             move || pump_range_blocking::<V>(db, next, wm, tx)
                         }).await {
-                            eprintln!("tail live join error: {join_err:?}");
+                            log::error!("tail live join error: {join_err:?}");
                             break;
                         }
 
