@@ -278,6 +278,38 @@ enum RCloneResult {
     Failure(String),
 }
 
+/// Tallies one object's verdict. A retry re-checks the whole --files-from list,
+/// so the same object is reported once per attempt: count it only the first
+/// time, and let the latest attempt decide whether it still counts as altered.
+/// Every result is still forwarded to the listener, so the corrected verdict
+/// reaches the database.
+fn record_verdict(
+    verdicts: &mut HashMap<String, bool>,
+    obs: &mut Observer<BaseObservable>,
+    count: &AtomicU64,
+    failed_count: &AtomicU64,
+    object: &str,
+    failed: bool,
+) {
+    match verdicts.insert(object.to_owned(), failed) {
+        None => {
+            let new_count = count.fetch_add(1, Ordering::Relaxed) + 1;
+            obs.observe_position(log::Level::Trace, new_count);
+            if failed {
+                failed_count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        Some(previous) if previous != failed => {
+            if failed {
+                failed_count.fetch_add(1, Ordering::Relaxed);
+            } else {
+                failed_count.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+        Some(_) => {}
+    }
+}
+
 /// Hands one check result to the task recording them.
 ///
 /// That task stops at the first error it hits and drops the receiver with it.
@@ -315,17 +347,29 @@ async fn execute_rclone(
     let count_clone = Arc::clone(&count);
     let failed_count_clone = Arc::clone(&failed_count);
     let mut files: HashMap<String, Observer<BaseObservable>> = HashMap::new();
+    let mut verdicts: HashMap<String, bool> = HashMap::new();
     let callback = move |event: RcloneEvent| {
         match event {
             RcloneEvent::Ok(object) => {
-                let new_count = count_clone.fetch_add(1, Ordering::Relaxed) + 1;
-                obs.observe_position(log::Level::Trace, new_count);
+                record_verdict(
+                    &mut verdicts,
+                    &mut obs,
+                    &count_clone,
+                    &failed_count_clone,
+                    &object,
+                    false,
+                );
                 send_result(&listener, RCloneResult::Success(object));
             }
             RcloneEvent::Fail(object) => {
-                let new_count = count_clone.fetch_add(1, Ordering::Relaxed) + 1;
-                obs.observe_position(log::Level::Trace, new_count);
-                failed_count_clone.fetch_add(1, Ordering::Relaxed);
+                record_verdict(
+                    &mut verdicts,
+                    &mut obs,
+                    &count_clone,
+                    &failed_count_clone,
+                    &object,
+                    true,
+                );
                 send_result(&listener, RCloneResult::Failure(object));
             }
             RcloneEvent::UnknownMessage(msg) => {
@@ -423,6 +467,47 @@ async fn execute_rclone(
 mod tests {
     use super::*;
     use crate::db::models::BlobID;
+
+    fn tally(verdicts: &[(&str, bool)]) -> (u64, u64) {
+        let count = AtomicU64::new(0);
+        let failed_count = AtomicU64::new(0);
+        let mut seen: HashMap<String, bool> = HashMap::new();
+        let mut obs = Observer::without_id("test");
+
+        for (object, failed) in verdicts {
+            record_verdict(&mut seen, &mut obs, &count, &failed_count, object, *failed);
+        }
+
+        (
+            count.load(Ordering::Relaxed),
+            failed_count.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn test_record_verdict_counts_each_object_once_per_check() {
+        assert_eq!(tally(&[("a", false), ("b", false)]), (2, 0));
+    }
+
+    #[test]
+    fn test_record_verdict_ignores_a_repeated_attempt() {
+        // A retry re-checks everything, so each object shows up again unchanged.
+        assert_eq!(
+            tally(&[("a", false), ("b", true), ("a", false), ("b", true)]),
+            (2, 1)
+        );
+    }
+
+    #[test]
+    fn test_record_verdict_lets_a_later_attempt_clear_a_failure() {
+        // Transient read error on the first attempt, fine on the second.
+        assert_eq!(tally(&[("a", true), ("a", false)]), (1, 0));
+    }
+
+    #[test]
+    fn test_record_verdict_lets_a_later_attempt_raise_a_failure() {
+        assert_eq!(tally(&[("a", false), ("a", true)]), (1, 1));
+    }
 
     fn observed(path: &str, has_blob: bool) -> ObservedBlob {
         ObservedBlob {
