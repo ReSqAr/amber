@@ -57,6 +57,14 @@ pub enum AppError {
     },
     #[error("please run fsck: state of file {p} cannot be determined", p = path.0)]
     FileStateCannotBeDetermined { path: models::Path },
+    #[error(
+        "refusing to add connection {connection_name}: repository {remote_name} ({remote_id}) shares no history with this repository and neither of them is empty - syncing would merge two unrelated repositories"
+    )]
+    UnrelatedRepositories {
+        connection_name: String,
+        remote_name: String,
+        remote_id: String,
+    },
 }
 
 #[derive(Error, Debug)]

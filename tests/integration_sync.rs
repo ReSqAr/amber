@@ -9,10 +9,9 @@ async fn integration_test_two_repo_sync_pull_push() -> Result<(), anyhow::Error>
         @a amber add
 
         @b amber init b
+        @a amber remote add b local $ROOT/b
         @b write_file test-b.txt "Hello world!"
         @b amber add
-
-        @a amber remote add b local $ROOT/b
 
         # action
         @a amber push b
@@ -61,20 +60,20 @@ async fn integration_test_three_repo_sync_resumes_per_repository() -> Result<(),
         @a amber add
 
         @b amber init b
+        @a amber remote add b local $ROOT/b
         @b write_file b1.txt "b1"
         @b amber add
 
         @c amber init c
+        @a amber remote add c local $ROOT/c
         @c write_file c1.txt "c1"
         @c write_file c2.txt "c2"
         @c write_file c3.txt "c3"
         @c amber add
 
-        @a amber remote add b local $ROOT/b
         @a amber sync b
 
         # a's log now grows past b's via the third repository
-        @a amber remote add c local $ROOT/c
         @a amber sync c
 
         # b gains a file after a last heard from it
