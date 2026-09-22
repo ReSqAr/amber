@@ -102,6 +102,7 @@ async fn execute_rclone(
 
     let count_clone = Arc::clone(&count);
     let mut files: HashMap<String, Observer<BaseObservable>> = HashMap::new();
+    let mut completed: HashSet<String> = HashSet::new();
     let callback = move |event: RcloneEvent| {
         match event {
             RcloneEvent::UnknownMessage(msg) => {
@@ -111,6 +112,15 @@ async fn execute_rclone(
                 obs.observe_state(log::Level::Error, err);
             }
             RcloneEvent::Copied(name) | RcloneEvent::UnchangedSkipping(name) => {
+                // A retry re-walks the whole --files-from list and reports
+                // everything already at the destination as unchanged, so the
+                // same blob arrives once per attempt. Counting those repeats
+                // would push the position past the number of blobs we selected
+                // and hand the destination the same transfer item twice.
+                if !completed.insert(name.clone()) {
+                    return;
+                }
+
                 let mut f = files
                     .remove(&name)
                     .unwrap_or_else(|| Observer::with_id("rclone:file", name.clone()));
