@@ -103,10 +103,54 @@ pub async fn check_rclone() -> Result<(), InternalError> {
     }
 }
 
+/// rclone's own default, pinned so the command we build states how many
+/// attempts it gets instead of inheriting whatever the installed rclone
+/// happens to default to.
+const RETRIES: usize = 3;
+
 #[derive(Default)]
 pub struct RCloneConfig {
     pub(crate) transfers: Option<usize>,
     pub(crate) checkers: Option<usize>,
+}
+
+/// Everything the rclone command line is built from.
+struct RCloneInvocation<'a> {
+    operation: &'a Operation,
+    config_path: Option<&'a Path>,
+    config: &'a RCloneConfig,
+    file_list_path: &'a Path,
+    source: &'a str,
+    destination: &'a str,
+}
+
+impl RCloneInvocation<'_> {
+    fn to_args(&self) -> Vec<String> {
+        let mut args = vec![self.operation.to_rclone_arg()];
+        if let Some(config_path) = self.config_path {
+            args.push("--config".into());
+            args.push(config_path.display().to_string());
+        }
+        if let Some(transfers) = self.config.transfers {
+            args.push(format!("--transfers={transfers}"));
+        }
+        if let Some(checkers) = self.config.checkers {
+            args.push(format!("--checkers={checkers}"));
+        }
+        args.extend([
+            format!("--retries={RETRIES}"),
+            "--files-from".into(),
+            self.file_list_path.display().to_string(),
+            "--use-json-log".into(),
+            "--stats".into(),
+            "1s".into(),
+            "--log-level".into(),
+            "DEBUG".into(),
+            self.source.to_owned(),
+            self.destination.to_owned(),
+        ]);
+        args
+    }
 }
 
 pub async fn run_rclone<F>(
@@ -161,26 +205,18 @@ where
     let dest_arg = destination.to_rclone_arg();
 
     let mut command = Command::new("rclone");
-    command.arg(operation.to_rclone_arg());
-    if let Some(config_path) = config_path {
-        command.arg("--config").arg(&config_path);
-    }
-    if let Some(transfers) = config.transfers {
-        command.arg(format!("--transfers={transfers}"));
-    }
-    if let Some(checkers) = config.checkers {
-        command.arg(format!("--checkers={checkers}"));
-    }
     command
-        .arg("--files-from")
-        .arg(file_list_path.display().to_string())
-        .arg("--use-json-log")
-        .arg("--stats")
-        .arg("1s")
-        .arg("--log-level")
-        .arg("DEBUG")
-        .arg(&source_arg)
-        .arg(&dest_arg)
+        .args(
+            RCloneInvocation {
+                operation: &operation,
+                config_path: config_path.as_deref(),
+                config: &config,
+                file_list_path,
+                source: &source_arg,
+                destination: &dest_arg,
+            }
+            .to_args(),
+        )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     debug!("rclone command: {command:?}");
@@ -282,6 +318,58 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use tokio::fs;
+
+    #[test]
+    fn test_rclone_args_always_state_the_retry_budget() {
+        let args = RCloneInvocation {
+            operation: &Operation::Copy,
+            config_path: None,
+            config: &RCloneConfig::default(),
+            file_list_path: Path::new("/tmp/rclone.files"),
+            source: "/src",
+            destination: "remote:/dst",
+        }
+        .to_args();
+
+        assert_eq!(
+            args,
+            vec![
+                "copy",
+                &format!("--retries={RETRIES}"),
+                "--files-from",
+                "/tmp/rclone.files",
+                "--use-json-log",
+                "--stats",
+                "1s",
+                "--log-level",
+                "DEBUG",
+                "/src",
+                "remote:/dst",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rclone_args_carry_the_optional_tuning() {
+        let args = RCloneInvocation {
+            operation: &Operation::Check,
+            config_path: Some(Path::new("/tmp/rclone.conf")),
+            config: &RCloneConfig {
+                transfers: Some(7),
+                checkers: Some(9),
+            },
+            file_list_path: Path::new("/tmp/rclone.files"),
+            source: "/src",
+            destination: "remote:/dst",
+        }
+        .to_args();
+
+        assert!(args.contains(&"--config".to_string()));
+        assert!(args.contains(&"/tmp/rclone.conf".to_string()));
+        assert!(args.contains(&"--transfers=7".to_string()));
+        assert!(args.contains(&"--checkers=9".to_string()));
+        assert!(args.contains(&format!("--retries={RETRIES}")));
+    }
 
     #[tokio::test]
     async fn test_parse_rclone_line_error_without_object() {
