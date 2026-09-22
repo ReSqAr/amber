@@ -16,7 +16,7 @@ backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
 blake3 = "1"
 arrow-array = "59"
-arrow-schema = "59"
+arrow-schema = "60"
 chrono = { version = "0", features = ["serde"] }
 cipher = { version = "0.5", features = ["rand_core"] }
 clap = { version = "4", features = ["derive", "env"] }
