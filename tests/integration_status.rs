@@ -44,10 +44,10 @@ async fn integration_test_outdated_file() -> Result<(), anyhow::Error> {
         @a amber add
 
         @b amber init b
+        @a amber remote add b local $ROOT/b
         @b write_file test.txt "Hello B world!"
         @b amber add
 
-        @a amber remote add b local $ROOT/b
         @a amber sync b
 
         # action
@@ -102,10 +102,10 @@ async fn integration_test_delete_synced_file() -> Result<(), anyhow::Error> {
         @a amber add
 
         @b amber init b
+        @a amber remote add b local $ROOT/b
         @b write_file test-b.txt "Hello B world!"
         @b amber add
 
-        @a amber remote add b local $ROOT/b
         @a amber sync b
 
         # action 1
@@ -154,11 +154,11 @@ async fn integration_test_two_repo_status_missing() -> Result<(), anyhow::Error>
         # when
         @a amber init a
         @b amber init b
+        @a amber remote add b local $ROOT/b
         @a write_file test-a.txt "Hello A world!"
         @a amber add
         @b write_file test-b.txt "Hello B world!"
         @b amber add
-        @a amber remote add b local $ROOT/b
 
         # action 1
         @a amber sync b

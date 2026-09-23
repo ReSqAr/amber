@@ -5,8 +5,10 @@ use crate::flightdeck::base::{
     BaseLayoutBuilderBuilder, BaseObserver, StateTransformer, Style, TerminationAction,
 };
 use crate::flightdeck::pipes::progress_bars::LayoutItemBuilderNode;
+use crate::logic::relation;
 use crate::repository::local::{LocalRepository, LocalRepositoryConfig};
 use crate::repository::traits::{ConnectionManager, Local, Metadata};
+use crate::repository::wrapper::WrappedRepository;
 use crate::utils::errors::InternalError;
 use crate::utils::rclone;
 
@@ -126,6 +128,16 @@ async fn add_connection(
         parameter.clone(),
     )
     .await?;
+
+    let related = match &established.remote {
+        WrappedRepository::Local(remote) => relation::ensure_related(local, remote, &name.0).await,
+        WrappedRepository::Grpc(remote) => relation::ensure_related(local, remote, &name.0).await,
+        WrappedRepository::RClone(remote) => relation::ensure_related(local, remote, &name.0).await,
+    };
+    if let Err(e) = related {
+        established.close().await?;
+        return Err(e);
+    }
 
     let connection = Connection {
         name: name.clone(),

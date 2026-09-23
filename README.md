@@ -20,6 +20,7 @@
   * [External Hard Disk](#external-hard-disk)
   * [SSH](#ssh)
   * [rclone Supported Storage: S3/Backblaze/...](#rclone-supported-storage-s3backblaze)
+  * [Unrelated Repositories](#unrelated-repositories)
   * [Syncing Metadata](#syncing-metadata)
   * [Updating gRPC bindings](#updating-grpc-bindings)
   * [I don't have any data but still want to play around with amber](#i-dont-have-any-data-but-still-want-to-play-around-with-amber)
@@ -135,6 +136,19 @@ amber push ganymede
 **Note:**
 
 - The connection is only locally set up. Other repositories do not automatically see this repository.
+
+## Unrelated Repositories
+
+`amber remote add` refuses to connect two repositories that have never shared any history
+when both of them already track files - syncing them would merge two unrelated repositories,
+which cannot be undone.
+
+A connection is accepted if either:
+- the two repositories are related: they synced with each other before, directly or via another repository, or
+- one of them is empty, i.e. has never tracked a file. This covers setting up a new repository
+with `amber init` on an external drive or a server and pushing into it, as well as cloning into a fresh local repository.
+
+A repository whose files were all removed is not empty - it still carries their history.
 
 ## Syncing Metadata
 
