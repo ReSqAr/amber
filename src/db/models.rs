@@ -415,7 +415,9 @@ impl VirtualFile {
                     // odd - we have the correct file & the materialisation, but the blob is missing?
                     VirtualFileState::OkBlobMissing { file: file.clone() }
                 }
-            } else if let Some(mat) = &self.current_materialisation {
+            } else if let Some(mat) = &self.current_materialisation
+                && check.check_last_hash == mat.blob_id
+            {
                 // previously materialised version of deleted file
                 VirtualFileState::Outdated {
                     file: None,
@@ -423,6 +425,7 @@ impl VirtualFile {
                     mat: mat.clone(),
                 }
             } else {
+                // not tracked, and not what amber put here: the user's own file
                 VirtualFileState::New
             }
         } else {
@@ -789,6 +792,17 @@ mod tests {
             VirtualFileState::Outdated { file, .. } => assert!(file.is_none()),
             other => panic!("expected Outdated, got {other:?}"),
         }
+    }
+
+    /// An untracked path whose content was changed after it was materialised
+    /// holds the user's own file, which must not be treated as outdated (and
+    /// deleted).
+    #[test]
+    fn an_edited_file_deleted_from_the_repository_is_new() {
+        assert!(matches!(
+            Builder::new().materialisation(A).check(B).state(),
+            VirtualFileState::New
+        ));
     }
 
     /// The hash matches the wanted blob but the size does not, so the two
