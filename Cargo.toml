@@ -15,8 +15,8 @@ async-trait = "0"
 backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
 blake3 = "1"
-arrow-array = "59"
-arrow-schema = "59"
+arrow-array = "60"
+arrow-schema = "60"
 chrono = { version = "0", features = ["serde"] }
 cipher = { version = "0.5", features = ["rand_core"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -38,7 +38,7 @@ num_cpus = "1"
 once_cell = "1"
 owo-colors = { version = "4", default-features = false }
 parking_lot = "0"
-parquet = "59"
+parquet = "60"
 postcard = { version = "1", features = ["use-std"] }
 prost = "0"
 prost-types = "0"
@@ -56,7 +56,7 @@ tokio-stream = { version = "0.1" , features = ["io-util"]}
 tonic = "0"
 tonic-prost = "0"
 uuid = { version = "1", features = ["v4", "v5", "v7"] }
-serde_arrow = { version = "0.15.0", default-features = false, features = ["arrow-59"] }
+serde_arrow = { version = "0.15.1", default-features = false, features = ["arrow-60"] }
 
 [dev-dependencies]
 anyhow = "1"
