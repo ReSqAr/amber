@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: "weekly"
     groups:
+      # arrow-array, arrow-schema, parquet and serde_arrow's "arrow-NN" feature
+      # must all move to the same arrow major together; separate PRs can never
+      # build on their own. serde_arrow's feature flag isn't something
+      # dependabot can bump, so a major bump PR still needs that edited by hand.
+      arrow:
+        patterns:
+          - "arrow"
+          - "arrow-*"
+          - "parquet"
+          - "serde_arrow"
       all-minor-and-patch:
         update-types:
           - "minor"
