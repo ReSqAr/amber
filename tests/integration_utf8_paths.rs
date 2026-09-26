@@ -257,6 +257,43 @@ async fn integration_test_rclone_store_escapes_only_names_that_need_it() -> Resu
     dsl_definition::run_dsl_script(script).await
 }
 
+/// rclone reads the list of files to copy with `--files-from`, which skips
+/// lines starting with `#` or `;` as comments and trims the whitespace around
+/// each line. Stored under their raw names such files were never copied, so
+/// their names have to be escaped.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_store_names_files_from_would_mangle() -> Result<(), anyhow::Error>
+{
+    let script = r##"
+        # when
+        @a amber init a
+        @a write_file "#notes.txt" "hash"
+        @a write_file ";semi.txt" "semicolon"
+        @a write_file " leading space.txt" "leading space"
+        @a write_file "trailing space.txt " "trailing space"
+        @a write_file "#archive/;old.txt" "in folder"
+        @a amber add
+
+        @b amber init b
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @b amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber push store
+        @b amber pull store
+
+        # then
+        @rclone assert_exists "--23notes.txt" "hash"
+        @rclone assert_exists "--3bsemi.txt" "semicolon"
+        @rclone assert_exists "- leading space.txt" "leading space"
+        @rclone assert_exists "-trailing space.txt-20" "trailing space"
+        @rclone assert_exists "--23archive/--3bold.txt" "in folder"
+        assert_equal a b
+    "##;
+    dsl_definition::run_dsl_script(script).await
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn integration_test_utf8_rclone_fsck() -> Result<(), anyhow::Error> {
     let script = r#"
