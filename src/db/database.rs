@@ -3,7 +3,7 @@ use crate::db::kv::KVStores;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobMeta, BlobRef, BlobState,
     BlobTransferItem, Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck,
-    FileSeen, FileTransferItem, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
+    FileSeen, FileTransferRequest, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
     InsertFileBundle, InsertMaterialisation, InsertRepositoryMetadata, LocalRepository,
     LogRepositoryMetadata, MissingFile, Path, RepoID, RepositoryMetadata, RepositorySyncState,
     SyncState, Uid, VirtualFile,
@@ -783,14 +783,13 @@ impl Database {
     }
 
     /// The current files whose blob `remote_repo_id` has and `local_repo_id`
-    /// lacks, each with the location the remote recorded for that blob.
+    /// lacks.
     pub(crate) async fn select_missing_files_for_transfer(
         &self,
-        transfer_id: u32,
         local_repo_id: RepoID,
         remote_repo_id: RepoID,
         prefixes: Vec<String>,
-    ) -> BoxStream<'static, Result<(FileTransferItem, Option<Path>), DBError>> {
+    ) -> BoxStream<'static, Result<FileTransferRequest, DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = self.logs.files.current();
@@ -824,15 +823,12 @@ impl Database {
         TokioStreamExt::filter_map(s, move |e| match e {
             Ok(((p, b), Some((lb, _)))) => {
                 let meta = lb.into_inner();
-                Some(Ok((
-                    FileTransferItem {
-                        transfer_id,
-                        blob_id: b.into_inner(),
-                        blob_size: meta.size,
-                        path: p,
-                    },
-                    meta.path,
-                )))
+                Some(Ok(FileTransferRequest {
+                    path: p,
+                    blob_id: b.into_inner(),
+                    blob_size: meta.size,
+                    source_location: meta.path,
+                }))
             }
             Ok((_, None)) => None,
             Err(e) => Some(Err(e)),
