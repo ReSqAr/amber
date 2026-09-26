@@ -139,6 +139,10 @@ impl RCloneInvocation<'_> {
         }
         args.extend([
             format!("--retries={RETRIES}"),
+            // amber tracks paths byte for byte, so "é" (NFC) and "e" + U+0301
+            // (NFD) are two files. Left to itself rclone folds them into one
+            // name and copies only one of them.
+            "--no-unicode-normalization".into(),
             "--files-from".into(),
             self.file_list_path.display().to_string(),
             "--use-json-log".into(),
@@ -336,6 +340,7 @@ mod tests {
             vec![
                 "copy",
                 &format!("--retries={RETRIES}"),
+                "--no-unicode-normalization",
                 "--files-from",
                 "/tmp/rclone.files",
                 "--use-json-log",

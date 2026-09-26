@@ -77,7 +77,17 @@ pub struct RepoInstance {
 /// The test environment holds a temporary $ROOT directory and a map of repository instances.
 #[derive(Debug)]
 pub struct TestEnv {
-    #[allow(dead_code)]
     pub(crate) root: PathBuf,
     pub(crate) repos: HashMap<String, RepoInstance>,
+}
+
+impl TestEnv {
+    /// A repository's folder, or any other existing folder under $ROOT
+    /// (e.g. an rclone store at $ROOT/rclone) so asserts can look into it.
+    pub(crate) fn dir(&self, name: &str) -> Option<PathBuf> {
+        match self.repos.get(name) {
+            Some(repo) => Some(repo.path.clone()),
+            None => Some(self.root.join(name)).filter(|p| p.is_dir()),
+        }
+    }
 }
