@@ -142,19 +142,19 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     filename,
                     content,
                 } => {
-                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
+                    let path = env.dir(&repo).ok_or_else(|| {
                         anyhow!("Repository {} not found for assert_exists command", repo)
                     })?;
-                    asserts::assert_file_exists(&repo_instance.path, &filename, &content).await?;
+                    asserts::assert_file_exists(&path, &filename, &content).await?;
                 }
                 CommandLine::AssertDoesNotExist { repo, filename } => {
-                    let repo_instance = env.repos.get(&repo).ok_or_else(|| {
+                    let path = env.dir(&repo).ok_or_else(|| {
                         anyhow!(
                             "repository {} not found for assert_does_not_exist command",
                             repo
                         )
                     })?;
-                    asserts::assert_file_does_not_exist(&repo_instance.path, &filename).await?;
+                    asserts::assert_file_does_not_exist(&path, &filename).await?;
                 }
                 CommandLine::AssertEqual {
                     left_repo,
