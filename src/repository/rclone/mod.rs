@@ -26,6 +26,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 pub(crate) mod parquet;
+pub(crate) mod path_encoding;
 
 const EXTERNAL_PATH: &str = ".amb";
 const FILES: &str = "files";

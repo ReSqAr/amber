@@ -12,6 +12,7 @@ use crate::db::models::{
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
 use crate::logic::files;
+use crate::repository::rclone::path_encoding::{decode_path, encode_path};
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, ConnectionManager, LastSyncState, LastSyncStateSyncer,
     Local, Metadata, RcloneTargetPath, Receiver, RepositoryCurrentMetadata, Sender, Syncer,
@@ -760,6 +761,8 @@ impl Receiver<BlobTransferItem> for LocalRepository {
     }
 }
 
+/// File transfers always have an rclone store on one side, which holds each
+/// file under its encoded name.
 impl TransferItem for FileTransferItem {
     fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
         Self {
@@ -772,6 +775,14 @@ impl TransferItem for FileTransferItem {
 
     fn path(&self) -> String {
         self.path.0.clone()
+    }
+
+    fn rclone_path(&self) -> String {
+        encode_path(&self.path.0)
+    }
+
+    fn path_from_rclone(rclone_path: String) -> Result<String, InternalError> {
+        decode_path(&rclone_path)
     }
 }
 
@@ -796,8 +807,9 @@ impl Sender<FileTransferItem> for LocalRepository {
                 let local = local_clone.clone();
                 async move {
                     let blob_path = local.blob_path(&item.blob_id);
-                    let transfer_path =
-                        local.rclone_target_path(item.transfer_id).join(item.path.0);
+                    let transfer_path = local
+                        .rclone_target_path(item.transfer_id)
+                        .join(item.rclone_path());
                     if let Some(parent) = transfer_path.abs().parent() {
                         fs::create_dir_all(parent).await?;
                     }
@@ -860,7 +872,9 @@ impl Receiver<FileTransferItem> for LocalRepository {
         async move {
             let s = s
                 .map(move |r| Item {
-                    path: local.rclone_target_path(r.transfer_id).join(r.path.0),
+                    path: local
+                        .rclone_target_path(r.transfer_id)
+                        .join(encode_path(&r.path.0)),
                     expected_blob_id: Some(r.blob_id),
                 })
                 .boxed();

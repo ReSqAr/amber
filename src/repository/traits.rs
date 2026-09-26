@@ -177,6 +177,17 @@ pub trait RcloneTargetPath {
 pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'static {
     fn new(path: models::Path, transfer_id: u32, sized: models::SizedBlobID) -> Self;
     fn path(&self) -> String;
+
+    /// The name rclone copies the item under.
+    fn rclone_path(&self) -> String {
+        self.path()
+    }
+
+    /// The item's path, given the name rclone reported it under.
+    #[allow(clippy::result_large_err)]
+    fn path_from_rclone(rclone_path: String) -> Result<String, InternalError> {
+        Ok(rclone_path)
+    }
 }
 
 pub trait Sender<T: TransferItem> {

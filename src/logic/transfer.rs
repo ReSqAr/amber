@@ -62,7 +62,7 @@ fn write_rclone_files_clone<T: TransferItem>(
             tokio_stream::StreamExt::chunks_timeout(rx, writer_buffer_size, TIMEOUT).boxed();
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
-                acc.push_str(&item.path());
+                acc.push_str(&item.rclone_path());
                 acc.push('\n');
                 acc
             });
@@ -366,7 +366,7 @@ pub async fn transfer<T: TransferItem>(
         result
     });
 
-    let stream = TokioStreamExt::map(stream, Ok).boxed();
+    let stream = TokioStreamExt::map(stream, T::path_from_rclone).boxed();
     let stream = scratch.left_join::<_, _, InternalError>(stream, models::Path);
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,

@@ -136,6 +136,12 @@ amber push ganymede
 **Note:**
 
 - The connection is only locally set up. Other repositories do not automatically see this repository.
+- Files keep their names on the remote, so it stays browsable. A name some targets cannot hold -
+  non-ASCII characters, characters like `?` or `:`, a leading space or `-`, a trailing space or `.` -
+  is escaped instead: it gets a leading `-`, and each problematic byte (and each `-`) becomes `-` plus
+  two hex digits, e.g. `Grüße 2024-05.pdf` is stored as `-Gr-c3-bc-c3-9fe 2024-2d05.pdf`.
+  Remotes written by older versions of amber held such files under their raw names:
+  run `amber fsck <remote>` and then `amber push <remote>` to add the escaped copies.
 
 ## Unrelated Repositories
 

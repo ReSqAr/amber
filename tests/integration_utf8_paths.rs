@@ -135,10 +135,10 @@ async fn integration_test_utf8_rclone_push_pull() -> Result<(), anyhow::Error> {
         @a amber push store
         @b amber pull store
 
-        # then: the store holds the files under their real names ...
-        @rclone assert_exists "Übersicht/größe.txt" "Umlaute im store"
-        @rclone assert_exists "日本語/ファイル.txt" "CJK im store"
-        @rclone assert_exists "😀/🎉 party.txt" "Emoji im store"
+        # then: the store holds the files under ASCII-only names ...
+        @rclone assert_exists "--c3-9cbersicht/-gr-c3-b6-c3-9fe.txt" "Umlaute im store"
+        @rclone assert_exists "--f0-9f-98-80/--f0-9f-8e-89 party.txt" "Emoji im store"
+        @rclone assert_does_not_exist "Übersicht/größe.txt"
 
         # ... and they come back out unchanged
         @b assert_exists "Übersicht/größe.txt" "Umlaute im store"
@@ -209,8 +209,8 @@ async fn integration_test_utf8_nfc_and_nfd_names_stay_distinct() -> Result<(), a
         # then
         @b assert_exists "{nfc}" "composed"
         @b assert_exists "{nfd}" "decomposed"
-        @rclone assert_exists "{nfc}" "composed"
-        @rclone assert_exists "{nfd}" "decomposed"
+        @rclone assert_exists "-caf-c3-a9.txt" "composed"
+        @rclone assert_exists "-cafe-cc-81.txt" "decomposed"
         @c assert_exists "{nfc}" "composed"
         @c assert_exists "{nfd}" "decomposed"
         assert_equal a b
@@ -218,6 +218,106 @@ async fn integration_test_utf8_nfc_and_nfd_names_stay_distinct() -> Result<(), a
     "#
     );
     dsl_definition::run_dsl_script(&script).await
+}
+
+/// Names that some rclone targets cannot hold are escaped in the store, while
+/// ordinary names - underscores, dashes, spaces and all - are kept as they are.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_store_escapes_only_names_that_need_it() -> Result<(), anyhow::Error>
+{
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file "_DSC1234 (1).JPG" "plain"
+        @a write_file "2024-05-01_Urlaub/IMG_0001.jpg" "plain in folder"
+        @a write_file "what?.txt" "question mark"
+        @a write_file "a:b.txt" "colon"
+        @a write_file "ends with dot." "trailing dot"
+        @a write_file "-starts-with-dash.txt" "leading dash"
+        @a amber add
+
+        @b amber init b
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @b amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber push store
+        @b amber pull store
+
+        # then
+        @rclone assert_exists "_DSC1234 (1).JPG" "plain"
+        @rclone assert_exists "2024-05-01_Urlaub/IMG_0001.jpg" "plain in folder"
+        @rclone assert_exists "-what-3f.txt" "question mark"
+        @rclone assert_exists "-a-3ab.txt" "colon"
+        @rclone assert_exists "-ends with dot-2e" "trailing dot"
+        @rclone assert_exists "--2dstarts-2dwith-2ddash.txt" "leading dash"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_utf8_rclone_fsck() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file "Übersicht/größe.txt" "Umlaute"
+        @a write_file "Übersicht/übrig.txt" "bleibt"
+        @a amber add
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @a amber push store
+
+        # action: a clean store checks out
+        @a amber fsck store
+        @a amber missing store
+        assert_output_contains "no files missing"
+
+        # action: a file lost from the store is found missing
+        @rclone remove_file "--c3-9cbersicht/-gr-c3-b6-c3-9fe.txt"
+        @a amber fsck store
+
+        # then
+        @a amber missing store
+        assert_output_contains "missing Übersicht/größe.txt"
+
+        # and pushing again restores it
+        @a amber push store
+        @rclone assert_exists "--c3-9cbersicht/-gr-c3-b6-c3-9fe.txt" "Umlaute"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// Stores written before names were encoded hold non-ASCII files under their
+/// raw names. fsck finds those missing, and a push adds the encoded copies.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_utf8_rclone_store_written_before_encoding() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when: a store holding the file under its raw name
+        @a amber init a
+        @a write_file "Übersicht/größe.txt" "Umlaute"
+        @a amber add
+
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @a amber push store
+        @rclone remove_file "--c3-9cbersicht/-gr-c3-b6-c3-9fe.txt"
+        @rclone write_file "Übersicht/größe.txt" "Umlaute"
+
+        # action
+        @a amber fsck store
+        @a amber missing store
+        assert_output_contains "missing Übersicht/größe.txt"
+        @a amber push store
+
+        # then
+        @rclone assert_exists "--c3-9cbersicht/-gr-c3-b6-c3-9fe.txt" "Umlaute"
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+        @b assert_exists "Übersicht/größe.txt" "Umlaute"
+    "#;
+    dsl_definition::run_dsl_script(script).await
 }
 
 #[tokio::test(flavor = "multi_thread")]

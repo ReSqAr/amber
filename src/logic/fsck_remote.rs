@@ -7,6 +7,7 @@ use crate::flightdeck::base::{BaseObservable, BaseObservation};
 use crate::flightdeck::observer::Observer;
 use crate::flightdeck::tracked::stream::Trackable;
 use crate::logic::files;
+use crate::repository::rclone::path_encoding::{decode_path, encode_path};
 use crate::repository::traits::{
     Adder, Availability, BufferType, Config, Local, Metadata, RcloneTargetPath,
 };
@@ -36,6 +37,13 @@ pub struct ObservedBlob {
     pub has_blob: bool,
     pub path: models::Path,
     pub valid_from: DateTime<Utc>,
+}
+
+/// The repository path of an object rclone checked. A name that does not
+/// decode was never staged by us, so it is kept as it is and ends up skipped
+/// as an unexpected object.
+fn path_from_rclone(object: String) -> String {
+    decode_path(&object).unwrap_or(object)
 }
 
 /// Turns one rclone check result into the blob observation to record.
@@ -119,13 +127,14 @@ pub(crate) async fn fsck_remote(
                     .unwrap_or(false)
                 {
                     if let Some(path) = blob.path {
+                        let rclone_path = encode_path(&path);
                         files::create_link(
                             &blob_path,
-                            &fsck_files_path.join(&path),
+                            &fsck_files_path.join(&rclone_path),
                             local.capability(),
                         )
                         .await?;
-                        tx.send(path.clone()).await?;
+                        tx.send(rclone_path).await?;
                         o.observe_termination(log::Level::Debug, "materialised");
                         let new_count = count.fetch_add(1, Ordering::Relaxed) + 1;
                         obs.observe_position(log::Level::Trace, new_count);
@@ -184,7 +193,7 @@ pub(crate) async fn fsck_remote(
                 Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: true,
-                    path: models::Path(object),
+                    path: models::Path(path_from_rclone(object)),
                     valid_from: chrono::Utc::now(),
                 })
             }
@@ -194,7 +203,7 @@ pub(crate) async fn fsck_remote(
                 Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: false,
-                    path: models::Path(object),
+                    path: models::Path(path_from_rclone(object)),
                     valid_from: chrono::Utc::now(),
                 })
             }
