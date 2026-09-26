@@ -782,13 +782,15 @@ impl Database {
         .boxed()
     }
 
+    /// The current files whose blob `remote_repo_id` has and `local_repo_id`
+    /// lacks, each with the location the remote recorded for that blob.
     pub(crate) async fn select_missing_files_for_transfer(
         &self,
         transfer_id: u32,
         local_repo_id: RepoID,
         remote_repo_id: RepoID,
         prefixes: Vec<String>,
-    ) -> BoxStream<'static, Result<FileTransferItem, DBError>> {
+    ) -> BoxStream<'static, Result<(FileTransferItem, Option<Path>), DBError>> {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         let s = self.logs.files.current();
@@ -820,12 +822,18 @@ impl Database {
         });
 
         TokioStreamExt::filter_map(s, move |e| match e {
-            Ok(((p, b), Some((lb, _)))) => Some(Ok(FileTransferItem {
-                transfer_id,
-                blob_id: b.into_inner(),
-                blob_size: lb.size,
-                path: p,
-            })),
+            Ok(((p, b), Some((lb, _)))) => {
+                let meta = lb.into_inner();
+                Some(Ok((
+                    FileTransferItem {
+                        transfer_id,
+                        blob_id: b.into_inner(),
+                        blob_size: meta.size,
+                        path: p,
+                    },
+                    meta.path,
+                )))
+            }
             Ok((_, None)) => None,
             Err(e) => Some(Err(e)),
         })

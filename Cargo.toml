@@ -65,6 +65,7 @@ rand_chacha = "0"
 rand_distr = "0"
 russh-sftp = ">=2.0.8"
 serial_test = "4"
+proptest = "1"
 
 [build-dependencies]
 tonic-build = { package = "tonic-prost-build", version = "0" }

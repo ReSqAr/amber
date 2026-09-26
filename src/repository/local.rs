@@ -843,8 +843,14 @@ impl Receiver<FileTransferItem> for LocalRepository {
                 return stream::iter([Err(e.into())]).boxed();
             }
 
+            // Fetch each blob from where the store recorded it - the name the
+            // file had when it was uploaded, not the name it has now.
             db.select_missing_files_for_transfer(transfer_id, local_repo_id.clone(), repo_id, paths)
                 .await
+                .map_ok(|(item, location)| FileTransferItem {
+                    path: location.unwrap_or(item.path),
+                    ..item
+                })
                 .err_into()
                 .boxed()
         }

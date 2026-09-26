@@ -26,6 +26,9 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 pub(crate) mod parquet;
+pub(crate) mod path_encoding;
+
+use path_encoding::encode_path;
 
 const EXTERNAL_PATH: &str = ".amb";
 const FILES: &str = "files";
@@ -311,8 +314,14 @@ impl Receiver<FileTransferItem> for RCloneStore {
         let db = self.local.db().clone();
         let local_repo_id = self.repo_id.clone();
         async move {
+            // A new upload is stored under the encoded path, and finalise_transfer
+            // records that location for later downloads.
             db.select_missing_files_for_transfer(transfer_id, local_repo_id, repo_id, paths)
                 .await
+                .map_ok(|(item, _)| FileTransferItem {
+                    path: models::Path(encode_path(&item.path.0)),
+                    ..item
+                })
                 .err_into()
                 .boxed()
         }
