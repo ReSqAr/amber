@@ -93,3 +93,66 @@ async fn integration_test_three_repo_sync_resumes_per_repository() -> Result<(),
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// A file removed in another repository is deleted here on sync - but only if
+/// it still holds what amber put there. An edit amber has not recorded yet is
+/// the user's own file and must survive.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_sync_keeps_unrecorded_edit_of_removed_file() -> Result<(), anyhow::Error>
+{
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file edited.txt "original"
+        @a write_file untouched.txt "untouched"
+        @a amber add
+
+        @b amber init b
+        @b amber remote add a local $ROOT/a
+        @b amber pull a
+        # replace the file (writing through the hard link would change the blob)
+        @b remove_file edited.txt
+        @b write_file edited.txt "my edit"
+
+        @a amber remove edited.txt untouched.txt
+
+        # action
+        @b amber sync a
+
+        # then
+        @b assert_exists edited.txt "my edit"
+        @b assert_does_not_exist untouched.txt
+        @b amber status
+        assert_output_contains "new edited.txt"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// The same for a file renamed in another repository: the new name is
+/// materialised, and the edited copy under the old name is kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_sync_keeps_unrecorded_edit_of_moved_file() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file old.txt "original"
+        @a amber add
+
+        @b amber init b
+        @b amber remote add a local $ROOT/a
+        @b amber pull a
+        # replace the file (writing through the hard link would change the blob)
+        @b remove_file old.txt
+        @b write_file old.txt "my edit"
+
+        @a amber mv old.txt new.txt
+
+        # action
+        @b amber sync a
+
+        # then
+        @b assert_exists old.txt "my edit"
+        @b assert_exists new.txt "original"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
