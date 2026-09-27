@@ -100,7 +100,7 @@ impl From<Blob> for models::Blob {
             blob_id: BlobID(blob.blob_id),
             blob_size: blob.blob_size,
             has_blob: blob.has_blob,
-            path: blob.path.map(models::Path),
+            path: blob.path.map(models::RclonePath),
             valid_from: timestamp_to_datetime(&blob.valid_from),
         }
     }
@@ -123,7 +123,7 @@ impl From<TransferItem> for models::BlobTransferItem {
             transfer_id: i.transfer_id,
             blob_id: BlobID(i.blob_id),
             blob_size: i.blob_size,
-            path: models::Path(i.path),
+            path: models::RclonePath(i.path),
         }
     }
 }
@@ -145,7 +145,7 @@ impl From<CopiedTransferItem> for models::CopiedTransferItem {
             transfer_id: i.transfer_id,
             blob_id: BlobID(i.blob_id),
             blob_size: i.blob_size,
-            path: models::Path(i.path),
+            path: models::RclonePath(i.path),
         }
     }
 }

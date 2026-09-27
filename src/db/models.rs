@@ -28,6 +28,27 @@ impl AsRef<str> for Path {
     }
 }
 
+/// A path as rclone sees it: a line in a transfer's `--files-from` list, a
+/// file under a transfer's staging directory, or where a store keeps a blob.
+/// A file's [`Path`] in the repository becomes one of these when it is
+/// uploaded to a store, which may have to escape it.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
+pub struct RclonePath(pub String);
+
+impl AsRef<str> for RclonePath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for RclonePath {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(&self.0)
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
 pub struct BlobID(pub String);
 
@@ -66,14 +87,14 @@ pub struct Blob {
     pub blob_id: BlobID,
     pub blob_size: u64,
     pub has_blob: bool,
-    pub path: Option<Path>,
+    pub path: Option<RclonePath>,
     pub valid_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlobMeta {
     pub size: u64,
-    pub path: Option<Path>,
+    pub path: Option<RclonePath>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -95,7 +116,7 @@ pub struct InsertBlob {
     pub blob_id: BlobID,
     pub blob_size: u64,
     pub has_blob: bool,
-    pub path: Option<Path>,
+    pub path: Option<RclonePath>,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -301,7 +322,7 @@ pub struct BlobTransferItem {
     pub transfer_id: u32,
     pub blob_id: BlobID,
     pub blob_size: u64,
-    pub path: Path,
+    pub path: RclonePath,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -309,13 +330,43 @@ pub struct FileTransferItem {
     pub transfer_id: u32,
     pub blob_id: BlobID,
     pub blob_size: u64,
+    pub path: RclonePath,
+}
+
+/// A current file whose blob the source of a transfer has and the
+/// destination lacks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileTransferRequest {
+    /// The file's path in the repository.
     pub path: Path,
+    pub blob_id: BlobID,
+    pub blob_size: u64,
+    pub source_location: BlobLocation,
+}
+
+/// Where a repository keeps a blob.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlobLocation {
+    /// An amber repository keeps its blobs by blob ID and records no location.
+    Repository,
+    /// A store keeps a blob at the path it was uploaded to - the name its file
+    /// had then, even if the file has been renamed since.
+    Store(RclonePath),
+}
+
+impl From<Option<RclonePath>> for BlobLocation {
+    fn from(path: Option<RclonePath>) -> Self {
+        match path {
+            None => BlobLocation::Repository,
+            Some(path) => BlobLocation::Store(path),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct CopiedTransferItem {
     pub transfer_id: u32,
-    pub path: Path,
+    pub path: RclonePath,
     pub blob_id: BlobID,
     pub blob_size: u64,
 }
@@ -540,7 +591,7 @@ pub struct AvailableBlob {
     pub repo_id: RepoID,
     pub blob_id: BlobID,
     pub blob_size: u64,
-    pub path: Option<String>,
+    pub path: Option<RclonePath>,
 }
 
 #[derive(Debug, Clone)]

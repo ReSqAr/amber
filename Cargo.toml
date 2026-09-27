@@ -9,14 +9,14 @@ __kv-drop-dev-assert = []
 
 [dependencies]
 aes = "0"
+arrow-array = "60"
+arrow-schema = "60"
 async-compression = { version = "0", default-features = false, features = ["tokio", "gzip"] }
 async-stream = "0"
 async-trait = "0"
 backoff = { version = "0", features = ["tokio"] }
 base64 = "0"
 blake3 = "1"
-arrow-array = "60"
-arrow-schema = "60"
 chrono = { version = "0", features = ["serde"] }
 cipher = { version = "0.5", features = ["rand_core"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -47,6 +47,7 @@ reflink-copy = "0"
 rocksdb = "0"
 russh = { version = "0", default-features = false, features = ["ring", "rsa", "flate2"] }
 serde = { version = "1", features = ["derive", "std"] }
+serde_arrow = { version = "0.15.1", default-features = false, features = ["arrow-60"] }
 serde_json = "1"
 subtle = "2"
 tempfile = "3"
@@ -56,13 +57,13 @@ tokio-stream = { version = "0.1" , features = ["io-util"]}
 tonic = "0"
 tonic-prost = "0"
 uuid = { version = "1", features = ["v4", "v5", "v7"] }
-serde_arrow = { version = "0.15.1", default-features = false, features = ["arrow-60"] }
 
 [dev-dependencies]
 anyhow = "1"
-rayon = "1"
+proptest = "1"
 rand_chacha = "0"
 rand_distr = "0"
+rayon = "1"
 russh-sftp = ">=2.0.8"
 serial_test = "4"
 

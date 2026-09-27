@@ -4,10 +4,10 @@ use crate::db::database::Database;
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobLocation, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata, RepositorySyncState,
-    SizedBlobID, VirtualFile,
+    FileTransferRequest, FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata,
+    RepositorySyncState, SizedBlobID, VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
@@ -649,7 +649,7 @@ impl From<BlobTransferItem> for SizedBlobID {
 }
 
 impl TransferItem for BlobTransferItem {
-    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+    fn new(path: models::RclonePath, transfer_id: u32, sized: SizedBlobID) -> Self {
         Self {
             transfer_id,
             blob_id: sized.blob_id,
@@ -658,8 +658,8 @@ impl TransferItem for BlobTransferItem {
         }
     }
 
-    fn path(&self) -> String {
-        self.path.0.clone()
+    fn path(&self) -> &models::RclonePath {
+        &self.path
     }
 }
 
@@ -761,7 +761,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
 }
 
 impl TransferItem for FileTransferItem {
-    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+    fn new(path: models::RclonePath, transfer_id: u32, sized: SizedBlobID) -> Self {
         Self {
             transfer_id,
             blob_id: sized.blob_id,
@@ -770,8 +770,8 @@ impl TransferItem for FileTransferItem {
         }
     }
 
-    fn path(&self) -> String {
-        self.path.0.clone()
+    fn path(&self) -> &models::RclonePath {
+        &self.path
     }
 }
 
@@ -843,9 +843,27 @@ impl Receiver<FileTransferItem> for LocalRepository {
                 return stream::iter([Err(e.into())]).boxed();
             }
 
-            db.select_missing_files_for_transfer(transfer_id, local_repo_id.clone(), repo_id, paths)
+            // Files are only ever downloaded from a store, which recorded where
+            // it put each blob: fetch it from exactly there.
+            db.select_missing_files_for_transfer(local_repo_id.clone(), repo_id, paths)
                 .await
-                .err_into()
+                .map(move |f| {
+                    let FileTransferRequest {
+                        path,
+                        blob_id,
+                        blob_size,
+                        source_location,
+                    } = f?;
+                    let BlobLocation::Store(location) = source_location else {
+                        return Err(AppError::BlobLocationUnknown { blob_id, path }.into());
+                    };
+                    Ok(FileTransferItem {
+                        transfer_id,
+                        blob_id,
+                        blob_size,
+                        path: location,
+                    })
+                })
                 .boxed()
         }
         .boxed()

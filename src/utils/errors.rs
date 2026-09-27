@@ -55,6 +55,11 @@ pub enum AppError {
         blob_id: models::BlobID,
         path: models::Path,
     },
+    #[error("the store does not record where it keeps blob {b} of file {p}", b = blob_id.0, p = path.0)]
+    BlobLocationUnknown {
+        blob_id: models::BlobID,
+        path: models::Path,
+    },
     #[error("please run fsck: state of file {p} cannot be determined", p = path.0)]
     FileStateCannotBeDetermined { path: models::Path },
     #[error(

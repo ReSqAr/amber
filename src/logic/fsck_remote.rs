@@ -34,7 +34,7 @@ use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 pub struct ObservedBlob {
     pub repo_id: RepoID,
     pub has_blob: bool,
-    pub path: models::Path,
+    pub path: models::RclonePath,
     pub valid_from: DateTime<Utc>,
 }
 
@@ -79,7 +79,7 @@ pub(crate) async fn fsck_remote(
     let start_time = tokio::time::Instant::now();
     fs::create_dir_all(&fsck_path).await?;
     let rclone_files = fsck_path.join("rclone.files");
-    let scratch = kv::Store::<models::Path, models::SizedBlobID>::new(
+    let scratch = kv::Store::<models::RclonePath, models::SizedBlobID>::new(
         fsck_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )
@@ -129,8 +129,8 @@ pub(crate) async fn fsck_remote(
                         o.observe_termination(log::Level::Debug, "materialised");
                         let new_count = count.fetch_add(1, Ordering::Relaxed) + 1;
                         obs.observe_position(log::Level::Trace, new_count);
-                        Ok::<Option<(models::Path, SizedBlobID)>, InternalError>(Some((
-                            models::Path(path),
+                        Ok::<Option<(models::RclonePath, SizedBlobID)>, InternalError>(Some((
+                            path,
                             SizedBlobID {
                                 blob_id: blob.blob_id,
                                 blob_size: blob.blob_size,
@@ -184,7 +184,7 @@ pub(crate) async fn fsck_remote(
                 Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: true,
-                    path: models::Path(object),
+                    path: models::RclonePath(object),
                     valid_from: chrono::Utc::now(),
                 })
             }
@@ -194,7 +194,7 @@ pub(crate) async fn fsck_remote(
                 Ok(ObservedBlob {
                     repo_id: repo_id.clone(),
                     has_blob: false,
-                    path: models::Path(object),
+                    path: models::RclonePath(object),
                     valid_from: chrono::Utc::now(),
                 })
             }
@@ -238,9 +238,12 @@ const TIMEOUT: time::Duration = time::Duration::from_millis(5);
 fn write_rclone_files_fsck_clone(
     local: &impl Config,
     rclone_files: PathBuf,
-) -> (JoinHandle<Result<(), InternalError>>, mpsc::Sender<String>) {
+) -> (
+    JoinHandle<Result<(), InternalError>>,
+    mpsc::Sender<models::RclonePath>,
+) {
     let channel_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesWriterChannelSize);
-    let (tx, rx) = mpsc::channel::<String>(channel_buffer_size);
+    let (tx, rx) = mpsc::channel::<models::RclonePath>(channel_buffer_size);
 
     let writer_buffer_size = local.buffer_size(BufferType::FsckRcloneFilesStreamChunkSize);
     let writing_task = tokio::spawn(async move {
@@ -256,7 +259,7 @@ fn write_rclone_files_fsck_clone(
         );
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, path| {
-                acc.push_str(&path);
+                acc.push_str(&path.0);
                 acc.push('\n');
                 acc
             });
@@ -428,7 +431,7 @@ mod tests {
         ObservedBlob {
             repo_id: RepoID("repo".into()),
             has_blob,
-            path: models::Path(path.into()),
+            path: models::RclonePath(path.into()),
             valid_from: Utc::now(),
         }
     }
@@ -448,7 +451,7 @@ mod tests {
         assert_eq!(insert.blob_id, BlobID("abc123".into()));
         assert_eq!(insert.blob_size, 42);
         assert!(insert.has_blob);
-        assert_eq!(insert.path, Some(models::Path("some/blob".into())));
+        assert_eq!(insert.path, Some(models::RclonePath("some/blob".into())));
     }
 
     /// A failed check is recorded too - that is how corruption is reported -
