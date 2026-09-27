@@ -6,7 +6,7 @@ use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    FilesWithAvailability, MissingFile, RclonePath, RepoID, RepositoryMetadata,
+    FileTransferRequest, FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata,
     RepositorySyncState, SizedBlobID, VirtualFile,
 };
 use crate::logic::assimilate;
@@ -843,11 +843,27 @@ impl Receiver<FileTransferItem> for LocalRepository {
                 return stream::iter([Err(e.into())]).boxed();
             }
 
-            // Between amber repositories a file travels under its own name.
+            // Files are only ever downloaded from a store, which recorded where
+            // it put each blob: fetch it from exactly there.
             db.select_missing_files_for_transfer(local_repo_id.clone(), repo_id, paths)
                 .await
-                .map_ok(move |f| f.into_transfer_item(transfer_id, |path| RclonePath(path.0)))
-                .err_into()
+                .map(move |f| {
+                    let FileTransferRequest {
+                        path,
+                        blob_id,
+                        blob_size,
+                        source_location,
+                    } = f?;
+                    let Some(location) = source_location else {
+                        return Err(AppError::BlobLocationUnknown { blob_id, path }.into());
+                    };
+                    Ok(FileTransferItem {
+                        transfer_id,
+                        blob_id,
+                        blob_size,
+                        path: location,
+                    })
+                })
                 .boxed()
         }
         .boxed()

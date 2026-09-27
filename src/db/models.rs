@@ -341,26 +341,10 @@ pub struct FileTransferRequest {
     pub path: Path,
     pub blob_id: BlobID,
     pub blob_size: u64,
-    /// Where the source keeps the blob, if it records that. Stores do: a file
-    /// keeps the name it was uploaded under, even after it is renamed.
+    /// Where the source keeps the blob. A store records this for every blob
+    /// it holds - a file keeps the name it was uploaded under, even after it
+    /// is renamed - while an amber repository records none.
     pub source_location: Option<RclonePath>,
-}
-
-impl FileTransferRequest {
-    /// Copy the blob from where the source keeps it or, if the source does
-    /// not say, under `name(path)`: the name the destination gives new blobs.
-    pub fn into_transfer_item(
-        self,
-        transfer_id: u32,
-        name: impl FnOnce(Path) -> RclonePath,
-    ) -> FileTransferItem {
-        FileTransferItem {
-            transfer_id,
-            blob_id: self.blob_id,
-            blob_size: self.blob_size,
-            path: self.source_location.unwrap_or_else(|| name(self.path)),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -880,29 +864,5 @@ mod tests {
             Builder::new().blob(10).check(A).state(),
             VirtualFileState::New
         ));
-    }
-
-    fn transfer_request(source_location: Option<&str>) -> FileTransferRequest {
-        FileTransferRequest {
-            path: Path("renamed.txt".into()),
-            blob_id: BlobID("b".into()),
-            blob_size: 1,
-            source_location: source_location.map(|l| RclonePath(l.into())),
-        }
-    }
-
-    #[test]
-    fn transfer_request_uses_source_location() {
-        let item = transfer_request(Some("uploaded.txt"))
-            .into_transfer_item(7, |_| panic!("the source location wins"));
-        assert_eq!(item.path, RclonePath("uploaded.txt".into()));
-        assert_eq!(item.transfer_id, 7);
-    }
-
-    #[test]
-    fn transfer_request_names_blob_when_source_has_no_location() {
-        let item =
-            transfer_request(None).into_transfer_item(7, |p| RclonePath(format!("x/{}", p.0)));
-        assert_eq!(item.path, RclonePath("x/renamed.txt".into()));
     }
 }
