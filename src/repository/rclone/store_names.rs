@@ -5,8 +5,9 @@
 //! removed, so that name may already hold another blob - and rclone would
 //! overwrite the store's only copy of it. A name the store already uses, or
 //! that an earlier upload of the same push took, therefore gets part of the
-//! blob's ID added before its extension: `Photo.jpg` becomes
-//! `Photo.3f2a91c0.jpg`, and `README` becomes `README.3f2a91c0`.
+//! blob's ID added before its extensions: `Photo.jpg` becomes
+//! `Photo.3f2a91c0.jpg`, `b.tar.gz` becomes `b.3f2a91c0.tar.gz`, and `README`
+//! becomes `README.3f2a91c0`.
 //!
 //! Names are compared regardless of ASCII case, since some targets (macOS,
 //! Windows, OneDrive) hold `Photo.jpg` and `photo.jpg` as one file. Encoded
@@ -21,15 +22,16 @@ pub(crate) fn fold(name: &str) -> String {
     name.to_ascii_lowercase()
 }
 
-/// `name` with `.tag` added before the extension of its last component.
+/// `name` with `.tag` added before all extensions of its last component. A
+/// leading dot, as in `.hidden`, starts no extension.
 fn with_tag(name: &str, tag: &str) -> String {
     let (dir, file) = match name.rsplit_once('/') {
         Some((dir, file)) => (Some(dir), file),
         None => (None, name),
     };
-    let tagged = match file.rfind('.') {
-        Some(i) if i > 0 => format!("{}.{tag}{}", &file[..i], &file[i..]),
-        _ => format!("{file}.{tag}"),
+    let tagged = match file.get(1..).and_then(|rest| rest.find('.')) {
+        Some(i) => format!("{}.{tag}{}", &file[..=i], &file[i + 1..]),
+        None => format!("{file}.{tag}"),
     };
     match dir {
         Some(dir) => format!("{dir}/{tagged}"),
@@ -191,8 +193,10 @@ mod tests {
     }
 
     #[test]
-    fn tags_go_before_the_extension() {
-        assert_eq!(with_tag("a/b.tar.gz", "t"), "a/b.tar.t.gz");
+    fn tags_go_before_the_extensions() {
+        assert_eq!(with_tag("a/b.tar.gz", "t"), "a/b.t.tar.gz");
+        assert_eq!(with_tag("photo.jpg", "t"), "photo.t.jpg");
+        assert_eq!(with_tag(".config.json", "t"), ".config.t.json");
         assert_eq!(with_tag("README", "t"), "README.t");
         assert_eq!(with_tag(".hidden", "t"), ".hidden.t");
         assert_eq!(

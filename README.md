@@ -144,7 +144,7 @@ amber push ganymede
   later does not move or re-upload it on the remote.
 - An upload never replaces a file amber uploaded earlier: if its name is taken - by a file that
   was since renamed or removed, or by a name differing only in case - part of the blob's ID is
-  added before the extension, e.g. `Photo.3f2a91c0.jpg`.
+  added before the extensions, e.g. `Photo.3f2a91c0.jpg` or `b.3f2a91c0.tar.gz`.
 
 ## Unrelated Repositories
 

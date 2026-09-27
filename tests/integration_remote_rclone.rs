@@ -214,3 +214,57 @@ async fn integration_test_rclone_push_names_differing_in_case_apart() -> Result<
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// Five versions of a file, each uploaded by its own push under the same
+/// name, all stay in the store and can be fetched again.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_keeps_five_versions_under_one_name()
+-> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        @a write_file doc.tar.gz "version 1"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v1.tar.gz
+
+        @a write_file doc.tar.gz "version 2"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v2.tar.gz
+
+        @a write_file doc.tar.gz "version 3"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v3.tar.gz
+
+        @a write_file doc.tar.gz "version 4"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v4.tar.gz
+
+        @a write_file doc.tar.gz "version 5"
+        @a amber add
+        @a amber push store
+
+        # then
+        @rclone assert_exists doc.tar.gz "version 1"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        assert_output_contains "pulled 5 blobs"
+        @b assert_exists v1.tar.gz "version 1"
+        @b assert_exists v2.tar.gz "version 2"
+        @b assert_exists v3.tar.gz "version 3"
+        @b assert_exists v4.tar.gz "version 4"
+        @b assert_exists doc.tar.gz "version 5"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
