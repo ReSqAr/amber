@@ -156,3 +156,34 @@ async fn integration_test_sync_keeps_unrecorded_edit_of_moved_file() -> Result<(
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// A path the repository wants but that is already taken on disk - on a
+/// filesystem that ignores case or Unicode normalisation, `Photo.jpg` finds
+/// `photo.jpg` - is skipped and reported instead of replacing what is there.
+/// A symlink takes the path here, since CI has no such filesystem.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_sync_skips_a_path_taken_on_disk() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file x.txt "from a"
+        @a write_file y.txt "also from a"
+        @a amber add
+
+        @b amber init b
+        @b write_file other.txt "kept"
+        @b symlink other.txt x.txt
+        @a amber remote add b local $ROOT/b
+
+        # action
+        @a amber push b
+        @b amber sync
+        assert_output_contains "skipped 1 files whose path another file already takes"
+
+        # then
+        @b assert_exists x.txt "kept"
+        @b assert_exists other.txt "kept"
+        @b assert_exists y.txt "also from a"
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}

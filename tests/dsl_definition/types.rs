@@ -30,6 +30,11 @@ pub(crate) enum CommandLine {
         repo: String,
         filename: String,
     },
+    Symlink {
+        repo: String,
+        target: String,
+        filename: String,
+    },
     AssertExists {
         repo: String,
         filename: String,
