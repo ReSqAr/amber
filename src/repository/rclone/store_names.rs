@@ -9,6 +9,10 @@
 //! `Photo.3f2a91c0.jpg`, `b.tar.gz` becomes `b.3f2a91c0.tar.gz`, and `README`
 //! becomes `README.3f2a91c0`.
 //!
+//! Every name in use - whether the store holds it or this push took it, tagged
+//! or not - is one key in a scratch store, and an upload takes the first of
+//! its candidate names whose key is free.
+//!
 //! Names are compared regardless of ASCII case, since some targets (macOS,
 //! Windows, OneDrive) hold `Photo.jpg` and `photo.jpg` as one file. Encoded
 //! names are ASCII, so that is all the folding they need.
@@ -16,6 +20,7 @@
 use super::path_encoding::encode_path;
 use crate::db::models::{FileTransferItem, FileTransferRequest, RclonePath};
 use crate::db::stores::kv::{Upsert, UpsertAction};
+use std::collections::VecDeque;
 
 /// The key names are compared by.
 pub(crate) fn fold(name: &str) -> String {
@@ -39,72 +44,69 @@ fn with_tag(name: &str, tag: &str) -> String {
     }
 }
 
-/// A new upload claiming its name. It is keyed by the name it would get
-/// without a tag; the value lists the tagged names already handed out under
-/// that key, folded.
+/// A new upload claiming a name in the store: `name` if it is free, else the
+/// first of `rest` that is.
 #[derive(Clone)]
 pub(crate) struct Claim {
-    name: String,
     request: FileTransferRequest,
+    name: String,
+    rest: VecDeque<String>,
 }
 
 impl Claim {
     pub(crate) fn new(request: FileTransferRequest) -> Self {
-        Self {
-            name: encode_path(&request.path).0,
-            request,
-        }
-    }
-
-    /// The name this upload gets, given the tagged names already handed out
-    /// under its key - `None` if its untagged name is still free.
-    fn pick(&self, claimed: Option<&[String]>) -> String {
-        let Some(claimed) = claimed else {
-            return self.name.clone();
-        };
-        let id = &self.request.blob_id.0;
-        [8, 16]
+        let name = encode_path(&request.path).0;
+        let id = &request.blob_id.0;
+        let mut rest: Vec<String> = [8, 16]
             .into_iter()
             .filter_map(|len| id.get(..len))
             .chain([id.as_str()])
-            .map(|tag| with_tag(&self.name, tag))
-            .find(|name| !claimed.contains(&fold(name)))
-            .unwrap_or_else(|| with_tag(&self.name, id))
+            .map(|tag| with_tag(&name, tag))
+            .collect();
+        rest.dedup();
+        Self {
+            request,
+            name,
+            rest: rest.into(),
+        }
     }
 
-    /// The transfer item for this upload, given what [`Upsert::upsert`] saw
-    /// under its key.
-    pub(crate) fn into_transfer_item(
-        self,
-        transfer_id: u32,
-        claimed: Option<Vec<String>>,
-    ) -> FileTransferItem {
-        let name = self.pick(claimed.as_deref());
+    /// The transfer item for this upload, under the name it claimed.
+    pub(crate) fn into_transfer_item(self, transfer_id: u32) -> FileTransferItem {
         FileTransferItem {
             transfer_id,
             blob_id: self.request.blob_id,
             blob_size: self.request.blob_size,
-            path: RclonePath(name),
+            path: RclonePath(self.name),
         }
+    }
+
+    /// The file this upload is for, to report it.
+    pub(crate) fn path(&self) -> &str {
+        &self.request.path.0
     }
 }
 
 impl Upsert for Claim {
     type K = String;
-    type V = Vec<String>;
+    type V = ();
 
     fn key(&self) -> Self::K {
         fold(&self.name)
     }
 
-    fn upsert(self, claimed: Option<Self::V>) -> UpsertAction<Self::V> {
-        let name = self.pick(claimed.as_deref());
-        match claimed {
-            None => UpsertAction::Change(vec![]),
-            Some(mut claimed) => {
-                claimed.push(fold(&name));
-                UpsertAction::Change(claimed)
-            }
+    /// Takes the name if it is free, and moves on to the next one if not. With
+    /// none left, the claim ends on a name that is taken.
+    fn upsert(mut self, taken: Option<()>) -> UpsertAction<(), Self> {
+        match taken {
+            None => UpsertAction::Change(()),
+            Some(()) => match self.rest.pop_front() {
+                Some(name) => {
+                    self.name = name;
+                    UpsertAction::Next(self)
+                }
+                None => UpsertAction::NoChange,
+            },
         }
     }
 }
@@ -112,7 +114,11 @@ impl Upsert for Claim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::error::DBError;
     use crate::db::models::{BlobID, BlobLocation, Path};
+    use crate::db::stores::kv::{Store, UpsertedValue};
+    use futures::{StreamExt, TryStreamExt, stream};
+    use tempfile::TempDir;
 
     fn claim(path: &str, blob_id: &str) -> Claim {
         Claim::new(FileTransferRequest {
@@ -123,44 +129,66 @@ mod tests {
         })
     }
 
-    /// Runs claims in order against a store that already uses `taken`, the
-    /// way the key-value store would, and returns the names they get.
-    fn names(taken: &[&str], claims: Vec<Claim>) -> Vec<String> {
-        let mut store: std::collections::HashMap<String, Vec<String>> =
-            taken.iter().map(|name| (fold(name), vec![])).collect();
-        claims
-            .into_iter()
-            .map(|claim| {
-                let previous = store.get(&claim.key()).cloned();
-                if let UpsertAction::Change(v) = claim.clone().upsert(previous.clone()) {
-                    store.insert(claim.key(), v);
-                }
-                claim.into_transfer_item(0, previous).path.0
-            })
-            .collect()
+    /// Runs `claims` against a store that already holds `taken`, the way a
+    /// push does, and returns the names they get - `None` for none.
+    async fn names(taken: &[&str], claims: Vec<Claim>) -> Vec<Option<String>> {
+        let dir = TempDir::new().unwrap();
+        let store = Store::<String, ()>::new(dir.path().join("names"), "names".into())
+            .await
+            .unwrap();
+        let taken: Vec<Result<_, DBError>> = taken
+            .iter()
+            .map(|name| Ok((fold(name), Some(()))))
+            .collect();
+        store.apply(stream::iter(taken).boxed()).await.unwrap();
+
+        let claims = stream::iter(claims.into_iter().map(Ok::<_, DBError>)).boxed();
+        let (claimed, writes) = store.streaming_upsert(claims);
+        let names = claimed
+            .map_ok(
+                |UpsertedValue {
+                     upsert,
+                     previous_value,
+                 }| {
+                    previous_value
+                        .is_none()
+                        .then(|| upsert.into_transfer_item(0).path.0)
+                },
+            )
+            .try_collect()
+            .await
+            .unwrap();
+        writes.await.unwrap().unwrap();
+        store.close().await.unwrap();
+        names
     }
 
-    #[test]
-    fn a_free_name_is_used_as_it_is() {
+    fn some(names: &[&str]) -> Vec<Option<String>> {
+        names.iter().map(|name| Some(name.to_string())).collect()
+    }
+
+    #[tokio::test]
+    async fn a_free_name_is_used_as_it_is() {
         assert_eq!(
-            names(&["other.txt"], vec![claim("Übersicht/a.txt", "3f2a91c0aa")]),
-            ["--c3-9cbersicht/a.txt"]
+            names(&["other.txt"], vec![claim("Übersicht/a.txt", "3f2a91c0aa")]).await,
+            some(&["--c3-9cbersicht/a.txt"])
         );
     }
 
-    #[test]
-    fn a_name_the_store_uses_gets_a_tag() {
+    #[tokio::test]
+    async fn a_name_the_store_uses_gets_a_tag() {
         assert_eq!(
             names(
                 &["photos/a.jpg"],
                 vec![claim("photos/a.jpg", "3f2a91c0aabbccdd00")]
-            ),
-            ["photos/a.3f2a91c0.jpg"]
+            )
+            .await,
+            some(&["photos/a.3f2a91c0.jpg"])
         );
     }
 
-    #[test]
-    fn names_differing_in_case_do_not_share_a_file() {
+    #[tokio::test]
+    async fn names_differing_in_case_do_not_share_a_file() {
         assert_eq!(
             names(
                 &[],
@@ -168,13 +196,15 @@ mod tests {
                     claim("Photo.JPG", "1111111111111111ff"),
                     claim("photo.jpg", "2222222222222222ff")
                 ]
-            ),
-            ["Photo.JPG", "photo.22222222.jpg"]
+            )
+            .await,
+            some(&["Photo.JPG", "photo.22222222.jpg"])
         );
     }
 
-    #[test]
-    fn a_taken_tag_falls_back_to_a_longer_one() {
+    /// Blob IDs sharing a prefix within one push get longer tags.
+    #[tokio::test]
+    async fn a_taken_tag_falls_back_to_a_longer_one() {
         assert_eq!(
             names(
                 &["a.txt"],
@@ -183,12 +213,55 @@ mod tests {
                     claim("a.txt", "3f2a91c0bbbbbbbb22"),
                     claim("a.txt", "3f2a91c0bbbbbbbb33"),
                 ]
-            ),
-            [
+            )
+            .await,
+            some(&[
                 "a.3f2a91c0.txt",
                 "a.3f2a91c0bbbbbbbb.txt",
                 "a.3f2a91c0bbbbbbbb33.txt"
-            ]
+            ])
+        );
+    }
+
+    /// A tagged name an earlier push left in the store is taken as well.
+    #[tokio::test]
+    async fn a_tag_an_earlier_push_used_is_taken() {
+        assert_eq!(
+            names(
+                &["a.txt", "a.3f2a91c0.txt", "a.3f2a91c0bbbbbbbb.txt"],
+                vec![claim("a.txt", "3f2a91c0bbbbbbbb33")]
+            )
+            .await,
+            some(&["a.3f2a91c0bbbbbbbb33.txt"])
+        );
+    }
+
+    /// A file that happens to be named like a tagged name is not overwritten
+    /// either.
+    #[tokio::test]
+    async fn a_tagged_name_a_file_already_has_is_taken() {
+        assert_eq!(
+            names(
+                &["a.txt"],
+                vec![
+                    claim("a.3f2a91c0.txt", "1111111111111111ff"),
+                    claim("a.txt", "3f2a91c0aaaaaaaa11"),
+                ]
+            )
+            .await,
+            some(&["a.3f2a91c0.txt", "a.3f2a91c0aaaaaaaa.txt"])
+        );
+    }
+
+    #[tokio::test]
+    async fn every_name_in_use_leaves_no_name() {
+        assert_eq!(
+            names(
+                &["a.txt", "a.3f2a91c0.txt"],
+                vec![claim("a.txt", "3f2a91c0")]
+            )
+            .await,
+            [None]
         );
     }
 

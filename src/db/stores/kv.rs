@@ -30,18 +30,21 @@ fn de<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DBError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub enum UpsertAction<T> {
+pub enum UpsertAction<T, U> {
     NoChange,
     Change(T),
     Delete,
+    /// Leave this key as it is and apply `U` instead, to its own key - in the
+    /// same step, so nothing written in between can come in the way.
+    Next(U),
 }
 
-pub trait Upsert: Sync + Send + 'static {
+pub trait Upsert: Sized + Sync + Send + 'static {
     type K: Serialize + DeserializeOwned + Send + Sync + Clone + 'static;
     type V: Serialize + DeserializeOwned + Send + Sync + Clone + 'static;
 
     fn key(&self) -> Self::K;
-    fn upsert(self, v: Option<Self::V>) -> UpsertAction<Self::V>;
+    fn upsert(self, v: Option<Self::V>) -> UpsertAction<Self::V, Self>;
 }
 
 #[derive(Clone)]
@@ -62,7 +65,7 @@ where
         self.0.clone()
     }
 
-    fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V> {
+    fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V, Self> {
         UpsertAction::Change(self.1)
     }
 }
@@ -282,35 +285,41 @@ where
             let mut pending: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
             while let Some(item) = rx.blocking_recv() {
-                let item: U = item?;
-                let key = item.key();
+                let mut item: U = item?;
                 tracer.on();
 
-                let key_bytes = ser(&key)?;
-                let existing = match pending.get(&key_bytes) {
-                    Some(pending) => pending.clone(),
-                    None => db_ref.get(&key_bytes).map_err(Into::into)?,
-                };
-                let current: Option<V> = match existing {
-                    Some(bytes) => Some(de(&bytes)?),
-                    None => None,
-                };
-                let existed = current.is_some();
+                loop {
+                    let key_bytes = ser(&item.key())?;
+                    let existing = match pending.get(&key_bytes) {
+                        Some(pending) => pending.clone(),
+                        None => db_ref.get(&key_bytes).map_err(Into::into)?,
+                    };
+                    let current: Option<V> = match existing {
+                        Some(bytes) => Some(de(&bytes)?),
+                        None => None,
+                    };
+                    let existed = current.is_some();
 
-                match item.upsert(current) {
-                    UpsertAction::Change(v) => {
-                        let v_bytes = ser(&v)?;
-                        batch.put(&key_bytes, &v_bytes);
-                        pending.insert(key_bytes, Some(v_bytes));
-                        count += 1;
+                    match item.upsert(current) {
+                        UpsertAction::Change(v) => {
+                            let v_bytes = ser(&v)?;
+                            batch.put(&key_bytes, &v_bytes);
+                            pending.insert(key_bytes, Some(v_bytes));
+                            count += 1;
+                        }
+                        // Deleting a key that is not there changes nothing.
+                        UpsertAction::Delete if existed => {
+                            batch.delete(&key_bytes);
+                            pending.insert(key_bytes, None);
+                            count += 1;
+                        }
+                        UpsertAction::Delete | UpsertAction::NoChange => {}
+                        UpsertAction::Next(next) => {
+                            item = next;
+                            continue;
+                        }
                     }
-                    // Deleting a key that is not there changes nothing.
-                    UpsertAction::Delete if existed => {
-                        batch.delete(&key_bytes);
-                        pending.insert(key_bytes, None);
-                        count += 1;
-                    }
-                    UpsertAction::Delete | UpsertAction::NoChange => {}
+                    break;
                 }
 
                 if pending.len() >= WRITE_BATCH_SIZE {
@@ -451,7 +460,7 @@ where
             let mut count = 0u64;
 
             while let Some(upsert) = rx_in.blocking_recv() {
-                let upsert: U = match upsert {
+                let mut upsert: U = match upsert {
                     Ok(i) => i,
                     Err(e) => {
                         tx.blocking_send(Err(e))?;
@@ -459,45 +468,38 @@ where
                     }
                 };
 
-                let key = upsert.key();
                 tracer.on();
 
-                let key_bytes = ser(&key)?;
-                let existing_bytes = db_ref.get(&key_bytes)?;
+                // Reports the upsert that settled its key, with what it found
+                // there - after following any `Next`.
+                let uv = loop {
+                    let key_bytes = ser(&upsert.key())?;
+                    let current: Option<V> = match db_ref.get(&key_bytes)? {
+                        Some(bytes) => Some(de(&bytes)?),
+                        None => None,
+                    };
 
-                let uv = match existing_bytes {
-                    Some(bytes) => {
-                        let u = upsert.clone();
-                        let current: V = de(&bytes)?;
-                        match upsert.upsert(Some(current.clone())) {
-                            UpsertAction::Change(v_new) => {
-                                let v_bytes = ser(&v_new)?;
-                                db_ref.put_opt(&key_bytes, &v_bytes, &wo)?;
-                                count += 1;
-                            }
-                            UpsertAction::Delete => {
-                                db_ref.delete_opt(&key_bytes, &wo)?;
-                                count += 1;
-                            }
-                            UpsertAction::NoChange => {}
-                        };
-                        UpsertedValue::<U, V> {
-                            upsert: u,
-                            previous_value: Some(current),
-                        }
-                    }
-                    None => {
-                        let u = upsert.clone();
-                        if let UpsertAction::Change(v_new) = upsert.upsert(None) {
+                    let u = upsert.clone();
+                    match upsert.upsert(current.clone()) {
+                        UpsertAction::Change(v_new) => {
                             let v_bytes = ser(&v_new)?;
                             db_ref.put_opt(&key_bytes, &v_bytes, &wo)?;
                             count += 1;
-                        };
-                        UpsertedValue {
-                            upsert: u,
-                            previous_value: None,
                         }
-                    }
+                        UpsertAction::Delete if current.is_some() => {
+                            db_ref.delete_opt(&key_bytes, &wo)?;
+                            count += 1;
+                        }
+                        UpsertAction::Delete | UpsertAction::NoChange => {}
+                        UpsertAction::Next(next) => {
+                            upsert = next;
+                            continue;
+                        }
+                    };
+                    break UpsertedValue::<U, V> {
+                        upsert: u,
+                        previous_value: current,
+                    };
                 };
 
                 tracer.off();
@@ -561,7 +563,7 @@ mod tests {
             self.key.clone()
         }
 
-        fn upsert(self, current: Option<Self::V>) -> UpsertAction<Self::V> {
+        fn upsert(self, current: Option<Self::V>) -> UpsertAction<Self::V, Self> {
             if self.delta == -1 {
                 return UpsertAction::Delete;
             }
@@ -595,7 +597,7 @@ mod tests {
             self.key.clone()
         }
 
-        fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V> {
+        fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V, Self> {
             match self.action {
                 TestAction::Change(v) => UpsertAction::Change(v),
                 TestAction::Delete => UpsertAction::Delete,
@@ -1136,6 +1138,92 @@ mod tests {
             ]
         );
 
+        store.close().await.expect("close store");
+    }
+
+    /// Takes the first of its keys that is free, moving on with `Next`.
+    #[derive(Clone)]
+    struct FirstFree(Vec<&'static str>);
+
+    impl Upsert for FirstFree {
+        type K = String;
+        type V = ();
+
+        fn key(&self) -> Self::K {
+            self.0.first().copied().unwrap_or_default().to_string()
+        }
+
+        fn upsert(mut self, taken: Option<()>) -> UpsertAction<(), Self> {
+            match taken {
+                None => UpsertAction::Change(()),
+                Some(()) if self.0.len() > 1 => {
+                    self.0.remove(0);
+                    UpsertAction::Next(self)
+                }
+                Some(()) => UpsertAction::NoChange,
+            }
+        }
+    }
+
+    fn walks() -> Vec<Result<FirstFree, DBError>> {
+        vec![
+            Ok(FirstFree(vec!["a", "b", "c"])),
+            Ok(FirstFree(vec!["a", "b", "c"])),
+            Ok(FirstFree(vec!["b", "c"])),
+            Ok(FirstFree(vec!["a", "c"])),
+        ]
+    }
+
+    #[tokio::test]
+    async fn streaming_upsert_follows_next_to_a_free_key() {
+        let dir = TempDir::new().expect("tempdir");
+        let store: Store<String, ()> = Store::new(dir.path().join("db"), "next".to_string())
+            .await
+            .expect("create store");
+
+        let (s, handle) = store.streaming_upsert(stream::iter(walks()).boxed());
+        let settled: Vec<_> = s
+            .map_ok(|uv| (uv.upsert.key(), uv.previous_value.is_some()))
+            .try_collect()
+            .await
+            .expect("collect");
+        // the handle counts the items it was given
+        assert_eq!(handle.await.expect("join").expect("upsert"), 4);
+
+        // The last walk ends on a taken key: every one of its keys was taken.
+        assert_eq!(
+            settled,
+            [
+                ("a".to_string(), false),
+                ("b".to_string(), false),
+                ("c".to_string(), false),
+                ("c".to_string(), true),
+            ]
+        );
+        store.close().await.expect("close store");
+    }
+
+    /// Within one write batch, a key written earlier is seen as taken.
+    #[tokio::test]
+    async fn upsert_follows_next_past_keys_taken_in_the_same_batch() {
+        let dir = TempDir::new().expect("tempdir");
+        let store: Store<String, ()> = Store::new(dir.path().join("db"), "next".to_string())
+            .await
+            .expect("create store");
+
+        let count = store
+            .upsert::<_, DBError>(stream::iter(walks()).boxed())
+            .await
+            .expect("upsert");
+        assert_eq!(count, 3);
+
+        let keys: Vec<_> = store
+            .stream()
+            .map_ok(|(k, ())| k)
+            .try_collect()
+            .await
+            .expect("collect");
+        assert_eq!(keys, ["a", "b", "c"]);
         store.close().await.expect("close store");
     }
 }

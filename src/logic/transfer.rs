@@ -47,7 +47,7 @@ impl<T: TransferItem> kv::Upsert for FirstOfBlob<T> {
         self.0.blob_id().clone()
     }
 
-    fn upsert(self, seen: Option<()>) -> UpsertAction<()> {
+    fn upsert(self, seen: Option<()>) -> UpsertAction<(), Self> {
         match seen {
             None => UpsertAction::Change(()),
             Some(()) => UpsertAction::NoChange,

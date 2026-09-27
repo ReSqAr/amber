@@ -356,7 +356,7 @@ where
         self.key.clone()
     }
 
-    fn upsert(self, o: Option<Self::V>) -> UpsertAction<Self::V> {
+    fn upsert(self, o: Option<Self::V>) -> UpsertAction<Self::V, Self> {
         if let Some((_, _, valid_from)) = o
             && valid_from > self.valid_from
         {

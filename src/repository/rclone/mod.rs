@@ -324,7 +324,7 @@ impl Receiver<FileTransferItem> for RCloneStore {
             // A new upload is named after its file, but never under a name the
             // store already uses; finalise_transfer records the name for later
             // downloads.
-            let names = match kv::Store::<String, Vec<String>>::new(
+            let names = match kv::Store::<String, ()>::new(
                 names_path.abs().to_owned(),
                 "store_names".into(),
             )
@@ -336,7 +336,7 @@ impl Receiver<FileTransferItem> for RCloneStore {
             let taken = db
                 .available_blobs(local_repo_id.clone())
                 .try_filter_map(|b| {
-                    future::ready(Ok(b.path.map(|p| (store_names::fold(&p.0), Some(vec![])))))
+                    future::ready(Ok(b.path.map(|p| (store_names::fold(&p.0), Some(())))))
                 })
                 .boxed();
             if let Err(e) = names.apply::<InternalError>(taken.err_into().boxed()).await {
@@ -365,12 +365,19 @@ impl Receiver<FileTransferItem> for RCloneStore {
             })
             .filter_map(future::ready);
             claimed
-                .map_ok(
+                .and_then(
                     move |UpsertedValue {
                               upsert,
                               previous_value,
                           }| {
-                        upsert.into_transfer_item(transfer_id, previous_value)
+                        // The claim ends on a taken name only when all were taken.
+                        future::ready(match previous_value {
+                            None => Ok(upsert.into_transfer_item(transfer_id)),
+                            Some(()) => Err(InternalError::Stream(format!(
+                                "no free name in the store for {}",
+                                upsert.path()
+                            ))),
+                        })
                     },
                 )
                 .chain(writes)

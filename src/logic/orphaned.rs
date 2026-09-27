@@ -20,7 +20,7 @@ impl kv::Upsert for InsertBlob {
         self.0.clone()
     }
 
-    fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V> {
+    fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V, Self> {
         match existing {
             Some(_v) => UpsertAction::NoChange,
             None => UpsertAction::Change(Vec::new()),
@@ -39,7 +39,7 @@ impl kv::Upsert for RemoveBlob {
         self.0.clone()
     }
 
-    fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V> {
+    fn upsert(self, _: Option<Self::V>) -> UpsertAction<Self::V, Self> {
         UpsertAction::Delete
     }
 }
@@ -55,7 +55,7 @@ impl kv::Upsert for RecordBlobPath {
         self.0.clone()
     }
 
-    fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V> {
+    fn upsert(self, existing: Option<Self::V>) -> UpsertAction<Self::V, Self> {
         if let Some(mut paths) = existing {
             match paths.binary_search(&self.1) {
                 Ok(_) => UpsertAction::NoChange,
@@ -157,7 +157,7 @@ mod tests {
             UpsertAction::Change(paths) => {
                 assert!(paths.is_sorted(), "paths must remain sorted after insert")
             }
-            UpsertAction::NoChange | UpsertAction::Delete => {
+            UpsertAction::NoChange | UpsertAction::Delete | UpsertAction::Next(_) => {
                 panic!("expected Change for missing path")
             }
         }
@@ -171,7 +171,9 @@ mod tests {
         let action2 = RecordBlobPath(blob, Path("c".to_string())).upsert(Some(existing2));
         match action2 {
             UpsertAction::NoChange => {}
-            UpsertAction::Delete | UpsertAction::Change(_) => panic!("expected NoChange"),
+            UpsertAction::Delete | UpsertAction::Change(_) | UpsertAction::Next(_) => {
+                panic!("expected NoChange")
+            }
         }
     }
 
