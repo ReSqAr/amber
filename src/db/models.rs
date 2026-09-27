@@ -341,10 +341,26 @@ pub struct FileTransferRequest {
     pub path: Path,
     pub blob_id: BlobID,
     pub blob_size: u64,
-    /// Where the source keeps the blob. A store records this for every blob
-    /// it holds - a file keeps the name it was uploaded under, even after it
-    /// is renamed - while an amber repository records none.
-    pub source_location: Option<RclonePath>,
+    pub source_location: BlobLocation,
+}
+
+/// Where a repository keeps a blob.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlobLocation {
+    /// An amber repository keeps its blobs by blob ID and records no location.
+    Repository,
+    /// A store keeps a blob at the path it was uploaded to - the name its file
+    /// had then, even if the file has been renamed since.
+    Store(RclonePath),
+}
+
+impl From<Option<RclonePath>> for BlobLocation {
+    fn from(path: Option<RclonePath>) -> Self {
+        match path {
+            None => BlobLocation::Repository,
+            Some(path) => BlobLocation::Store(path),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

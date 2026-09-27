@@ -827,7 +827,7 @@ impl Database {
                     path: p,
                     blob_id: b.into_inner(),
                     blob_size: meta.size,
-                    source_location: meta.path,
+                    source_location: meta.path.into(),
                 }))
             }
             Ok((_, None)) => None,

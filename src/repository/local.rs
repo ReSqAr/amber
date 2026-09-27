@@ -4,7 +4,7 @@ use crate::db::database::Database;
 use crate::db::error::DBError;
 use crate::db::models;
 use crate::db::models::{
-    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
+    AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobLocation, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
     FileTransferRequest, FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata,
     RepositorySyncState, SizedBlobID, VirtualFile,
@@ -854,7 +854,7 @@ impl Receiver<FileTransferItem> for LocalRepository {
                         blob_size,
                         source_location,
                     } = f?;
-                    let Some(location) = source_location else {
+                    let BlobLocation::Store(location) = source_location else {
                         return Err(AppError::BlobLocationUnknown { blob_id, path }.into());
                     };
                     Ok(FileTransferItem {
