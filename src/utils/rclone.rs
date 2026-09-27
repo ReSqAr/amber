@@ -143,7 +143,9 @@ impl RCloneInvocation<'_> {
             // (NFD) are two files. Left to itself rclone folds them into one
             // name and copies only one of them.
             "--no-unicode-normalization".into(),
-            "--files-from".into(),
+            // Plain --files-from trims the whitespace around each line and
+            // skips lines starting with `#` or `;`, which are valid names.
+            "--files-from-raw".into(),
             self.file_list_path.display().to_string(),
             "--use-json-log".into(),
             "--stats".into(),
@@ -341,7 +343,7 @@ mod tests {
                 "copy",
                 &format!("--retries={RETRIES}"),
                 "--no-unicode-normalization",
-                "--files-from",
+                "--files-from-raw",
                 "/tmp/rclone.files",
                 "--use-json-log",
                 "--stats",

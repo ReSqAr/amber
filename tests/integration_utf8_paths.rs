@@ -257,10 +257,9 @@ async fn integration_test_rclone_store_escapes_only_names_that_need_it() -> Resu
     dsl_definition::run_dsl_script(script).await
 }
 
-/// rclone reads the list of files to copy with `--files-from`, which skips
-/// lines starting with `#` or `;` as comments and trims the whitespace around
-/// each line. Stored under their raw names such files were never copied, so
-/// their names have to be escaped.
+/// Plain `--files-from` would skip lines starting with `#` or `;` as comments
+/// and trim the whitespace around each line, so these files would never be
+/// copied. amber hands rclone its list with `--files-from-raw` instead.
 #[tokio::test(flavor = "multi_thread")]
 async fn integration_test_rclone_store_names_files_from_would_mangle() -> Result<(), anyhow::Error>
 {
@@ -286,7 +285,7 @@ async fn integration_test_rclone_store_names_files_from_would_mangle() -> Result
         # then
         @rclone assert_exists "--23notes.txt" "hash"
         @rclone assert_exists "--3bsemi.txt" "semicolon"
-        @rclone assert_exists "- leading space.txt" "leading space"
+        @rclone assert_exists " leading space.txt" "leading space"
         @rclone assert_exists "-trailing space.txt-20" "trailing space"
         @rclone assert_exists "--23archive/--3bold.txt" "in folder"
         assert_equal a b

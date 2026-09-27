@@ -7,9 +7,8 @@
 //! works on each path component on its own and keeps `/` as the separator:
 //!
 //! * A component made only of [`is_safe`] characters, which does not start
-//!   with `-` or a space and does not end with `.` or a space, is kept as it
-//!   is. That covers almost every real file name, so the store stays
-//!   browsable.
+//!   with `-` and does not end with `.` or a space, is kept as it is. That
+//!   covers almost every real file name, so the store stays browsable.
 //! * Every other component is written as `-` followed by its UTF-8 bytes,
 //!   where each byte that is not [`is_safe`] - and each `-` - becomes `-` and
 //!   two lowercase hex digits. A final `.` or space is escaped as well.
@@ -39,11 +38,7 @@ fn needs_encoding(component: &str) -> bool {
     let bytes = component.as_bytes();
     match (bytes.first(), bytes.last()) {
         (Some(&first), Some(&last)) => {
-            first == ESCAPE
-                || first == b' '
-                || last == b'.'
-                || last == b' '
-                || !bytes.iter().copied().all(is_safe)
+            first == ESCAPE || last == b'.' || last == b' ' || !bytes.iter().copied().all(is_safe)
         }
         _ => false,
     }
@@ -129,6 +124,7 @@ mod tests {
             "a-b/c-d/e_f.tar.gz",
             ".hidden/.config",
             "[draft] notes, v2+final=ok!@&'.md",
+            " leading space",
         ] {
             assert_eq!(encode(path), path);
         }
@@ -143,7 +139,6 @@ mod tests {
             ),
             ("Grüße 2024-05.pdf", "-Gr-c3-bc-c3-9fe 2024-2d05.pdf"),
             ("-notes.txt", "--2dnotes.txt"),
-            (" leading space", "- leading space"),
             ("trailing space ", "-trailing space-20"),
             ("trailing dot.", "-trailing dot-2e"),
             ("..", "-.-2e"),
@@ -174,7 +169,6 @@ mod tests {
             for component in name.split('/') {
                 assert!(component.bytes().all(is_safe), "{component:?}");
                 assert!(!component.ends_with('.') && !component.ends_with(' '));
-                assert!(!component.starts_with(' '));
             }
             assert_eq!(decode_path(&name).unwrap(), path);
         }
@@ -228,7 +222,6 @@ mod tests {
                 component,
                 name
             );
-            prop_assert!(!component.starts_with(' '), "{:?}", name);
             prop_assert!(!component.ends_with(' '), "{:?}", name);
             prop_assert!(!component.ends_with('.'), "{:?}", name);
         }
@@ -256,7 +249,7 @@ mod tests {
 
         #[test]
         fn prop_plain_components_are_kept(
-            component in "[a-zA-Z0-9_.,+=()!@&'\\[\\]][a-zA-Z0-9 _.,+=()!@&'\\[\\]\\-]{0,20}[a-zA-Z0-9_,+=()!@&'\\[\\]\\-]"
+            component in "[a-zA-Z0-9 _.,+=()!@&'\\[\\]][a-zA-Z0-9 _.,+=()!@&'\\[\\]\\-]{0,20}[a-zA-Z0-9_,+=()!@&'\\[\\]\\-]"
         ) {
             prop_assert_eq!(encode(&component), component);
         }
