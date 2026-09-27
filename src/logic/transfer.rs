@@ -62,7 +62,7 @@ fn write_rclone_files_clone<T: TransferItem>(
             tokio_stream::StreamExt::chunks_timeout(rx, writer_buffer_size, TIMEOUT).boxed();
         while let Some(chunk) = chunked_stream.next().await {
             let data: String = chunk.into_iter().fold(String::new(), |mut acc, item: T| {
-                acc.push_str(&item.path());
+                acc.push_str(&item.path().0);
                 acc.push('\n');
                 acc
             });
@@ -220,7 +220,7 @@ pub async fn transfer<T: TransferItem>(
         .await
         .inspect_err(|e| log::error!("transfer: create_dir_all failed: {e}"))?;
     let rclone_files = transfer_path.join("rclone.files");
-    let scratch = kv::Store::<models::Path, models::SizedBlobID>::new(
+    let scratch = kv::Store::<models::RclonePath, models::SizedBlobID>::new(
         transfer_path.join("scratch.rocksdb").abs().to_owned(),
         "scratch".to_string(),
     )
@@ -272,9 +272,9 @@ pub async fn transfer<T: TransferItem>(
 
     let stream = TokioStreamExt::map(stream, |t: Result<T, InternalError>| {
         t.map(|t| {
-            let p = t.path();
+            let p = t.path().clone();
             let b = t.into();
-            AlwaysUpsert(models::Path(p), b)
+            AlwaysUpsert(p, b)
         })
     })
     .boxed();
@@ -367,12 +367,12 @@ pub async fn transfer<T: TransferItem>(
     });
 
     let stream = TokioStreamExt::map(stream, Ok).boxed();
-    let stream = scratch.left_join::<_, _, InternalError>(stream, models::Path);
+    let stream = scratch.left_join::<_, _, InternalError>(stream, models::RclonePath);
     let stream = TokioStreamExt::filter_map(stream, move |e| match e {
         Ok((_, None)) => None,
         Ok((p, Some(b))) => Some(Ok(CopiedTransferItem {
             transfer_id,
-            path: models::Path(p),
+            path: models::RclonePath(p),
             blob_id: b.blob_id,
             blob_size: b.blob_size,
         })),

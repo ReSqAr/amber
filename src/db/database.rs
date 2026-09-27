@@ -5,8 +5,8 @@ use crate::db::models::{
     BlobTransferItem, Connection, ConnectionName, CurrentFile, File, FileBlobID, FileCheck,
     FileSeen, FileTransferRequest, FilesWithAvailability, HasBlob, InsertBlob, InsertFile,
     InsertFileBundle, InsertMaterialisation, InsertRepositoryMetadata, LocalRepository,
-    LogRepositoryMetadata, MissingFile, Path, RepoID, RepositoryMetadata, RepositorySyncState,
-    SyncState, Uid, VirtualFile,
+    LogRepositoryMetadata, MissingFile, Path, RclonePath, RepoID, RepositoryMetadata,
+    RepositorySyncState, SyncState, Uid, VirtualFile,
 };
 use crate::db::reduced;
 use crate::db::reduced::Reduced;
@@ -611,7 +611,7 @@ impl Database {
                             repo_id: repo_id.clone(),
                             blob_id: blob_ref.blob_id,
                             blob_size,
-                            path: blob_path.map(|p| p.0),
+                            path: blob_path,
                         }))
                     } else {
                         None
@@ -768,7 +768,7 @@ impl Database {
         });
         TokioStreamExt::filter_map(s, move |e| match e {
             Ok(((_, b), Some((lb, _)))) => {
-                let blob_path = Path(b.path().to_string_lossy().to_string());
+                let blob_path = RclonePath(b.path().to_string_lossy().to_string());
                 Some(Ok(BlobTransferItem {
                     transfer_id,
                     blob_id: b.into_inner(),

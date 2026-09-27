@@ -6,8 +6,8 @@ use crate::db::models;
 use crate::db::models::{
     AvailableBlob, Blob, BlobAssociatedToFiles, BlobID, BlobTransferItem, Connection,
     ConnectionName, CopiedTransferItem, CurrentFile, File, FileCheck, FileSeen, FileTransferItem,
-    FilesWithAvailability, MissingFile, RepoID, RepositoryMetadata, RepositorySyncState,
-    SizedBlobID, VirtualFile,
+    FilesWithAvailability, MissingFile, RclonePath, RepoID, RepositoryMetadata,
+    RepositorySyncState, SizedBlobID, VirtualFile,
 };
 use crate::logic::assimilate;
 use crate::logic::assimilate::Item;
@@ -649,7 +649,7 @@ impl From<BlobTransferItem> for SizedBlobID {
 }
 
 impl TransferItem for BlobTransferItem {
-    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+    fn new(path: models::RclonePath, transfer_id: u32, sized: SizedBlobID) -> Self {
         Self {
             transfer_id,
             blob_id: sized.blob_id,
@@ -658,8 +658,8 @@ impl TransferItem for BlobTransferItem {
         }
     }
 
-    fn path(&self) -> String {
-        self.path.0.clone()
+    fn path(&self) -> &models::RclonePath {
+        &self.path
     }
 }
 
@@ -761,7 +761,7 @@ impl Receiver<BlobTransferItem> for LocalRepository {
 }
 
 impl TransferItem for FileTransferItem {
-    fn new(path: models::Path, transfer_id: u32, sized: SizedBlobID) -> Self {
+    fn new(path: models::RclonePath, transfer_id: u32, sized: SizedBlobID) -> Self {
         Self {
             transfer_id,
             blob_id: sized.blob_id,
@@ -770,8 +770,8 @@ impl TransferItem for FileTransferItem {
         }
     }
 
-    fn path(&self) -> String {
-        self.path.0.clone()
+    fn path(&self) -> &models::RclonePath {
+        &self.path
     }
 }
 
@@ -843,9 +843,10 @@ impl Receiver<FileTransferItem> for LocalRepository {
                 return stream::iter([Err(e.into())]).boxed();
             }
 
+            // Between amber repositories a file travels under its own name.
             db.select_missing_files_for_transfer(local_repo_id.clone(), repo_id, paths)
                 .await
-                .map_ok(move |f| f.into_transfer_item(transfer_id, |path| path))
+                .map_ok(move |f| f.into_transfer_item(transfer_id, |path| RclonePath(path.0)))
                 .err_into()
                 .boxed()
         }

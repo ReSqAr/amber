@@ -175,8 +175,8 @@ pub trait RcloneTargetPath {
 }
 
 pub trait TransferItem: Send + Sync + Clone + Into<models::SizedBlobID> + 'static {
-    fn new(path: models::Path, transfer_id: u32, sized: models::SizedBlobID) -> Self;
-    fn path(&self) -> String;
+    fn new(path: models::RclonePath, transfer_id: u32, sized: models::SizedBlobID) -> Self;
+    fn path(&self) -> &models::RclonePath;
 }
 
 pub trait Sender<T: TransferItem> {

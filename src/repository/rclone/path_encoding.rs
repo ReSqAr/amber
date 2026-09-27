@@ -26,6 +26,8 @@
 //! -notes.txt            -> --2dnotes.txt
 //! ```
 
+use crate::db::models::{Path, RclonePath};
+
 const ESCAPE: u8 = b'-';
 
 /// Bytes that no rclone backend rewrites and that are fine inside a name.
@@ -67,7 +69,11 @@ fn encode_component(component: &str) -> String {
 }
 
 /// The name under which a newly uploaded `path` is stored in an rclone store.
-pub(crate) fn encode_path(path: &str) -> String {
+pub(crate) fn encode_path(path: &Path) -> RclonePath {
+    RclonePath(encode(&path.0))
+}
+
+fn encode(path: &str) -> String {
     path.split('/')
         .map(encode_component)
         .collect::<Vec<_>>()
@@ -79,7 +85,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    /// The inverse of [`encode_path`]. amber never needs it - downloads use the
+    /// The inverse of [`encode`]. amber never needs it - downloads use the
     /// location the store recorded - but it is what shows the encoding to be
     /// unambiguous.
     fn decode_path(name: &str) -> Option<String> {
@@ -124,7 +130,7 @@ mod tests {
             ".hidden/.config",
             "[draft] notes, v2+final=ok!@&'.md",
         ] {
-            assert_eq!(encode_path(path), path);
+            assert_eq!(encode(path), path);
         }
     }
 
@@ -149,7 +155,7 @@ mod tests {
             ("😀.txt", "--f0-9f-98-80.txt"),
         ];
         for (path, name) in cases {
-            assert_eq!(encode_path(path), name, "encoding {path:?}");
+            assert_eq!(encode(path), name, "encoding {path:?}");
             assert_eq!(decode_path(name).unwrap(), path, "decoding {name:?}");
         }
     }
@@ -164,7 +170,7 @@ mod tests {
             " ",
             ".",
         ] {
-            let name = encode_path(path);
+            let name = encode(path);
             for component in name.split('/') {
                 assert!(component.bytes().all(is_safe), "{component:?}");
                 assert!(!component.ends_with('.') && !component.ends_with(' '));
@@ -183,7 +189,7 @@ mod tests {
                 format!("x{c}"),
                 format!("x{c}x"),
             ] {
-                let name = encode_path(&path);
+                let name = encode(&path);
                 assert_eq!(decode_path(&name).unwrap(), path, "{path:?} -> {name:?}");
             }
         }
@@ -194,7 +200,7 @@ mod tests {
         let paths = [
             "-2d", "--2d", "-", "--", "a-b", "-a-2db", "ä", "-c3-a4", "--c3-a4", "x.", "-x-2e",
         ];
-        let names: std::collections::HashSet<_> = paths.iter().map(|p| encode_path(p)).collect();
+        let names: std::collections::HashSet<_> = paths.iter().map(|p| encode(p)).collect();
         assert_eq!(names.len(), paths.len());
     }
 
@@ -213,7 +219,7 @@ mod tests {
     }
 
     fn check_encoding(path: &str) -> Result<(), TestCaseError> {
-        let name = encode_path(path);
+        let name = encode(path);
         prop_assert_eq!(decode_path(&name), Some(path.to_owned()), "name {:?}", name);
         for component in name.split('/') {
             prop_assert!(
@@ -245,14 +251,14 @@ mod tests {
         #[test]
         fn prop_distinct_paths_get_distinct_names(a in tricky_path(), b in tricky_path()) {
             prop_assume!(a != b);
-            prop_assert_ne!(encode_path(&a), encode_path(&b));
+            prop_assert_ne!(encode(&a), encode(&b));
         }
 
         #[test]
         fn prop_plain_components_are_kept(
             component in "[a-zA-Z0-9_.,+=()!@&'\\[\\]][a-zA-Z0-9 _.,+=()!@&'\\[\\]\\-]{0,20}[a-zA-Z0-9_,+=()!@&'\\[\\]\\-]"
         ) {
-            prop_assert_eq!(encode_path(&component), component);
+            prop_assert_eq!(encode(&component), component);
         }
     }
 }

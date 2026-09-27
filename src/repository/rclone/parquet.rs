@@ -253,7 +253,7 @@ fn utc_timestamp() -> DataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::models::{BlobID, Path as ModelPath, RepoID, Uid};
+    use crate::db::models::{BlobID, Path as ModelPath, RclonePath, RepoID, Uid};
     use futures::TryStreamExt;
     use futures::stream;
     use tempfile::tempdir;
@@ -337,7 +337,7 @@ mod tests {
                 blob_id: BlobID(format!("{:064x}", i)),
                 blob_size: i * 1024,
                 has_blob: true,
-                path: Some(ModelPath(format!("photos/2024/IMG_{i:05}.jpg"))),
+                path: Some(RclonePath(format!("photos/2024/IMG_{i:05}.jpg"))),
                 valid_from: chrono::Utc::now(),
             })
             .collect();
@@ -382,7 +382,7 @@ mod tests {
             blob_id: BlobID("blob".to_string()),
             blob_size: 42,
             has_blob: true,
-            path: Some(ModelPath("dir/file.bin".to_string())),
+            path: Some(RclonePath("dir/file.bin".to_string())),
             valid_from: chrono::Utc::now(),
         };
 

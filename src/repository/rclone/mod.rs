@@ -318,9 +318,7 @@ impl Receiver<FileTransferItem> for RCloneStore {
             // records that location for later downloads.
             db.select_missing_files_for_transfer(local_repo_id, repo_id, paths)
                 .await
-                .map_ok(move |f| {
-                    f.into_transfer_item(transfer_id, |path| models::Path(encode_path(&path.0)))
-                })
+                .map_ok(move |f| f.into_transfer_item(transfer_id, |path| encode_path(&path)))
                 .err_into()
                 .boxed()
         }
