@@ -85,3 +85,32 @@ async fn integration_test_rclone_sync_via_exported_parquet_store_and_missing()
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// Files that share a blob need only one copy of it in the store.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_uploads_a_shared_blob_once() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file one.txt "same"
+        @a write_file two.txt "same"
+        @a amber add
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber push store
+
+        # then
+        assert_output_contains "pushed 1 blobs"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        assert_output_contains "pulled 1 blobs"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}

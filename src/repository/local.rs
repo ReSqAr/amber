@@ -661,6 +661,10 @@ impl TransferItem for BlobTransferItem {
     fn path(&self) -> &models::RclonePath {
         &self.path
     }
+
+    fn blob_id(&self) -> &BlobID {
+        &self.blob_id
+    }
 }
 
 impl RcloneTargetPath for LocalRepository {
@@ -772,6 +776,10 @@ impl TransferItem for FileTransferItem {
 
     fn path(&self) -> &models::RclonePath {
         &self.path
+    }
+
+    fn blob_id(&self) -> &BlobID {
+        &self.blob_id
     }
 }
 

@@ -2,7 +2,7 @@ use crate::connection::EstablishedConnection;
 use crate::db::models;
 use crate::db::models::CopiedTransferItem;
 use crate::db::stores::kv;
-use crate::db::stores::kv::{AlwaysUpsert, UpsertedValue};
+use crate::db::stores::kv::{AlwaysUpsert, UpsertAction, UpsertedValue};
 use crate::flightdeck;
 use crate::flightdeck::base::{BaseObservable, BaseObservation, BaseObserver};
 use crate::flightdeck::observer::Observer;
@@ -33,6 +33,27 @@ use tokio::{fs, time};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 const TIMEOUT: time::Duration = time::Duration::from_millis(5);
+
+/// Keeps the first transfer item of each blob: files that share a blob need
+/// only one copy of it.
+#[derive(Clone)]
+struct FirstOfBlob<T>(T);
+
+impl<T: TransferItem> kv::Upsert for FirstOfBlob<T> {
+    type K = models::BlobID;
+    type V = ();
+
+    fn key(&self) -> Self::K {
+        self.0.blob_id().clone()
+    }
+
+    fn upsert(self, seen: Option<()>) -> UpsertAction<()> {
+        match seen {
+            None => UpsertAction::Change(()),
+            Some(()) => UpsertAction::NoChange,
+        }
+    }
+}
 
 #[derive(Debug)]
 enum Direction {
@@ -225,6 +246,11 @@ pub async fn transfer<T: TransferItem>(
         "scratch".to_string(),
     )
     .await?;
+    let seen_blobs = kv::Store::<models::BlobID, ()>::new(
+        transfer_path.join("blobs.rocksdb").abs().to_owned(),
+        "seen_blobs".to_string(),
+    )
+    .await?;
 
     let paths = paths
         .iter()
@@ -270,6 +296,20 @@ pub async fn transfer<T: TransferItem>(
         .await;
     tracer_ctr.measure();
 
+    let stream =
+        TokioStreamExt::map(stream, |t: Result<T, InternalError>| t.map(FirstOfBlob)).boxed();
+    let (stream, seen_blob_writes) = seen_blobs.streaming_upsert(stream);
+    let stream = TokioStreamExt::filter_map(stream, |item| match item {
+        Ok(UpsertedValue {
+            upsert: FirstOfBlob(t),
+            previous_value: None,
+        }) => Some(Ok(t)),
+        Ok(UpsertedValue {
+            previous_value: Some(()),
+            ..
+        }) => None,
+        Err(e) => Some(Err(e)),
+    });
     let stream = TokioStreamExt::map(stream, |t: Result<T, InternalError>| {
         t.map(|t| {
             let p = t.path().clone();
@@ -333,6 +373,7 @@ pub async fn transfer<T: TransferItem>(
         // a failure writing them would never be reported and the transfer would
         // quietly carry on with fewer blobs than it selected.
         staging_writes.await??;
+        seen_blob_writes.await??;
 
         count
     };
@@ -391,6 +432,7 @@ pub async fn transfer<T: TransferItem>(
     transfer_obs.observe_termination(log::Level::Debug, "done");
 
     scratch.close().await?;
+    seen_blobs.close().await?;
 
     tracer.measure();
     if count < expected_count {
