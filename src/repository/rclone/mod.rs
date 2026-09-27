@@ -340,7 +340,8 @@ impl Receiver<FileTransferItem> for RCloneStore {
                 })
                 .boxed();
             if let Err(e) = names.apply::<InternalError>(taken.err_into().boxed()).await {
-                return stream::iter([Err(e)]).boxed();
+                let closed = names.close().await.err().map(|e| Err(e.into()));
+                return stream::iter([Some(Err(e)), closed].into_iter().flatten()).boxed();
             }
 
             let claims = db
@@ -352,12 +353,15 @@ impl Receiver<FileTransferItem> for RCloneStore {
             let (claimed, writes) = names.streaming_upsert::<_, InternalError>(claims);
             // A failure to record a claim only shows in `writes`: report it at
             // the end of the stream rather than hand out a name twice unnoticed.
+            // The claims are all made by then, so the store can be closed too.
             let writes = stream::once(async move {
-                match writes.await {
-                    Ok(Ok(_)) => None,
-                    Ok(Err(e)) => Some(Err(e)),
-                    Err(e) => Some(Err(e.into())),
-                }
+                let written = match writes.await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(e) => Err(e.into()),
+                };
+                let closed = names.close().await.map_err(InternalError::from);
+                written.and(closed).err().map(Err)
             })
             .filter_map(future::ready);
             claimed
