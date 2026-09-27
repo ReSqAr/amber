@@ -85,3 +85,186 @@ async fn integration_test_rclone_sync_via_exported_parquet_store_and_missing()
     "#;
     dsl_definition::run_dsl_script(script).await
 }
+
+/// Files that share a blob need only one copy of it in the store.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_uploads_a_shared_blob_once() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file one.txt "same"
+        @a write_file two.txt "same"
+        @a amber add
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber push store
+
+        # then
+        assert_output_contains "pushed 1 blobs"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        assert_output_contains "pulled 1 blobs"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// A store keeps a blob under the name it was uploaded with. A new file that
+/// takes that name later must not overwrite it.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_keeps_a_blob_whose_name_is_reused_after_remove()
+-> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file x.txt "old"
+        @a write_file y.txt "old"
+        @a amber add
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @a amber push store
+
+        @a amber remove x.txt
+        @a write_file x.txt "new"
+        @a amber add
+
+        # action
+        @a amber push store
+
+        # then
+        @rclone assert_exists x.txt "old"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        @b assert_exists x.txt "new"
+        @b assert_exists y.txt "old"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_keeps_a_blob_whose_name_is_reused_after_move()
+-> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file a.txt "moved"
+        @a amber add
+        @a amber remote add store rclone :local:/$ROOT/rclone
+        @a amber push store
+
+        @a amber mv a.txt b.txt
+        @a write_file a.txt "new"
+        @a amber add
+
+        # action
+        @a amber push store
+
+        # then
+        @rclone assert_exists a.txt "moved"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        @b assert_exists a.txt "new"
+        @b assert_exists b.txt "moved"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// Some targets hold names differing only in case as one file.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_names_differing_in_case_apart() -> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a write_file Photo.JPG "upper"
+        @a write_file photo.jpg "lower"
+        @a amber add
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        # action
+        @a amber push store
+
+        # then
+        @rclone assert_exists Photo.JPG "upper"
+        @rclone assert_does_not_exist photo.jpg
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}
+
+/// Five versions of a file, each uploaded by its own push under the same
+/// name, all stay in the store and can be fetched again.
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_test_rclone_push_keeps_five_versions_under_one_name()
+-> Result<(), anyhow::Error> {
+    let script = r#"
+        # when
+        @a amber init a
+        @a amber remote add store rclone :local:/$ROOT/rclone
+
+        @a write_file doc.tar.gz "version 1"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v1.tar.gz
+
+        @a write_file doc.tar.gz "version 2"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v2.tar.gz
+
+        @a write_file doc.tar.gz "version 3"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v3.tar.gz
+
+        @a write_file doc.tar.gz "version 4"
+        @a amber add
+        @a amber push store
+        @a amber mv doc.tar.gz v4.tar.gz
+
+        @a write_file doc.tar.gz "version 5"
+        @a amber add
+        @a amber push store
+
+        # then
+        @rclone assert_exists doc.tar.gz "version 1"
+
+        # action
+        @b amber init b
+        @b amber remote add store rclone :local:/$ROOT/rclone
+        @b amber pull store
+
+        # then
+        assert_output_contains "pulled 5 blobs"
+        @b assert_exists v1.tar.gz "version 1"
+        @b assert_exists v2.tar.gz "version 2"
+        @b assert_exists v3.tar.gz "version 3"
+        @b assert_exists v4.tar.gz "version 4"
+        @b assert_exists doc.tar.gz "version 5"
+        assert_equal a b
+    "#;
+    dsl_definition::run_dsl_script(script).await
+}

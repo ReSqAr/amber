@@ -3,6 +3,8 @@ use crate::db::models::{
     AvailableBlob, BlobAssociatedToFiles, CopiedTransferItem, FileTransferItem,
     FilesWithAvailability, InsertBlob, InsertRepositoryMetadata, RepoID,
 };
+use crate::db::stores::kv;
+use crate::db::stores::kv::UpsertedValue;
 use crate::flightdeck::tracer::Tracer;
 use crate::repository::local::LocalRepository;
 use crate::repository::rclone::parquet::{Parquet, ParquetRecord};
@@ -16,7 +18,7 @@ use crate::utils::rclone::{
     ConfigSection, ERROR_CODE_DIRECTORY_NOT_FOUND, ERROR_CODE_FILE_NOT_FOUND, Operation,
     RCloneConfig, RCloneTarget, run_rclone,
 };
-use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
+use futures::{FutureExt, StreamExt, TryStreamExt, future, pin_mut, stream};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use rand::RngExt;
@@ -27,8 +29,9 @@ use uuid::Uuid;
 
 pub(crate) mod parquet;
 pub(crate) mod path_encoding;
+mod store_names;
 
-use path_encoding::encode_path;
+use store_names::Claim;
 
 const EXTERNAL_PATH: &str = ".amb";
 const FILES: &str = "files";
@@ -313,18 +316,71 @@ impl Receiver<FileTransferItem> for RCloneStore {
     ) -> BoxFuture<'_, BoxStream<'static, Result<FileTransferItem, InternalError>>> {
         let db = self.local.db().clone();
         let local_repo_id = self.repo_id.clone();
+        let names_path = self
+            .local
+            .staging_id_path(transfer_id)
+            .join("store_names.rocksdb");
         async move {
-            // A new upload is stored under the encoded path, and finalise_transfer
-            // records that location for later downloads.
-            db.select_missing_files_for_transfer(local_repo_id, repo_id, paths)
-                .await
-                .map_ok(move |f| FileTransferItem {
-                    transfer_id,
-                    path: encode_path(&f.path),
-                    blob_id: f.blob_id,
-                    blob_size: f.blob_size,
+            // A new upload is named after its file, but never under a name the
+            // store already uses; finalise_transfer records the name for later
+            // downloads.
+            let names = match kv::Store::<String, ()>::new(
+                names_path.abs().to_owned(),
+                "store_names".into(),
+            )
+            .await
+            {
+                Ok(names) => names,
+                Err(e) => return stream::iter([Err(e.into())]).boxed(),
+            };
+            let taken = db
+                .available_blobs(local_repo_id.clone())
+                .try_filter_map(|b| {
+                    future::ready(Ok(b.path.map(|p| (store_names::fold(&p.0), Some(())))))
                 })
+                .boxed();
+            if let Err(e) = names.apply::<InternalError>(taken.err_into().boxed()).await {
+                let closed = names.close().await.err().map(|e| Err(e.into()));
+                return stream::iter([Some(Err(e)), closed].into_iter().flatten()).boxed();
+            }
+
+            let claims = db
+                .select_missing_files_for_transfer(local_repo_id, repo_id, paths)
+                .await
+                .map_ok(Claim::new)
                 .err_into()
+                .boxed();
+            let (claimed, writes) = names.streaming_upsert::<_, InternalError>(claims);
+            // A failure to record a claim only shows in `writes`: report it at
+            // the end of the stream rather than hand out a name twice unnoticed.
+            // The claims are all made by then, so the store can be closed too.
+            let writes = stream::once(async move {
+                let written = match writes.await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(e) => Err(e.into()),
+                };
+                let closed = names.close().await.map_err(InternalError::from);
+                written.and(closed).err().map(Err)
+            })
+            .filter_map(future::ready);
+            claimed
+                .and_then(
+                    move |UpsertedValue {
+                              upsert,
+                              previous_value,
+                          }| {
+                        // The claim ends on a taken name only when all were taken.
+                        future::ready(match previous_value {
+                            None => Ok(upsert.into_transfer_item(transfer_id)),
+                            Some(()) => Err(InternalError::Stream(format!(
+                                "no free name in the store for {}",
+                                upsert.path()
+                            ))),
+                        })
+                    },
+                )
+                .chain(writes)
                 .boxed()
         }
         .boxed()

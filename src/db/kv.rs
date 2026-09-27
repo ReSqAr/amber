@@ -22,7 +22,7 @@ impl Upsert for UpsertRepositoryMetadata {
         self.0.repo_id.clone()
     }
 
-    fn upsert(self, v: Option<V1<SyncState>>) -> UpsertAction<V1<SyncState>> {
+    fn upsert(self, v: Option<V1<SyncState>>) -> UpsertAction<V1<SyncState>, Self> {
         let merge = |l, r| match (l, r) {
             (Some(l), Some(r)) => Some(std::cmp::max(l, r)),
             (Some(l), None) => Some(l),
