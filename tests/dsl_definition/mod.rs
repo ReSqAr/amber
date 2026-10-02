@@ -137,6 +137,16 @@ pub async fn run_dsl_script(script: &str) -> anyhow::Result<(), anyhow::Error> {
                     });
                     fs::remove_file(&repo_instance.path, &filename).await?;
                 }
+                CommandLine::Symlink {
+                    repo,
+                    target,
+                    filename,
+                } => {
+                    let path = env.dir(&repo).ok_or_else(|| {
+                        anyhow!("Repository {} not found for symlink command", repo)
+                    })?;
+                    tokio::fs::symlink(&target, path.join(&filename)).await?;
+                }
                 CommandLine::AssertExists {
                     repo,
                     filename,
