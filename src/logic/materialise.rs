@@ -7,9 +7,50 @@ use crate::logic::state::VirtualFileState;
 use crate::logic::{files, state};
 use crate::repository::traits::{Adder, BufferType, Config, Local, Metadata, VirtualFilesystem};
 use crate::utils::errors::InternalError;
+use crate::utils::path::RepoPath;
 use crate::utils::walker::WalkerConfig;
 use futures::{StreamExt, pin_mut};
-use tokio::fs;
+use tokio::{fs, task};
+
+/// What the walker found at a path.
+enum Observed {
+    File,
+    Nothing,
+}
+
+/// A path that is taken on disk, although the walker found no file there.
+struct Clash;
+
+/// The other name under which the directory holds the entry `path` resolves
+/// to - `photo.jpg` for `Photo.jpg` on a filesystem that ignores case.
+#[cfg(unix)]
+async fn occupant(path: &RepoPath) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let path = path.abs().clone();
+    task::spawn_blocking(move || {
+        let wanted = std::fs::symlink_metadata(&path).ok()?;
+        let own_name = path.file_name()?;
+        std::fs::read_dir(path.parent()?)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != own_name)
+            .find(|entry| {
+                entry
+                    .metadata()
+                    .is_ok_and(|m| m.dev() == wanted.dev() && m.ino() == wanted.ino())
+            })
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(not(unix))]
+async fn occupant(_path: &RepoPath) -> Option<String> {
+    None
+}
 
 pub async fn materialise(
     local: &(impl Metadata + Local + Adder + VirtualFilesystem + Config + Clone + Send + Sync + 'static),
@@ -18,6 +59,7 @@ pub async fn materialise(
 
     let mut materialised_count = 0;
     let mut deleted_count = 0;
+    let mut skipped_count = 0;
     let start_time = tokio::time::Instant::now();
     let mut materialise_obs = BaseObserver::without_id("materialise");
 
@@ -38,6 +80,7 @@ pub async fn materialise(
         struct ToMaterialise {
             path: models::Path,
             target_blob_id: Option<BlobID>,
+            observed: Observed,
         }
 
         let stream = futures::StreamExt::filter_map(stream, |file_result| async move {
@@ -53,11 +96,13 @@ pub async fn materialise(
                 VirtualFileState::OkMaterialisationMissing { target_blob_id } => {
                     Some(Ok(ToMaterialise {
                         path,
+                        observed: Observed::File,
                         target_blob_id: Some(target_blob_id),
                     }))
                 }
                 VirtualFileState::OkBlobMissing { target_blob_id } => Some(Ok(ToMaterialise {
                     path,
+                    observed: Observed::File,
                     target_blob_id: Some(target_blob_id),
                 })),
                 VirtualFileState::Missing {
@@ -66,6 +111,7 @@ pub async fn materialise(
                 } => match local_has_target_blob {
                     true => Some(Ok(ToMaterialise {
                         path,
+                        observed: Observed::Nothing,
                         target_blob_id: Some(target_blob_id),
                     })),
                     false => {
@@ -82,10 +128,12 @@ pub async fn materialise(
                 } => match (local_has_target_blob, target_blob_id) {
                     (true, Some(target_blob_id)) => Some(Ok(ToMaterialise {
                         path,
+                        observed: Observed::File,
                         target_blob_id: Some(target_blob_id),
                     })),
                     (_, None) => Some(Ok(ToMaterialise {
                         path,
+                        observed: Observed::File,
                         target_blob_id: None,
                     })),
                     (false, Some(_)) => {
@@ -100,6 +148,7 @@ pub async fn materialise(
         enum Action {
             Materialised,
             Deleted,
+            Skipped,
         }
 
         let mat_tx = mat_tx.clone();
@@ -110,12 +159,58 @@ pub async fn materialise(
                 async move {
                     let ToMaterialise {
                         path,
+                        observed,
                         target_blob_id,
                     } = file_result?;
                     let target_path = local.root().join(path.0.clone());
                     let mut o = BaseObserver::with_id("materialise:file", path.0.clone());
 
                     let action = match target_blob_id.clone() {
+                        // Nothing is at the path, as far as the walker saw - yet
+                        // something may answer to it: on a filesystem that ignores
+                        // case or Unicode normalisation, `Photo.jpg` finds
+                        // `photo.jpg`, which another path of the repository may
+                        // have put there. Linking would replace that file.
+                        Some(target_blob_id) if matches!(observed, Observed::Nothing) => {
+                            let object_path = local.blob_path(&target_blob_id);
+                            let linked = match fs::symlink_metadata(&target_path).await {
+                                Ok(_) => Err(Clash),
+                                Err(_) => {
+                                    match files::create_link(
+                                        &object_path,
+                                        &target_path,
+                                        local.capability(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => Ok(()),
+                                        // another path got there first
+                                        Err(InternalError::IO(e))
+                                            if e.kind() == std::io::ErrorKind::AlreadyExists =>
+                                        {
+                                            Err(Clash)
+                                        }
+                                        Err(e) => return Err(e),
+                                    }
+                                }
+                            };
+                            if let Err(Clash) = linked {
+                                let msg = match occupant(&target_path).await {
+                                    Some(name) => format!("skipped: clashes with {name} on disk"),
+                                    None => "skipped: the path is taken on disk".into(),
+                                };
+                                o.observe_termination(log::Level::Warn, msg);
+                                return Ok(Action::Skipped);
+                            }
+
+                            o.observe_termination_ext(
+                                log::Level::Info,
+                                "materialised",
+                                [("blob_id".into(), target_blob_id.0.clone())],
+                            );
+
+                            Action::Materialised
+                        }
                         Some(target_blob_id) => {
                             let object_path = local.blob_path(&target_blob_id);
                             if fs::metadata(&target_path)
@@ -179,6 +274,7 @@ pub async fn materialise(
             match next? {
                 Action::Materialised => materialised_count += 1,
                 Action::Deleted => deleted_count += 1,
+                Action::Skipped => skipped_count += 1,
             }
             materialise_obs.observe_position(log::Level::Trace, materialised_count + deleted_count);
         }
@@ -192,6 +288,12 @@ pub async fn materialise(
     }
     if deleted_count > 0 {
         parts.push(format!("deleted {} files", deleted_count))
+    }
+    if skipped_count > 0 {
+        parts.push(format!(
+            "skipped {} files whose path another file already takes",
+            skipped_count
+        ))
     }
 
     let msg = if !parts.is_empty() {

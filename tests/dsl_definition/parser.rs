@@ -132,6 +132,17 @@ pub fn parse_line(line: &str) -> Option<CommandLine> {
                     let filename = tokens[2].to_string();
                     Some(CommandLine::RemoveFile { repo, filename })
                 }
+                "symlink" => {
+                    // @repo symlink target filename
+                    if tokens.len() != 4 {
+                        panic!("Invalid symlink command: {}", line);
+                    }
+                    Some(CommandLine::Symlink {
+                        repo,
+                        target: tokens[2].to_string(),
+                        filename: tokens[3].to_string(),
+                    })
+                }
                 "assert_exists" => {
                     // Can be either: @repo assert_exists filename
                     // or: @repo assert_exists filename "expected content"
