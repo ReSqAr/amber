@@ -86,6 +86,31 @@ fn observe_dir_entry(root: &PathBuf, entry: DirEntry) -> Option<Result<FileObser
     }))
 }
 
+/// The sender the walk feeds its observations into.
+type WalkSender = flightdeck::tracked::sender::TrackedSender<
+    Result<FileObservation, Error>,
+    flightdeck::tracked::sender::Adapter,
+>;
+
+/// Hands one observation to the consumer and says whether to keep walking.
+///
+/// The receiver is dropped as soon as the consumer stops reading - an early
+/// return, an error raised further down, a `take(n)`. Walking the rest of the
+/// tree after that only produces items that go straight in the bin, so the
+/// walk stops instead.
+fn forward(tx: &WalkSender, obs: Option<Result<FileObservation, Error>>) -> WalkState {
+    let Some(observation) = obs else {
+        return WalkState::Continue;
+    };
+
+    if tx.blocking_send(observation).is_err() {
+        log::debug!("walk: output stream closed - stopping");
+        return WalkState::Quit;
+    }
+
+    WalkState::Continue
+}
+
 pub async fn walk<'a>(
     root_path: PathBuf,
     config: WalkerConfig,
@@ -134,10 +159,7 @@ pub async fn walk<'a>(
                     Ok(entry) => observe_dir_entry(&root, entry),
                     Err(e) => Some(Err(Error::Observer(format!("Walk error: {e}")))),
                 };
-                if let Some(observation) = obs {
-                    let _ = tx.blocking_send(observation);
-                }
-                WalkState::Continue
+                forward(&tx, obs)
             })
         });
         drop(tx);
@@ -210,5 +232,57 @@ mod tests {
             "Files from .amb directory should have been excluded, found: {:?}",
             found_files
         );
+    }
+
+    fn an_observation() -> Option<Result<FileObservation, Error>> {
+        Some(Ok(FileObservation {
+            rel_path: "file.txt".into(),
+            size: 1,
+            last_modified: Utc::now(),
+        }))
+    }
+
+    /// `forward` blocks, so - like the walk itself - it runs off the runtime
+    /// threads.
+    async fn forward_off_the_runtime(
+        tx: WalkSender,
+        obs: Option<Result<FileObservation, Error>>,
+    ) -> WalkState {
+        tokio::task::spawn_blocking(move || forward(&tx, obs))
+            .await
+            .expect("forward")
+    }
+
+    /// A consumer that stops reading - an early return, an error further down,
+    /// a `take(n)` - drops the receiver. The walk used to carry on stat-ing the
+    /// whole tree and throw every result away.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_walk_stops_once_the_consumer_has_gone() {
+        let (tx, rx) = flightdeck::tracked::mpsc_channel("test", 4);
+        drop(rx);
+
+        let state = forward_off_the_runtime(tx, an_observation()).await;
+        assert!(matches!(state, WalkState::Quit));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_walk_continues_while_the_consumer_is_listening() {
+        let (tx, mut rx) = flightdeck::tracked::mpsc_channel("test", 4);
+
+        let state = forward_off_the_runtime(tx, an_observation()).await;
+        assert!(matches!(state, WalkState::Continue));
+
+        let received = rx.next().await.expect("an item").expect("not an error");
+        assert_eq!(received.rel_path, PathBuf::from("file.txt"));
+    }
+
+    /// Directories and other non-files produce nothing, which is not a reason
+    /// to stop.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_entry_worth_nothing_does_not_stop_the_walk() {
+        let (tx, _rx) = flightdeck::tracked::mpsc_channel("test", 4);
+
+        let state = forward_off_the_runtime(tx, None).await;
+        assert!(matches!(state, WalkState::Continue));
     }
 }
